@@ -553,8 +553,10 @@ func TestE2E(t *testing.T) {
 	if code, out, _ := e2e(t, bin, cfg, "", "--version"); code != 0 || out == "" {
 		t.Fatalf("--version %d %q", code, out)
 	}
-	if code, _, errs := e2e(t, bin, cfg, "", dir); code != 0 || !strings.Contains(errs, "GUI") {
-		t.Fatalf("gui stub %d %q", code, errs)
+	// The GUI path opens a real window, so only its argument handling is
+	// driven here: an unusable project fails before any window appears.
+	if code, _, errs := e2e(t, bin, cfg, "", filepath.Join(dir, "missing")); code != 1 || errs == "" {
+		t.Fatalf("gui missing project %d %q", code, errs)
 	}
 	if code, _, _ := e2e(t, bin, cfg, "", "--frob"); code != 2 {
 		t.Fatal("gui bad flag")

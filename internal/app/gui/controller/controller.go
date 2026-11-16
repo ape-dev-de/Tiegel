@@ -136,10 +136,15 @@ func New(be Backend) *Controller {
 		diags: map[string]*fileDiags{}, Git: map[string]GitFile{},
 		Prefs: Prefs{Theme: "dark", TabWidth: 4}, Now: time.Now,
 	}
-	c.unsub = be.Subscribe(func(topic string, payload json.RawMessage) {
-		c.post(func() { c.handleEvent(topic, payload) })
-	}, "lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
-		"git.changed", "git.committed", "file.saved", "doc.changed", "modules.changed", "project.opened")
+	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
+		"git.changed", "git.committed", "file.saved", "doc.changed", "modules.changed"}, func(e api.Event) {
+		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
+	})
+	if err != nil {
+		unsub = func() {}
+		c.Status.Notice = "events: " + err.Error()
+	}
+	c.unsub = unsub
 	return c
 }
 
@@ -539,7 +544,7 @@ func (c *Controller) applyLSPStatus(st LSPStatus, err error) {
 	case err != nil:
 		c.Status.LSPRunning = false
 		switch api.ErrorCode(err) {
-		case api.CodeModuleDisabled:
+		case api.CodeModuleDisabled, api.CodeMethodNotFound:
 			c.Status.LSP, c.Status.LSPHint = "", ""
 		case api.CodeUnavailable, api.CodeNotFound:
 			c.Status.LSP = "No language server"

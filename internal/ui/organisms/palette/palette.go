@@ -91,6 +91,36 @@ func (c *Chooser) Update(gtx layout.Context) []Event {
 		c.rows = append(c.rows, molecules.ListRow{})
 	}
 	var out []Event
+	// The navigation keys are taken before the text field sees them (a
+	// single-line editor would move its caret on Up/Down).
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Focus: &c.field.Editor, Name: key.NameEscape},
+			key.Filter{Focus: &c.field.Editor, Name: key.NameUpArrow},
+			key.Filter{Focus: &c.field.Editor, Name: key.NameDownArrow},
+			key.Filter{Focus: &c.field.Editor, Name: key.NamePageUp},
+			key.Filter{Focus: &c.field.Editor, Name: key.NamePageDown},
+		)
+		if !ok {
+			break
+		}
+		e, ok := ev.(key.Event)
+		if !ok || e.State != key.Press {
+			continue
+		}
+		switch e.Name {
+		case key.NameEscape:
+			out = append(out, CancelEvent{})
+		case key.NameUpArrow:
+			c.move(-1)
+		case key.NameDownArrow:
+			c.move(1)
+		case key.NamePageUp:
+			c.move(-maxRows)
+		case key.NamePageDown:
+			c.move(maxRows)
+		}
+	}
 	for {
 		ev, ok := c.field.Editor.Update(gtx)
 		if !ok {
@@ -102,37 +132,6 @@ func (c *Chooser) Update(gtx layout.Context) []Event {
 			out = append(out, QueryEvent{Query: c.field.Text()})
 		case widget.SubmitEvent:
 			out = append(out, c.choose())
-		}
-	}
-	filters := []key.Filter{
-		{Focus: &c.field.Editor, Name: key.NameEscape},
-		{Focus: &c.field.Editor, Name: key.NameUpArrow},
-		{Focus: &c.field.Editor, Name: key.NameDownArrow},
-		{Focus: &c.field.Editor, Name: key.NamePageUp},
-		{Focus: &c.field.Editor, Name: key.NamePageDown},
-	}
-	for _, f := range filters {
-		for {
-			ev, ok := gtx.Event(f)
-			if !ok {
-				break
-			}
-			e, ok := ev.(key.Event)
-			if !ok || e.State != key.Press {
-				continue
-			}
-			switch e.Name {
-			case key.NameEscape:
-				out = append(out, CancelEvent{})
-			case key.NameUpArrow:
-				c.move(-1)
-			case key.NameDownArrow:
-				c.move(1)
-			case key.NamePageUp:
-				c.move(-maxRows)
-			case key.NamePageDown:
-				c.move(maxRows)
-			}
 		}
 	}
 	for i := range c.Items {

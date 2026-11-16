@@ -48,6 +48,7 @@ type Module struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	checker *phpver.Checker
+	ready   chan struct{}       // closed once the checker is compiled (or failed)
 	docs    map[string]*tracked // by absolute path
 	diags   map[string]Diagnostics
 	version *resolved
@@ -96,23 +97,45 @@ func (m *Module) Start(ctx module.Context) error {
 	}
 	// Without Tree-sitter (built without cgo, D80) the module still runs
 	// for php.setVersionOverride; checks report CodeUnavailable.
-	var checker *phpver.Checker
+	var table *phpver.Table
 	if syntax.TreeSitter {
-		table, err := phpver.DefaultTable()
-		if err != nil {
-			return err
-		}
-		if checker, err = phpver.NewChecker(table); err != nil {
+		var err error
+		if table, err = phpver.DefaultTable(); err != nil {
 			return err
 		}
 	}
 	c, cancel := context.WithCancel(context.Background())
+	ready := make(chan struct{})
 	m.mu.Lock()
-	m.app, m.ctx, m.cancel, m.checker = app, c, cancel, checker
+	m.app, m.ctx, m.cancel, m.checker, m.ready = app, c, cancel, nil, ready
 	m.docs = map[string]*tracked{}
 	m.diags = map[string]Diagnostics{}
 	m.version = nil
 	m.mu.Unlock()
+	// Compiling the combined feature query takes ~0.5 s; it must not delay
+	// the start of the application (GUI first frame), so it runs in the
+	// background and checks wait for it (waitChecker).
+	if table == nil {
+		close(ready)
+	} else {
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			defer close(ready)
+			checker, err := phpver.NewChecker(table)
+			if err != nil {
+				app.Logger().Warn("php-features: checker", "err", err)
+				return
+			}
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if c.Err() != nil {
+				checker.Close() // stopped meanwhile
+				return
+			}
+			m.checker = checker
+		}()
+	}
 
 	p := api.NewProvider(ctx)
 	api.Add(p, "php.check", "Check a PHP file against the project's PHP version (features, deprecations)", m.check)
@@ -297,11 +320,28 @@ func (m *Module) phpVersion(ctx context.Context) (*resolved, error) {
 }
 
 // runCheck reparses t if needed, checks it and publishes the findings.
+// waitChecker waits until the background compilation of the checker has
+// finished.
+func (m *Module) waitChecker(ctx context.Context) error {
+	m.mu.Lock()
+	ready := m.ready
+	m.mu.Unlock()
+	if ready == nil {
+		return nil
+	}
+	select {
+	case <-ready:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (m *Module) runCheck(t *tracked) {
 	m.mu.Lock()
 	ctx := m.ctx
 	m.mu.Unlock()
-	if ctx == nil || ctx.Err() != nil {
+	if ctx == nil || ctx.Err() != nil || m.waitChecker(ctx) != nil {
 		return
 	}
 	v, err := m.phpVersion(ctx)
@@ -427,6 +467,9 @@ func (m *Module) check(ctx context.Context, p CheckParams) (CheckResult, error) 
 		return res, api.Errorf(api.CodeFailed, "parse: %w", err)
 	}
 	defer doc.Close()
+	if err := m.waitChecker(ctx); err != nil {
+		return res, api.Errorf(api.CodeFailed, "check: %w", err)
+	}
 	m.mu.Lock()
 	checker := m.checker
 	var found []phpver.Diagnostic

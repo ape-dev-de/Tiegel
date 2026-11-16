@@ -21,7 +21,7 @@ type fakeBackend struct {
 	handlers map[string]func(params json.RawMessage) (any, error)
 	calls    []string
 	params   map[string][]json.RawMessage
-	subs     []func(string, json.RawMessage)
+	subs     []func(api.Event)
 	docs     map[string]*fakeDoc
 }
 
@@ -69,20 +69,20 @@ func (f *fakeBackend) Call(_ context.Context, method string, params, result any)
 	return nil
 }
 
-func (f *fakeBackend) Subscribe(fn func(string, json.RawMessage), _ ...string) func() {
+func (f *fakeBackend) Subscribe(_ context.Context, _ []string, fn func(api.Event)) (func(), error) {
 	f.mu.Lock()
 	f.subs = append(f.subs, fn)
 	f.mu.Unlock()
-	return func() {}
+	return func() {}, nil
 }
 
 func (f *fakeBackend) emit(topic string, payload any) {
 	raw, _ := json.Marshal(payload)
 	f.mu.Lock()
-	subs := append([]func(string, json.RawMessage){}, f.subs...)
+	subs := append([]func(api.Event){}, f.subs...)
 	f.mu.Unlock()
 	for _, s := range subs {
-		s(topic, raw)
+		s(api.Event{Topic: topic, Payload: raw})
 	}
 }
 
@@ -562,7 +562,10 @@ func TestInProcessBackend(t *testing.T) {
 		t.Fatalf("open %v %+v", err, info)
 	}
 	got := make(chan string, 4)
-	cancel := be.Subscribe(func(topic string, _ json.RawMessage) { got <- topic }, "doc.*")
+	cancel, err := be.Subscribe(context.Background(), []string{"doc.*"}, func(e api.Event) { got <- e.Topic })
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer cancel()
 	if err := be.Call(context.Background(), "doc.open", map[string]any{"path": "new.php", "create": true}, nil); err != nil {
 		t.Fatal(err)

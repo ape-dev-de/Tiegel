@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/app"
@@ -43,6 +44,9 @@ var processStart = time.Now()
 // saved on close), Run closes app and exits the process (exit code 1 on
 // error).
 func Run(ctx context.Context, a *api.App, projectPath string) error {
+	if os.Getenv("TIEGEL_STARTUP_TRACE") != "" {
+		fmt.Fprintf(os.Stderr, "tiegel: backend ready after %v\n", time.Since(processStart).Round(time.Millisecond))
+	}
 	go func() {
 		w := new(app.Window)
 		w.Option(app.Title("Tiegel"), app.Size(unit.Dp(1280), unit.Dp(820)), app.MinSize(unit.Dp(640), unit.Dp(400)))
@@ -64,11 +68,20 @@ func exitCode(err error) int {
 
 // loop runs the window event loop.
 func loop(ctx context.Context, w *app.Window, be controller.Backend, projectPath string) error {
+	// Background work may finish before the native window exists; Gio's
+	// window must not be poked (Invalidate) before its first event – the
+	// first frame draws everything anyway.
+	var live atomic.Bool
+	invalidate := func() {
+		if live.Load() {
+			w.Invalidate()
+		}
+	}
 	ctl := controller.New(be)
 	defer ctl.Close()
-	ctl.Invalidate = w.Invalidate
+	ctl.Invalidate = invalidate
 	v := NewView(ctl, runtime.GOOS)
-	v.Invalidate = w.Invalidate
+	v.Invalidate = invalidate
 	defer v.Close()
 	ctl.Start(projectPath)
 	go func() {
@@ -81,7 +94,9 @@ func loop(ctx context.Context, w *app.Window, be controller.Backend, projectPath
 	focused := true
 	title := ""
 	for {
-		switch e := w.Event().(type) {
+		ev := w.Event()
+		live.Store(true)
+		switch e := ev.(type) {
 		case app.DestroyEvent:
 			saveOnClose(ctl)
 			return e.Err
@@ -95,9 +110,16 @@ func loop(ctx context.Context, w *app.Window, be controller.Backend, projectPath
 				saveOnClose(ctl)
 				return nil
 			}
+			frameStart := time.Now()
 			gtx := app.NewContext(&ops, e)
 			v.Frame(gtx)
+			layoutDone := time.Now()
 			e.Frame(gtx.Ops)
+			if first && os.Getenv("TIEGEL_STARTUP_TRACE") != "" {
+				fmt.Fprintf(os.Stderr, "tiegel: first FrameEvent after %v (layout %v, GPU submit %v)\n",
+					frameStart.Sub(processStart).Round(time.Millisecond), layoutDone.Sub(frameStart).Round(time.Millisecond),
+					time.Since(layoutDone).Round(time.Millisecond))
+			}
 			if t := windowTitle(ctl); t != title {
 				title = t
 				w.Option(app.Title(t))

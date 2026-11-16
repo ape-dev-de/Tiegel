@@ -62,7 +62,7 @@ func (l *List) Update(gtx layout.Context) []Event {
 	var out []Event
 	for i := range l.Items {
 		if c, _ := l.rows[i].Update(gtx); c {
-			l.selected = i
+			l.selected = i + 1
 			out = append(out, OpenEvent{Index: i})
 		}
 	}
@@ -101,7 +101,7 @@ func (l *List) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	return l.list.Layout(gtx, th, len(l.Items), func(gtx layout.Context, i int) layout.Dimensions {
 		p := l.Items[i]
 		r := &l.rows[i]
-		r.Selected = i == l.selected
+		r.Selected = i+1 == l.selected
 		g, col := Style(th, p.Severity)
 		return r.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
