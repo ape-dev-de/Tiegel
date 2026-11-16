@@ -135,6 +135,7 @@ func (m *Module) Start(ctx module.Context) error {
 	// One subscription for all doc.* events keeps them in publish order.
 	ctx.OnStop(b.Subscribe("doc.*", m.onDoc))
 	ctx.OnStop(b.Subscribe(api.TopicFileSaved, m.onSaved))
+	ctx.OnStop(b.Subscribe(api.TopicFilesChanged, m.onFilesChanged))
 	restart := func(bus.Event) { go m.restart() }
 	ctx.OnStop(b.Subscribe(api.TopicInterpreterChanged, restart))
 	ctx.OnStop(b.Subscribe(api.TopicPHPVersionChanged, restart))

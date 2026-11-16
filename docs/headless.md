@@ -49,6 +49,12 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `files [SUBDIR] [--tree] [--depth N] [--ignored] [--libraries]` | Projektdateien; `.gitignore` wird (grob) beachtet, `vendor/` und `node_modules/` werden markiert und nicht aufgeklappt | `files.list` |
 | `read FILE` | Dateiinhalt ausgeben (binär unverändert) | `files.read` |
 | `lang FILE...` | Sprache erkennen (php, json, yaml, xml, dotenv, plaintext) | `files.detectLanguage` |
+| `new-file DATEI [--content TEXT]` | Datei im Projekt anlegen (Elternordner nach Bedarf; Fehler, wenn sie existiert) | `files.createFile` |
+| `new-dir ORDNER` | Ordner anlegen | `files.createDir` |
+| `rename PFAD NEUER-NAME\|NEUER-PFAD [--overwrite]` | umbenennen bzw. verschieben (enthält das Ziel `/`, ist es ein Pfad); offene Dokumente (auch ungespeicherte) und Local History ziehen mit | `files.rename` |
+| `move PFAD... ORDNER [--overwrite]` / `copy PFAD... ORDNER\|NEUER-PFAD [--overwrite]` | verschieben/kopieren (Ordner rekursiv, Symlinks als Links) | `files.move`, `files.copy` |
+| `delete PFAD... [--permanent]` | in den Papierkorb (macOS: Finder-Papierkorb mit „Zurücklegen“, Linux: freedesktop-Papierkorb); ohne Papierkorb (Windows, anderes Dateisystem) Fehler – dann nur mit `--permanent`. Offene Dokumente mit ungespeicherten Änderungen → Fehler, nichts wird gelöscht | `files.delete` |
+| `new-class ORDNER NAME [--kind class\|abstract\|interface\|trait\|enum] [--namespace NS]` | PHP-Datei `NAME.php` mit `declare(strict_types=1)` und dem PSR-4-Namespace aus `composer.json` (`autoload`/`autoload-dev`, längstes passendes Verzeichnis); `--namespace ""` = ohne Namespace | `files.createPhpClass` |
 | `search FILE PATTERN [--regex] [--case] [--word] [--limit N]` | Treffer als `datei:zeile:spalte: zeile` | `search.inDoc` |
 | `interpreters` | lokale PHP-Binaries und Compose-Dienste; `*` = gewählt | `interp.list` |
 | `interpreters select ID` | Interpreter fürs Projekt wählen (ohne Projekt: global) | `interp.select` |
@@ -203,7 +209,9 @@ Alles, was auf dem Event-Bus veröffentlicht wird, kann ein Client abonnieren:
 
 Muster: exakte Topics, `präfix.*` oder `*`. Zustellung als Notification `event` mit `{"topic": …, "payload": …}`. Jedes Event kommt pro Verbindung höchstens einmal (auch wenn mehrere Muster passen) und alle Events einer Verbindung in Veröffentlichungsreihenfolge; zwischen Antworten und Events gibt es keine feste Reihenfolge (Events laufen asynchron).
 
-Vom Kern veröffentlichte Topics: `project.opened`/`project.closed` (`{root, name}`), `file.opened` (`{path, file, language, version, size}`), `file.saved` (`{path, file, trigger, size}` – auch bei Autosave), `doc.opened`, `doc.changed`, `doc.edited`, `doc.saved`, `doc.closed`, `modules.changed`, `settings.changed`.
+Vom Kern veröffentlichte Topics: `project.opened`/`project.closed` (`{root, name}`), `file.opened` (`{path, file, language, version, size}`), `file.saved` (`{path, file, trigger, size}` – auch bei Autosave), `doc.opened`, `doc.changed`, `doc.edited`, `doc.saved`, `doc.closed`, `doc.renamed`, `files.changed`, `modules.changed`, `settings.changed`.
+
+`files.changed` meldet die Dateioperationen eines API-Aufrufs (`files.*`) für Dateibaum und Indizes: `{changes: [{op: created|renamed|deleted, path, file, from?, fromFile?, dir?, trashed?}]}`; bei `renamed` sind `path`/`file` der neue Ort. Folgt ein offenes Dokument einem Umbenennen/Verschieben, kommen `doc.renamed` (`{from, to, fromFile, file, generation, language}`), dann `doc.closed` für den alten Pfad mit `renamedTo` und `doc.opened` für den neuen – Abonnenten, die nur Öffnen/Schließen kennen (Language Server, Syntax), folgen so automatisch; Dokument, Puffer, Undo und Generation bleiben erhalten. Der Language Server bekommt zusätzlich `workspace/didRenameFiles`, wenn er sich dafür registriert hat.
 
 `doc.edited` beschreibt **jede** Pufferänderung – egal ob über `doc.*`, Undo, Autosave-Filter oder direkt in der GUI – im Format `{path, file, language, version, start, oldEnd, newEnd, startPoint, oldEndPoint, newEndPoint, range: {start: {line, character}, end: …}, text, oldText}`: Byte-Offsets und Zeile/Byte-Spalte (Tree-sitter) sowie der ersetzte Bereich in LSP-Koordinaten (0-basiert, UTF-16). `version` steigt pro Änderung um 1.
 
@@ -256,6 +264,15 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `files.list` | `path?`, `depth?`, `ignored?`, `libraries?`, `limit?` | Baum `{name, path, dir, size, ignored, library, collapsed, children}` + Zähler |
 | `files.read` | `path`, `maxBytes?` | `content`, `encoding` (`utf-8`/`base64`), `language`, `size`, `truncated` |
 | `files.detectLanguage` | `path`, `content?` | `language` |
+| `files.createFile` | `path`, `content?`, `open?` | `{path, file, doc?}`; `CodeConflict`, wenn vorhanden |
+| `files.createDir` | `path` | `{path, file, dir}` |
+| `files.rename` | `path`, `newName` **oder** `to`, `overwrite?` | `{path, file, from, dir, docs}` – `docs`: offene Dokumente unter neuem Pfad |
+| `files.move` / `files.copy` | `path` oder `paths`, `to` (Ordner; bei einem Pfad auch Zielpfad), `overwrite?` | `{results: [{path, from, …}]}`; Ordner werden nie überschrieben |
+| `files.delete` | `path` oder `paths`, `permanent?` | `{deleted, trashed, closed}`; `CodeConflict` bei ungespeicherten Dokumenten, `CodeUnavailable` ohne Papierkorb |
+| `files.reveal` | `path` | im Dateimanager zeigen (`open -R`, `explorer /select,`, `xdg-open ORDNER`) – nur auf Nutzeraktion aufrufen |
+| `files.copyPath` | `path` oder `paths` | `{paths: [{absolute, relative, name, uri}], text, relativeText}` – die GUI kopiert in die Zwischenablage |
+| `files.createPhpClass` | `dir?`, `name`, `kind?` (`class` = `final class`, `abstract`, `interface`, `trait`, `enum`), `namespace?`, `open?` | Datei + `namespace`, `class` (FQCN) |
+| `files.phpNamespace` | `path?` (Ordner) | `{dir, namespace, found, mapping}` aus `composer.json` PSR-4 |
 | `doc.open` | `path`, `create?`, `text?` | Dokumentzustand (+ `text`, `alreadyOpen`); jeder Dokumentzustand enthält `generation` (eindeutig pro geöffneter Instanz, neu nach Schließen + Öffnen) |
 | `doc.close` | `path`, `generation?`, `discard?` | `path`, `generation`, `discarded`; mit ungespeicherten Änderungen nur mit `discard: true` (sonst -32004, `data` = Dokumentzustand); mit `generation` nur, wenn sie zur offenen Instanz passt (sonst -32004 – ein verspätetes Close trifft kein neu geöffnetes Dokument) |
 | `doc.list` | – | Dokumentzustände |

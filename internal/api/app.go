@@ -16,6 +16,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
+	"github.com/ape-dev-de/tiegel/internal/core/trash"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
 	"github.com/ape-dev-de/tiegel/internal/update"
@@ -85,6 +86,11 @@ type App struct {
 	docs    map[string]*Doc
 	claims  map[string][]string
 	docSeq  uint64 // last document generation, guarded by mu
+
+	// trash moves a path to the trash (files.delete); start launches a
+	// detached program (files.reveal). Tests replace both.
+	trash func(path string) error
+	start func(name string, args ...string) error
 }
 
 // New creates an App with the built-in namespaces and the extensions from
@@ -114,6 +120,8 @@ func New(opts Options) (*App, error) {
 		bus:     b,
 		methods: newRegistry(),
 		docs:    make(map[string]*Doc),
+		trash:   trash.Move,
+		start:   startDetached,
 	}
 	a.hooks = hooks.New(hooks.WithErrorHandler(func(e *hooks.HookError) {
 		log.Warn("hook failed", "hook", e.Hook, "owner", e.Owner, "err", e.Err)
@@ -154,6 +162,7 @@ func New(opts Options) (*App, error) {
 	a.registerApp()
 	a.registerProject()
 	a.registerDocs()
+	a.registerFileOps()
 	a.registerSearch()
 	a.registerModules()
 	a.registerVersion()

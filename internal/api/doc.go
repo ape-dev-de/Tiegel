@@ -9,7 +9,9 @@
 //	update.*   check (explicit request only; never automatic)
 //	events.*   subscribe, unsubscribe, publish
 //	project.*  open, info, close
-//	files.*    list, read, detectLanguage
+//	files.*    list, read, detectLanguage, createFile, createDir, rename,
+//	           move, copy, delete, reveal, copyPath, createPhpClass,
+//	           phpNamespace (D131)
 //	doc.*      open, close, list, text, insert, delete, replace, undo, redo, save, saveAll
 //	history.*  list, content, restore
 //	search.*   inDoc, replaceInDoc
@@ -78,6 +80,14 @@
 // both the initial text and the changes subscribe to "doc.*" once (one
 // subscription keeps the order), read the text with Doc.Snapshot on
 // doc.opened and skip doc.edited events whose Version they already have.
+//
+// A document follows its file when files.rename or files.move renames it:
+// the same *Doc (buffer, undo, generation, unsaved changes) gets the new
+// path, announced as doc.renamed, doc.closed (old path, RenamedTo set) and
+// doc.opened (new path). Consumers that cache a *Doc's path must re-read
+// Doc.Path after doc.renamed. files.* operations validate that every path
+// lies inside the project (also through symlinks) and publish
+// files.changed.
 //
 // # Modules and namespaces
 //

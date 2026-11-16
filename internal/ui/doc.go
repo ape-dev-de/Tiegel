@@ -11,7 +11,8 @@
 //   - molecules: SearchField, FileRow, Tab, BreakpointRow, DiffBlock,
 //     CodeLine, ListRow, TreeRow, Banner, ScrollList, Split, Dropdown
 //     (menu button or select field), Toolbar, SectionHeader, Table,
-//     ChangeBands, AnnotationCell.
+//     ChangeBands, AnnotationCell, ContextMenu (popup menu with submenus)
+//     and ContextArea (right-click / Ctrl+click detection).
 //   - organisms: git (CommitPanel, DiffView, LogView, BranchList,
 //     MergeView), diff (DiffWindow, BlameGutter, FileHistoryView), debug (DebugToolbar, CallStackList, VariablesTree,
 //     WatchesList, BreakpointsList, SessionList and the DebugPanel
@@ -74,6 +75,40 @@
 // fill the maximum width of their constraints; inline components (Button,
 // Badge, Tab, Checkbox, Label, Icon) take their intrinsic size. No component
 // exceeds its constraints.
+//
+// # Menus and actions
+//
+// Commands are data in the Gio-free package internal/actions: an Action
+// has an ID (shared with the keymap action names), label, icon name,
+// default shortcuts and state functions (Enabled, Checked, Visible) of an
+// actions.Context; menus are MenuItem trees per actions.ContextID (editor,
+// editorGutter, projectTree, tab, toolWindow, gitChanges, gitLog, main).
+// Context menus, the main menu and "Find Action" (Registry.Find) all
+// resolve the same Registry, so they never disagree. The host builds a
+// menu like this:
+//
+//	// once per window
+//	reg := actions.Standard(runtime.GOOS) // plus module actions
+//	var menu molecules.ContextMenu        // laid out last, every frame
+//	area := molecules.ContextArea{GOOS: runtime.GOOS} // around the tree
+//
+//	// per frame
+//	if _, ok := area.Update(gtx); ok {
+//		ctx := actions.Context{Menu: actions.CtxProjectTree, Paths: selected}
+//		menu.Items = molecules.MenuItemsFromEntries(reg.Resolve(ctx, keys, runtime.GOOS))
+//		menu.ShowAtPointer()
+//	}
+//	if id, ok := menu.Update(gtx); ok {
+//		run(id) // e.g. actions.FileRename → API files.rename
+//	}
+//	area.Layout(gtx, tree)
+//	...
+//	menu.Layout(gtx, th) // window-sized constraints
+//
+// ContextMenu handles mouse (hover opens submenus) and keyboard (arrows,
+// Enter/Space, Escape, letter jump), flips at the window edges and closes
+// on a click outside. Shortcut texts use actions.FormatChord (text form,
+// renderable with the bundled fonts).
 //
 // The catalog app (cmd/tiegel-catalog) shows every component with its
 // variants in both themes and is the living reference.

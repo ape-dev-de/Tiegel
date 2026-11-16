@@ -22,7 +22,7 @@ import (
 // from gitsample, i.e. from the gitcli parsers run on embedded fixtures.
 func gitPages() []*page {
 	return []*page{
-		codeLinePage(), listRowPage(), bannerPage(), scrollListPage(), splitPage(), dropdownPage(),
+		codeLinePage(), listRowPage(), bannerPage(), scrollListPage(), splitPage(), dropdownPage(), contextMenuPage(),
 		commitPanelPage(), diffViewPage(), logViewPage(), branchListPage(), mergeViewPage(),
 	}
 }
