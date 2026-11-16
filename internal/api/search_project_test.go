@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -295,6 +296,11 @@ func TestReplaceInProject(t *testing.T) {
 
 	// A file that cannot be written is reported, others continue.
 	ro := filepath.Join(root, "src/deep/nested")
+	if runtime.GOOS == "windows" {
+		// Directory permissions do not stop writes on Windows; a
+		// read-only file cannot be replaced.
+		ro = filepath.Join(ro, "D.php")
+	}
 	if err := os.Chmod(ro, 0o555); err != nil {
 		t.Fatal(err)
 	}

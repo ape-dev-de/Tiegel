@@ -307,6 +307,17 @@ func TestFilesRenameCaseOnly(t *testing.T) {
 	if _, err := a.Document("User.php"); err != nil {
 		t.Fatal(err)
 	}
+	// Copying onto a case variant of itself must not truncate the file on
+	// case-insensitive file systems; elsewhere it is an ordinary copy.
+	_, statErr := os.Stat(filepath.Join(root, "user.php"))
+	if caseInsensitive := statErr == nil; caseInsensitive {
+		wantCode(t, a, "files.copy", TransferParams{Paths: []string{"User.php"}, To: "user.php", Overwrite: true}, CodeInvalidParams)
+	} else {
+		call(t, a, "files.copy", TransferParams{Paths: []string{"User.php"}, To: "user.php"}, nil)
+	}
+	if readFile(t, filepath.Join(root, "User.php")) != "<?php" {
+		t.Fatal("source changed by copy")
+	}
 }
 
 func TestFilesMoveCopy(t *testing.T) {
