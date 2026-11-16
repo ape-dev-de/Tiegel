@@ -22,6 +22,9 @@ const (
 	CodeConflict = -32004
 	// CodeUnavailable: an external program or service is missing or not running.
 	CodeUnavailable = -32005
+	// CodeModuleDisabled: the method belongs to a module that is disabled
+	// or not running (see modules.enable).
+	CodeModuleDisabled = -32006
 )
 
 // Error is an API error with a stable code. Transports map it to their own
@@ -29,7 +32,16 @@ const (
 type Error struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
-	Err     error  `json:"-"`
+	// Data carries structured details (e.g. the kind of a failed push).
+	// Transports pass it on as the JSON-RPC error data.
+	Data any   `json:"data,omitempty"`
+	Err  error `json:"-"`
+}
+
+// WithData returns e with Data set.
+func (e *Error) WithData(data any) *Error {
+	e.Data = data
+	return e
 }
 
 // Error implements error.

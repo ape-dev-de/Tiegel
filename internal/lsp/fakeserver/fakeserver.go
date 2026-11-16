@@ -16,6 +16,7 @@ package fakeserver
 import (
 	"context"
 	"io"
+	"os"
 	"strings"
 	"sync"
 
@@ -399,4 +400,24 @@ func (s *Server) semanticTokens(context.Context, *jsonrpc2.Request) (any, error)
 		1, 4, 2, 1, 0,
 		0, 6, 3, 2, 2,
 	}}, nil
+}
+
+// Stdio is an io.ReadWriteCloser over the process's stdin and stdout.
+type Stdio struct{}
+
+func (Stdio) Read(b []byte) (int, error)  { return os.Stdin.Read(b) }
+func (Stdio) Write(b []byte) (int, error) { return os.Stdout.Write(b) }
+
+// Close closes stdin and stdout.
+func (Stdio) Close() error {
+	_ = os.Stdin.Close()
+	return os.Stdout.Close()
+}
+
+// Main runs the fake server on stdin/stdout until the client exits; the
+// fakelsp command and test binaries that double as server use it.
+func Main() {
+	s := Serve(Stdio{}, Options{Exit: func() { os.Exit(0) }, Crash: func() { os.Exit(3) }})
+	<-s.Done()
+	os.Exit(0)
 }

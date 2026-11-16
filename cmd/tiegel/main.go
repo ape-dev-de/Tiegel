@@ -14,6 +14,7 @@ import (
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/headless"
+	"github.com/ape-dev-de/tiegel/internal/modules"
 	"github.com/ape-dev-de/tiegel/internal/version"
 )
 
@@ -45,6 +46,7 @@ func run(ctx context.Context, args []string) int {
 	if dir := os.Getenv("TIEGEL_CONFIG_DIR"); dir != "" {
 		opts.ConfigDir = dir
 	}
+	opts.Extensions = append(opts.Extensions, modules.Install)
 	app, err := api.New(opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tiegel: %v\n", err)

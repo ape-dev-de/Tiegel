@@ -1,12 +1,61 @@
-package api
+// Package git is the git module: status, diff, staging (whole files, hunks
+// and lines), commits (with selection, amend and push), gutter markers and
+// rollback for open documents, branches and three-way merge of conflicts.
+package git
 
 import (
 	"context"
 	"errors"
 	"time"
 
+	"github.com/ape-dev-de/tiegel/internal/api"
+	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/gitcli"
 )
+
+// ID is the module ID.
+const ID = "git"
+
+// Options configure the module.
+type Options struct{}
+
+// Module is the git module.
+type Module struct {
+	opts Options
+	app  *api.App
+}
+
+// New creates the module.
+func New(opts Options) *Module { return &Module{opts: opts} }
+
+// ID implements module.Module.
+func (m *Module) ID() string { return ID }
+
+// DependsOn implements module.Module.
+func (m *Module) DependsOn() []string { return nil }
+
+// Claims implements api.Claimer.
+func (m *Module) Claims() []string { return []string{"git.*"} }
+
+// Start registers the git namespace.
+func (m *Module) Start(ctx module.Context) error {
+	app, ok := api.AppFrom(ctx)
+	if !ok {
+		return errors.New("git: needs an api.App context")
+	}
+	m.app = app
+	p := api.NewProvider(ctx)
+	api.Add(p, "git.status", "Branch and changed files (porcelain v2)", m.gitStatus)
+	api.Add(p, "git.diff", "Diff of work tree, index or revisions", m.gitDiff)
+	api.Add(p, "git.log", "Commit history", m.gitLog)
+	api.Add(p, "git.branches", "Local and remote-tracking branches", m.gitBranches)
+	api.Add(p, "git.commit", "Commit the index (commit.before guard saves documents; optionally stages paths)", m.gitCommit)
+	m.registerOps(p)
+	return p.Err()
+}
+
+// Stop implements module.Module.
+func (m *Module) Stop() error { return nil }
 
 // TopicGitCommitted is published after "git.commit".
 const TopicGitCommitted = "git.committed"
@@ -139,20 +188,12 @@ type GitCommitResult struct {
 	Hash string `json:"hash"`
 }
 
-func (a *App) registerGit() {
-	mustHandle(a, "git.status", "Branch and changed files (porcelain v2)", a.gitStatus)
-	mustHandle(a, "git.diff", "Diff of work tree, index or revisions", a.gitDiff)
-	mustHandle(a, "git.log", "Commit history", a.gitLog)
-	mustHandle(a, "git.branches", "Local and remote-tracking branches", a.gitBranches)
-	mustHandle(a, "git.commit", "Commit (saves open documents first; optionally stages paths)", a.gitCommit)
-}
-
-func (a *App) repo(ctx context.Context) (*gitcli.Repo, error) {
-	pr, err := a.requireProject()
+func (m *Module) repo(ctx context.Context) (*gitcli.Repo, error) {
+	root, err := m.app.RequireProject()
 	if err != nil {
 		return nil, err
 	}
-	r, err := gitcli.Open(ctx, pr.root)
+	r, err := gitcli.Open(ctx, root)
 	if err != nil {
 		return nil, gitErr(err)
 	}
@@ -162,17 +203,17 @@ func (a *App) repo(ctx context.Context) (*gitcli.Repo, error) {
 func gitErr(err error) error {
 	switch {
 	case errors.Is(err, gitcli.ErrGitNotFound):
-		return Errorf(CodeUnavailable, "%w", err)
+		return api.Errorf(api.CodeUnavailable, "%w", err)
 	case errors.Is(err, gitcli.ErrNotRepository), errors.Is(err, gitcli.ErrNotFound):
-		return Errorf(CodeNotFound, "%w", err)
+		return api.Errorf(api.CodeNotFound, "%w", err)
 	case errors.Is(err, gitcli.ErrEmptyMessage):
-		return Errorf(CodeInvalidParams, "%w", err)
+		return api.Errorf(api.CodeInvalidParams, "%w", err)
 	}
-	return Errorf(CodeFailed, "git: %w", err)
+	return api.Errorf(api.CodeFailed, "git: %w", err)
 }
 
-func (a *App) gitStatus(ctx context.Context, p GitStatusParams) (GitStatus, error) {
-	r, err := a.repo(ctx)
+func (m *Module) gitStatus(ctx context.Context, p GitStatusParams) (GitStatus, error) {
+	r, err := m.repo(ctx)
 	if err != nil {
 		return GitStatus{}, err
 	}
@@ -201,8 +242,8 @@ func (a *App) gitStatus(ctx context.Context, p GitStatusParams) (GitStatus, erro
 	return res, nil
 }
 
-func (a *App) gitDiff(ctx context.Context, p GitDiffParams) (GitDiffResult, error) {
-	r, err := a.repo(ctx)
+func (m *Module) gitDiff(ctx context.Context, p GitDiffParams) (GitDiffResult, error) {
+	r, err := m.repo(ctx)
 	if err != nil {
 		return GitDiffResult{}, err
 	}
@@ -243,8 +284,8 @@ func (a *App) gitDiff(ctx context.Context, p GitDiffParams) (GitDiffResult, erro
 	return res, nil
 }
 
-func (a *App) gitLog(ctx context.Context, p GitLogParams) ([]GitCommit, error) {
-	r, err := a.repo(ctx)
+func (m *Module) gitLog(ctx context.Context, p GitLogParams) ([]GitCommit, error) {
+	r, err := m.repo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -266,8 +307,8 @@ func (a *App) gitLog(ctx context.Context, p GitLogParams) ([]GitCommit, error) {
 	return out, nil
 }
 
-func (a *App) gitBranches(ctx context.Context, _ struct{}) ([]GitBranch, error) {
-	r, err := a.repo(ctx)
+func (m *Module) gitBranches(ctx context.Context, _ struct{}) ([]GitBranch, error) {
+	r, err := m.repo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -282,13 +323,16 @@ func (a *App) gitBranches(ctx context.Context, _ struct{}) ([]GitBranch, error) 
 	return out, nil
 }
 
-func (a *App) gitCommit(ctx context.Context, p GitCommitParams) (GitCommitResult, error) {
-	r, err := a.repo(ctx)
+func (m *Module) gitCommit(ctx context.Context, p GitCommitParams) (GitCommitResult, error) {
+	r, err := m.repo(ctx)
 	if err != nil {
 		return GitCommitResult{}, err
 	}
-	if err := a.saver.BeforeCommit(ctx); err != nil {
-		return GitCommitResult{}, Errorf(CodeFailed, "saving documents before commit: %w", err)
+	if err := api.HookCommitBefore.Check(ctx, m.app.Hooks(), api.CommitRequest{Message: p.Message, Paths: p.Stage, Amend: p.Amend}); err != nil {
+		return GitCommitResult{}, api.Errorf(api.CodeFailed, "commit.before: %w", err)
+	}
+	if msg, err := api.HookCommitMessage.Apply(ctx, m.app.Hooks(), p.Message); err == nil {
+		p.Message = msg
 	}
 	if len(p.Stage) > 0 {
 		if err := r.Stage(ctx, p.Stage...); err != nil {
@@ -300,6 +344,7 @@ func (a *App) gitCommit(ctx context.Context, p GitCommitParams) (GitCommitResult
 		return GitCommitResult{}, gitErr(err)
 	}
 	res := GitCommitResult{Hash: hash}
-	a.bus.Publish(TopicGitCommitted, res)
+	m.app.Bus().Publish(TopicGitCommitted, res)
+	m.changed("commit", p.Stage...)
 	return res, nil
 }

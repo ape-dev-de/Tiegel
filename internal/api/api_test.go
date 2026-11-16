@@ -102,8 +102,7 @@ func TestMethodTable(t *testing.T) {
 		"app.info", "app.methods", "events.subscribe", "project.open", "project.info", "project.close",
 		"files.list", "files.read", "files.detectLanguage", "doc.open", "doc.close", "doc.insert", "doc.delete",
 		"doc.replace", "doc.undo", "doc.redo", "doc.save", "doc.text", "history.list", "history.restore",
-		"search.inDoc", "interp.list", "interp.select", "interp.version", "compose.detect", "lsp.servers",
-		"debug.listen", "debug.stop", "debug.sessions", "modules.list", "modules.enable", "modules.disable",
+		"search.inDoc", "modules.list", "modules.enable", "modules.disable",
 	} {
 		if !names[want] {
 			t.Errorf("method %s not registered", want)

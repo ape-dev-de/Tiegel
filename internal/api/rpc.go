@@ -69,7 +69,13 @@ func (a *App) Serve(ctx context.Context, rwc io.ReadWriteCloser, opts ServeOptio
 func toRPCError(err error) *jsonrpc2.Error {
 	var e *Error
 	if errors.As(err, &e) {
-		return jsonrpc2.NewError(int64(e.Code), e.Message)
+		re := jsonrpc2.NewError(int64(e.Code), e.Message)
+		if e.Data != nil {
+			if b, merr := json.Marshal(e.Data); merr == nil {
+				re.Data = b
+			}
+		}
+		return re
 	}
 	if errors.Is(err, context.Canceled) {
 		return jsonrpc2.NewError(jsonrpc2.CodeRequestCancelled, err.Error())

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/ape-dev-de/tiegel/internal/core/autosave"
@@ -17,13 +18,82 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/editor/buffer"
 )
 
-// document is an open editor buffer. Buffers are not safe for concurrent use,
-// so every access goes through mu.
-type document struct {
+// Doc is an open document: the editor buffer shared by every client of the
+// App (API handlers, the in-process GUI, modules).
+//
+// Threading rule: a buffer.Buffer is not safe for concurrent use. Every read
+// or write of Buffer() must happen between Lock and Unlock. The GUI edits the
+// buffer directly on its UI goroutine while holding the lock; API handlers
+// take the same lock. All downstream consumers (doc.edited/doc.changed
+// events, LSP sync, feature diagnostics, git gutter) are driven by
+// buffer.OnEdit, so edits made through any path are seen by everyone.
+// Listeners run while the lock is held and must not block.
+type Doc struct {
 	mu   sync.Mutex
+	app  *App
 	path string // absolute
 	lang langdetect.Language
 	buf  *buffer.Buffer
+}
+
+// Lock acquires the document lock.
+func (d *Doc) Lock() { d.mu.Lock() }
+
+// Unlock releases the document lock.
+func (d *Doc) Unlock() { d.mu.Unlock() }
+
+// Buffer returns the shared buffer. Only use it while holding the lock.
+func (d *Doc) Buffer() *buffer.Buffer { return d.buf }
+
+// Path returns the absolute file path.
+func (d *Doc) Path() string { return d.path }
+
+// Language returns the detected language.
+func (d *Doc) Language() langdetect.Language { return d.lang }
+
+// newDoc creates a document and wires buffer.OnEdit to the bus.
+func (a *App) newDoc(abs string, data []byte) *Doc {
+	d := &Doc{app: a, path: abs, lang: langdetect.Detect(abs, head(data)), buf: buffer.New(data)}
+	d.buf.OnEdit(func(e buffer.Edit) { a.onEdit(d, e) })
+	return d
+}
+
+// onEdit runs inside the buffer change with d locked: it publishes
+// doc.edited (the change itself, LSP-ready) and doc.changed (new state).
+// Publish only enqueues, and holding the lock keeps the per-document order.
+func (a *App) onEdit(d *Doc, e buffer.Edit) {
+	ev := DocEditEvent{
+		Path: a.displayPath(d.path), File: d.path, Language: string(d.lang), Version: d.buf.Version(),
+		Start: e.StartByte, OldEnd: e.OldEndByte, NewEnd: e.NewEndByte,
+		StartPoint:  TextPoint{Line: e.StartPoint.Row, Column: e.StartPoint.Column},
+		OldEndPoint: TextPoint{Line: e.OldEndPoint.Row, Column: e.OldEndPoint.Column},
+		NewEndPoint: TextPoint{Line: e.NewEndPoint.Row, Column: e.NewEndPoint.Column},
+		Text:        string(e.Text),
+		OldText:     string(e.OldText),
+	}
+	// UTF-16 positions in the document before the change (LSP coordinates).
+	// The line prefix before the start is unchanged by the edit.
+	startCol := buffer.UTF16Col(d.buf.Line(e.StartPoint.Row), e.StartPoint.Column)
+	ev.Range = UTF16Range{Start: UTF16Pos{Line: e.StartPoint.Row, Character: startCol}}
+	if i := strings.LastIndexByte(ev.OldText, '\n'); i >= 0 {
+		ev.Range.End = UTF16Pos{Line: e.OldEndPoint.Row, Character: utf16Len(ev.OldText[i+1:])}
+	} else {
+		ev.Range.End = UTF16Pos{Line: e.StartPoint.Row, Character: startCol + utf16Len(ev.OldText)}
+	}
+	a.bus.Publish(TopicDocEdited, ev)
+	a.bus.Publish(TopicDocChanged, a.stateLocked(d))
+}
+
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		if r >= 0x10000 {
+			n += 2
+		} else {
+			n++
+		}
+	}
+	return n
 }
 
 // Pos addresses a position in a document. If Line is set (1-based), Col is
@@ -66,7 +136,7 @@ type DocState struct {
 	CanRedo  bool   `json:"canRedo"`
 }
 
-func (a *App) stateLocked(d *document) DocState {
+func (a *App) stateLocked(d *Doc) DocState {
 	eol := "lf"
 	if d.buf.EOL() == buffer.CRLF {
 		eol = "crlf"
@@ -102,7 +172,7 @@ func (a *App) registerDocs() {
 }
 
 // doc returns the open document for path.
-func (a *App) doc(path string) (*document, error) {
+func (a *App) doc(path string) (*Doc, error) {
 	abs, err := a.resolvePath(path)
 	if err != nil {
 		return nil, err
@@ -149,7 +219,7 @@ func (a *App) docOpen(_ context.Context, p DocOpenParams) (DocOpenResult, error)
 		case err != nil:
 			return DocOpenResult{}, notFoundOr(err, "doc.open")
 		}
-		d = &document{path: abs, lang: langdetect.Detect(abs, head(data)), buf: buffer.New(data)}
+		d = a.newDoc(abs, data)
 		a.mu.Lock()
 		if existing, ok := a.docs[abs]; ok {
 			d, already = existing, true
@@ -163,10 +233,11 @@ func (a *App) docOpen(_ context.Context, p DocOpenParams) (DocOpenResult, error)
 	if p.Text {
 		res.Text = d.buf.String()
 	}
-	d.mu.Unlock()
 	if !already {
 		a.bus.Publish(TopicDocOpened, res.DocState)
+		a.bus.Publish(TopicFileOpened, FileOpenedEvent{Path: res.Path, File: d.path, Language: string(d.lang), Version: res.Version, Size: res.Length})
 	}
+	d.mu.Unlock()
 	return res, nil
 }
 
@@ -194,7 +265,7 @@ func (a *App) docClose(_ context.Context, p PathParams) (DocCloseResult, error) 
 
 func (a *App) docList(_ context.Context, _ struct{}) ([]DocState, error) {
 	a.mu.Lock()
-	docs := make([]*document, 0, len(a.docs))
+	docs := make([]*Doc, 0, len(a.docs))
 	for _, d := range a.docs {
 		docs = append(docs, d)
 	}
@@ -286,8 +357,8 @@ type DocReplaceParams struct {
 	Version uint64 `json:"version,omitempty"`
 }
 
-// edit runs fn on the locked document after the version check and publishes
-// doc.changed if the version moved.
+// edit runs fn on the locked document after the version check. Events are
+// published by the buffer's OnEdit listener.
 func (a *App) edit(path string, version uint64, fn func(b *buffer.Buffer) error) (DocState, error) {
 	d, err := a.doc(path)
 	if err != nil {
@@ -302,13 +373,7 @@ func (a *App) edit(path string, version uint64, fn func(b *buffer.Buffer) error)
 	err = fn(d.buf)
 	st := a.stateLocked(d)
 	d.mu.Unlock()
-	if err != nil {
-		return st, err
-	}
-	if st.Version != before {
-		a.bus.Publish(TopicDocChanged, st)
-	}
-	return st, nil
+	return st, err
 }
 
 func (a *App) docInsert(_ context.Context, p DocInsertParams) (DocState, error) {
@@ -403,8 +468,8 @@ func (a *App) docSave(ctx context.Context, p PathParams) (DocSaveResult, error) 
 	}
 	d.mu.Lock()
 	res := DocSaveResult{DocState: a.stateLocked(d), Size: ev.Size, Revision: ev.Revision.ID}
-	d.mu.Unlock()
 	a.bus.Publish(TopicDocSaved, res)
+	d.mu.Unlock()
 	return res, nil
 }
 
@@ -430,7 +495,7 @@ type docSet struct{ a *App }
 
 func (s docSet) Dirty() []autosave.Doc {
 	s.a.mu.Lock()
-	docs := make([]*document, 0, len(s.a.docs))
+	docs := make([]*Doc, 0, len(s.a.docs))
 	for _, d := range s.a.docs {
 		docs = append(docs, d)
 	}
@@ -489,8 +554,8 @@ func (a *App) reload(abs string, data []byte) {
 	}
 	d.buf.MarkSaved()
 	st := a.stateLocked(d)
-	d.mu.Unlock()
 	a.bus.Publish(TopicDocChanged, st)
+	d.mu.Unlock()
 }
 
 // writeFileAtomic writes data to a temporary file next to path and renames

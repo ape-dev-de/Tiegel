@@ -1,0 +1,695 @@
+// Package phpruntime is the php-runtime module: PHP interpreters (local
+// binaries and Docker Compose services), version detection, host/container
+// path mappings and the Xdebug setup diagnosis.
+//
+// API: interp.list/select/version, compose.detect, php.version,
+// runtime.mappings.get/set, runtime.execMode, runtime.diagnose.
+// Events: interpreter.changed (and interp.selected), runtime.mappingsChanged.
+// Hooks provided: php.resolveVersion and runtime.pathMappings filters, so
+// other modules (lang-php, php-features, debug-xdebug) get the version and
+// the mappings without calling this module.
+package phpruntime
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/ape-dev-de/tiegel/internal/api"
+	"github.com/ape-dev-de/tiegel/internal/compose"
+	"github.com/ape-dev-de/tiegel/internal/core/bus"
+	"github.com/ape-dev-de/tiegel/internal/core/hooks"
+	"github.com/ape-dev-de/tiegel/internal/core/module"
+	"github.com/ape-dev-de/tiegel/internal/core/settings"
+	"github.com/ape-dev-de/tiegel/internal/interp"
+	"github.com/ape-dev-de/tiegel/internal/phpver"
+)
+
+// ID is the module ID.
+const ID = "php-runtime"
+
+// Settings keys (project settings, global without a project).
+const (
+	// SettingMappings stores corrected path mappings ([]api.MappingInfo).
+	SettingMappings = "runtime.mappings"
+	// SettingExecMode stores the compose exec mode ("auto", "exec", "run").
+	SettingExecMode = "runtime.execMode"
+	// SettingVersionOverride stores the PHP version override (set by
+	// php-features with php.setVersionOverride).
+	SettingVersionOverride = api.SettingPHPVersionOverride
+)
+
+// TopicInterpSelected is the legacy event of interp.select (InterpreterInfo).
+const TopicInterpSelected = "interp.selected"
+
+// hookTimeout bounds the hook handlers: a version query may start a
+// container.
+const hookTimeout = 60 * time.Second
+
+// Options configure the module.
+type Options struct {
+	// Docker is the docker binary for compose interpreters (tests use a
+	// fake script); empty means "docker" from PATH.
+	Docker string
+}
+
+// Module is the php-runtime module.
+type Module struct {
+	opts Options
+
+	mu      sync.Mutex
+	app     *api.App
+	interps map[string]interp.Interpreter
+}
+
+// New creates the module.
+func New(opts Options) *Module { return &Module{opts: opts} }
+
+// ID implements module.Module.
+func (m *Module) ID() string { return ID }
+
+// DependsOn implements module.Module.
+func (m *Module) DependsOn() []string { return nil }
+
+// Claims implements api.Claimer.
+func (m *Module) Claims() []string {
+	return []string{"interp.*", "compose.*", "runtime.*", "php.version"}
+}
+
+// Start registers the API and the hooks.
+func (m *Module) Start(ctx module.Context) error {
+	app, ok := api.AppFrom(ctx)
+	if !ok {
+		return errors.New("php-runtime: needs an api.App context")
+	}
+	m.mu.Lock()
+	m.app = app
+	m.interps = map[string]interp.Interpreter{}
+	m.mu.Unlock()
+
+	p := api.NewProvider(ctx)
+	api.Add(p, "interp.list", "PHP interpreters: local binaries and compose services", m.interpList)
+	api.Add(p, "interp.select", "Select the project's PHP interpreter (event interpreter.changed)", m.interpSelect)
+	api.Add(p, "interp.version", "Query version (and optionally modules/ini) of an interpreter", m.interpVersion)
+	api.Add(p, "compose.detect", "Compose PHP candidates with scores, reasons, path mappings and Xdebug hints", m.composeDetect)
+	api.Add(p, "php.version", "Project PHP version with its source (override, interpreter, composer)", m.phpVersion)
+	api.Add(p, "runtime.mappings.get", "Host/container path mappings (corrected or from compose)", m.mappingsGet)
+	api.Add(p, "runtime.mappings.set", "Correct the path mappings (persisted; reset restores compose)", m.mappingsSet)
+	api.Add(p, "runtime.execMode", "Get or set how PHP runs in compose services (auto, exec, run)", m.execMode)
+	api.Add(p, "runtime.diagnose", "Interpreter, Xdebug ini values, mappings and setup hints", m.diagnose)
+	if err := p.Err(); err != nil {
+		return err
+	}
+
+	owner := hooks.WithOwner(ID)
+	api.HookPHPVersion.On(ctx.Hooks(), 0, func(c context.Context, q api.PHPVersionQuery) (api.PHPVersionQuery, error) {
+		if q.Version != "" {
+			return q, nil
+		}
+		res, err := m.phpVersion(c, PHPVersionParams{})
+		if err != nil {
+			return q, nil // unknown: consumers use their defaults
+		}
+		return api.PHPVersionQuery{Version: res.Version, Short: res.Short, Source: res.Source, Detail: res.Detail}, nil
+	}, owner, hooks.WithTimeout(hookTimeout))
+	api.HookPathMappings.On(ctx.Hooks(), 0, func(c context.Context, q api.PathMappingsQuery) (api.PathMappingsQuery, error) {
+		if len(q.Mappings) > 0 {
+			return q, nil
+		}
+		res, err := m.mappingsGet(c, struct{}{})
+		if err != nil {
+			return q, nil
+		}
+		return api.PathMappingsQuery{Mappings: res.Mappings, Source: res.Source}, nil
+	}, owner, hooks.WithTimeout(hookTimeout))
+
+	reset := func(bus.Event) {
+		m.mu.Lock()
+		m.interps = map[string]interp.Interpreter{}
+		m.mu.Unlock()
+	}
+	ctx.OnStop(ctx.Bus().Subscribe(api.TopicProjectOpened, reset))
+	ctx.OnStop(ctx.Bus().Subscribe(api.TopicProjectClosed, reset))
+	return nil
+}
+
+// Stop implements module.Module; hooks and methods are removed by the
+// kernel.
+func (m *Module) Stop() error {
+	m.mu.Lock()
+	m.interps = nil
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *Module) store() *settings.Store { return m.app.SettingsStore() }
+
+// InterpreterInfo describes an interpreter for "interp.list".
+type InterpreterInfo struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Kind     string `json:"kind"`
+	Version  string `json:"version,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Service  string `json:"service,omitempty"`
+	Score    int    `json:"score,omitempty"`
+	Selected bool   `json:"selected,omitempty"`
+}
+
+// InterpListParams are the params of "interp.list".
+type InterpListParams struct {
+	// Compose includes services of the project's compose file (default
+	// true; set false to skip loading compose files).
+	Compose *bool `json:"compose,omitempty"`
+}
+
+// InterpSelectParams are the params of "interp.select".
+type InterpSelectParams struct {
+	ID string `json:"id"`
+}
+
+// InterpVersionParams are the params of "interp.version".
+type InterpVersionParams struct {
+	// ID of the interpreter; empty means the selected one. "local:<path>"
+	// works for any php binary, even if it was not discovered.
+	ID      string `json:"id,omitempty"`
+	Modules bool   `json:"modules,omitempty"`
+	Ini     bool   `json:"ini,omitempty"`
+}
+
+// InterpVersionResult is the result of "interp.version".
+type InterpVersionResult struct {
+	ID      string            `json:"id"`
+	Version string            `json:"version"`
+	Modules []string          `json:"modules,omitempty"`
+	Ini     map[string]string `json:"ini,omitempty"`
+}
+
+// execModeOf parses the stored exec mode.
+func execModeOf(s string) (compose.ExecMode, error) {
+	switch s {
+	case "", "auto":
+		return compose.ExecAuto, nil
+	case "exec":
+		return compose.ExecAlways, nil
+	case "run":
+		return compose.RunAlways, nil
+	}
+	return 0, fmt.Errorf("unknown exec mode %q (auto, exec, run)", s)
+}
+
+func (m *Module) composeInterpreter(proj *compose.Project, service string) *compose.Interpreter {
+	ci := compose.NewInterpreter(proj, service)
+	ci.Docker = m.opts.Docker
+	ci.Mode, _ = execModeOf(settings.Get(m.store(), SettingExecMode, "auto"))
+	return ci
+}
+
+func (m *Module) loadCompose(ctx context.Context, dir string, profiles []string) (*compose.Project, error) {
+	opts := m.app.Options()
+	return compose.Load(ctx, dir, compose.LoadOptions{Env: opts.ComposeEnv, Profiles: profiles})
+}
+
+func (m *Module) interpList(ctx context.Context, p InterpListParams) ([]InterpreterInfo, error) {
+	selected := settings.Get(m.store(), api.SettingInterpreter, "")
+	found := make(map[string]interp.Interpreter)
+	out := []InterpreterInfo{}
+	for _, l := range interp.Discover(ctx, m.app.Options().Interp) {
+		found[l.ID()] = l
+		out = append(out, InterpreterInfo{ID: l.ID(), Label: l.Label(), Kind: string(l.Kind()), Version: l.PHPVersion, Path: l.Path})
+	}
+	if root := m.app.ProjectRoot(); root != "" && (p.Compose == nil || *p.Compose) {
+		if proj, err := m.loadCompose(ctx, root, nil); err == nil {
+			for _, c := range compose.Detect(proj) {
+				ci := m.composeInterpreter(proj, c.Service)
+				found[ci.ID()] = ci
+				out = append(out, InterpreterInfo{ID: ci.ID(), Label: ci.Label(), Kind: string(ci.Kind()), Service: c.Service, Score: c.Score})
+			}
+		} else if !errors.Is(err, compose.ErrNoComposeFile) {
+			m.app.Logger().Warn("compose", "err", err)
+		}
+	}
+	for i := range out {
+		out[i].Selected = out[i].ID == selected
+	}
+	m.mu.Lock()
+	m.interps = found
+	m.mu.Unlock()
+	return out, nil
+}
+
+// interpreter finds an interpreter by ID in the last listing (listing first
+// if needed). "local:<path>" IDs are accepted for any binary.
+func (m *Module) interpreter(ctx context.Context, id string) (interp.Interpreter, error) {
+	m.mu.Lock()
+	i, ok := m.interps[id]
+	m.mu.Unlock()
+	if ok {
+		return i, nil
+	}
+	if path, isLocal := strings.CutPrefix(id, "local:"); isLocal && path != "" {
+		if _, err := exec.LookPath(path); err != nil {
+			return nil, api.Errorf(api.CodeNotFound, "interpreter %s: %w", id, err)
+		}
+		return interp.NewLocal(path), nil
+	}
+	if _, err := m.interpList(ctx, InterpListParams{}); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	i, ok = m.interps[id]
+	m.mu.Unlock()
+	if ok {
+		return i, nil
+	}
+	return nil, api.Errorf(api.CodeNotFound, "unknown interpreter %q (see interp.list)", id)
+}
+
+// selected returns the selected interpreter, or nil if none is selected.
+func (m *Module) selected(ctx context.Context) (interp.Interpreter, error) {
+	id := settings.Get(m.store(), api.SettingInterpreter, "")
+	if id == "" {
+		return nil, nil
+	}
+	return m.interpreter(ctx, id)
+}
+
+func (m *Module) interpSelect(ctx context.Context, p InterpSelectParams) (InterpreterInfo, error) {
+	if p.ID == "" {
+		return InterpreterInfo{}, api.Errorf(api.CodeInvalidParams, "id is required")
+	}
+	i, err := m.interpreter(ctx, p.ID)
+	if err != nil {
+		return InterpreterInfo{}, err
+	}
+	prev := settings.Get(m.store(), api.SettingInterpreter, "")
+	if err := settings.Set(m.store(), api.SettingInterpreter, i.ID()); err != nil {
+		return InterpreterInfo{}, api.Errorf(api.CodeFailed, "saving selection: %w", err)
+	}
+	info := InterpreterInfo{ID: i.ID(), Label: i.Label(), Kind: string(i.Kind()), Selected: true}
+	b := m.app.Bus()
+	b.Publish(TopicInterpSelected, info)
+	if prev != i.ID() {
+		b.Publish(api.TopicInterpreterChanged, api.InterpreterChangedEvent{ID: i.ID(), Label: i.Label(), Kind: string(i.Kind()), Previous: prev})
+	}
+	return info, nil
+}
+
+func (m *Module) interpVersion(ctx context.Context, p InterpVersionParams) (InterpVersionResult, error) {
+	id := p.ID
+	if id == "" {
+		id = settings.Get(m.store(), api.SettingInterpreter, "")
+		if id == "" {
+			return InterpVersionResult{}, api.Errorf(api.CodeInvalidParams, "no interpreter selected; pass id")
+		}
+	}
+	i, err := m.interpreter(ctx, id)
+	if err != nil {
+		return InterpVersionResult{}, err
+	}
+	v, err := i.Version(ctx)
+	if err != nil {
+		return InterpVersionResult{}, api.Errorf(api.CodeUnavailable, "php version: %w", err)
+	}
+	res := InterpVersionResult{ID: i.ID(), Version: v}
+	if p.Modules {
+		if res.Modules, err = i.Modules(ctx); err != nil {
+			return res, api.Errorf(api.CodeUnavailable, "php modules: %w", err)
+		}
+	}
+	if p.Ini {
+		ini, err := i.Ini(ctx)
+		if err != nil {
+			return res, api.Errorf(api.CodeUnavailable, "php ini: %w", err)
+		}
+		res.Ini = ini
+	}
+	return res, nil
+}
+
+// ComposeParams are the params of "compose.detect".
+type ComposeParams struct {
+	// Dir is the directory with the compose files; empty means the project
+	// root.
+	Dir      string   `json:"dir,omitempty"`
+	Profiles []string `json:"profiles,omitempty"`
+}
+
+// HintInfo is a diagnostic about the Xdebug setup.
+type HintInfo struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+}
+
+// CandidateInfo is a compose service that probably runs PHP.
+type CandidateInfo struct {
+	Service     string            `json:"service"`
+	Score       int               `json:"score"`
+	Reasons     []string          `json:"reasons"`
+	Image       string            `json:"image,omitempty"`
+	Mappings    []api.MappingInfo `json:"mappings"`
+	XdebugHints []HintInfo        `json:"xdebugHints"`
+}
+
+// ComposeResult is the result of "compose.detect".
+type ComposeResult struct {
+	Found      bool            `json:"found"`
+	Dir        string          `json:"dir"`
+	Name       string          `json:"name,omitempty"`
+	Files      []string        `json:"files,omitempty"`
+	Services   []string        `json:"services,omitempty"`
+	Candidates []CandidateInfo `json:"candidates"`
+}
+
+func composeHints(proj *compose.Project, service, goos string) []HintInfo {
+	out := []HintInfo{}
+	for _, h := range compose.XdebugHints(proj, service, goos) {
+		out = append(out, HintInfo{Severity: h.Severity.String(), Code: h.Code, Message: h.Message})
+	}
+	return out
+}
+
+func toMappings(ms compose.Mappings) []api.MappingInfo {
+	out := []api.MappingInfo{}
+	for _, mp := range ms {
+		out = append(out, api.MappingInfo{Host: mp.Host, Remote: mp.Remote})
+	}
+	return out
+}
+
+func (m *Module) composeDetect(ctx context.Context, p ComposeParams) (ComposeResult, error) {
+	dir := p.Dir
+	if dir == "" {
+		dir = m.app.ProjectRoot()
+	}
+	if dir == "" {
+		return ComposeResult{}, api.Errorf(api.CodeNoProject, "no project open and no dir given")
+	}
+	abs, err := m.app.ResolvePath(dir)
+	if err != nil {
+		return ComposeResult{}, err
+	}
+	res := ComposeResult{Dir: abs, Candidates: []CandidateInfo{}}
+	proj, err := m.loadCompose(ctx, abs, p.Profiles)
+	if errors.Is(err, compose.ErrNoComposeFile) {
+		return res, nil
+	}
+	if err != nil {
+		return res, api.Errorf(api.CodeFailed, "compose: %w", err)
+	}
+	res.Found = true
+	res.Name, res.Files, res.Services = proj.Name, proj.Files, proj.ServiceNames()
+	for _, c := range compose.Detect(proj) {
+		ci := CandidateInfo{Service: c.Service, Score: c.Score, Reasons: c.Reasons, Image: c.Image,
+			Mappings: toMappings(c.Mappings), XdebugHints: composeHints(proj, c.Service, m.app.Options().GOOS)}
+		if ci.Reasons == nil {
+			ci.Reasons = []string{}
+		}
+		res.Candidates = append(res.Candidates, ci)
+	}
+	return res, nil
+}
+
+// PHPVersionParams are the params of "php.version".
+type PHPVersionParams struct {
+	// Override wins over every other source (e.g. "8.2"); without it the
+	// stored override (php.setVersionOverride) applies.
+	Override string `json:"override,omitempty"`
+	// Interpreter is the interpreter ID to ask; empty means the selected
+	// one. NoInterpreter skips asking an interpreter at all.
+	Interpreter   string `json:"interpreter,omitempty"`
+	NoInterpreter bool   `json:"noInterpreter,omitempty"`
+}
+
+// PHPVersionResult is the result of "php.version".
+type PHPVersionResult struct {
+	Version string `json:"version"`
+	Short   string `json:"short"`
+	// Source is where the version came from: override, interpreter,
+	// platform (composer config.platform.php) or require (require.php).
+	Source string `json:"source"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// Runner adapts any interp.Interpreter to phpver.Runner. For a compose
+// interpreter the version comes from inside the container (docker compose
+// exec/run, see runtime.execMode).
+type Runner struct{ I interp.Interpreter }
+
+// RunPHP implements phpver.Runner.
+func (r Runner) RunPHP(ctx context.Context, args ...string) ([]byte, error) {
+	return interp.Run(ctx, r.I, args...)
+}
+
+func (m *Module) phpVersion(ctx context.Context, p PHPVersionParams) (PHPVersionResult, error) {
+	opts := phpver.Options{ProjectDir: m.app.ProjectRoot()}
+	override := p.Override
+	if override == "" {
+		override = settings.Get(m.store(), SettingVersionOverride, "")
+	}
+	if override != "" {
+		v, err := phpver.ParseVersion(override)
+		if err != nil {
+			return PHPVersionResult{}, api.Errorf(api.CodeInvalidParams, "override: %w", err)
+		}
+		opts.Override = &v
+	}
+	if !p.NoInterpreter && opts.Override == nil {
+		id := p.Interpreter
+		if id == "" {
+			id = settings.Get(m.store(), api.SettingInterpreter, "")
+		}
+		if id != "" {
+			i, err := m.interpreter(ctx, id)
+			if err != nil {
+				return PHPVersionResult{}, err
+			}
+			opts.Runner = Runner{i}
+		} else if locals := interp.Discover(ctx, m.app.Options().Interp); len(locals) > 0 {
+			// No explicit choice: the concept puts the real interpreter
+			// first, so fall back to the first discovered local binary.
+			opts.Runner = Runner{locals[0]}
+		}
+	}
+	res, err := phpver.Detect(ctx, opts)
+	if err != nil {
+		if errors.Is(err, phpver.ErrUnknown) {
+			return PHPVersionResult{}, api.Errorf(api.CodeNotFound, "%w", err)
+		}
+		return PHPVersionResult{}, api.Errorf(api.CodeFailed, "php version: %w", err)
+	}
+	return PHPVersionResult{Version: res.Version.String(), Short: res.Version.Short(), Source: res.Source.String(), Detail: res.Detail}, nil
+}
+
+// MappingsResult is the result of "runtime.mappings.get/set".
+type MappingsResult struct {
+	Mappings []api.MappingInfo `json:"mappings"`
+	// Source is "settings" (corrected by the user), "compose" (bind mounts
+	// of the selected or best compose service) or "none".
+	Source string `json:"source"`
+	// Service is the compose service the mappings were derived from.
+	Service string `json:"service,omitempty"`
+}
+
+// MappingsSetParams are the params of "runtime.mappings.set".
+type MappingsSetParams struct {
+	Mappings []api.MappingInfo `json:"mappings"`
+	// Reset deletes the stored mappings (compose mappings apply again).
+	Reset bool `json:"reset,omitempty"`
+}
+
+func (m *Module) mappingsGet(ctx context.Context, _ struct{}) (MappingsResult, error) {
+	if stored, ok, _ := settings.Lookup[[]api.MappingInfo](m.store(), SettingMappings); ok {
+		if stored == nil {
+			stored = []api.MappingInfo{}
+		}
+		return MappingsResult{Mappings: stored, Source: "settings"}, nil
+	}
+	res := MappingsResult{Mappings: []api.MappingInfo{}, Source: "none"}
+	root := m.app.ProjectRoot()
+	if root == "" {
+		return res, nil
+	}
+	proj, err := m.loadCompose(ctx, root, nil)
+	if err != nil {
+		return res, nil
+	}
+	service := ""
+	if id := settings.Get(m.store(), api.SettingInterpreter, ""); strings.HasPrefix(id, "compose:") {
+		service = id[strings.LastIndex(id, ":")+1:]
+	}
+	if service == "" {
+		if cands := compose.Detect(proj); len(cands) > 0 {
+			service = cands[0].Service
+		}
+	}
+	if svc, ok := proj.Service(service); ok {
+		res.Mappings = toMappings(compose.ServiceMappings(proj.Dir, svc))
+		res.Source = "compose"
+		res.Service = service
+	}
+	return res, nil
+}
+
+func (m *Module) mappingsSet(ctx context.Context, p MappingsSetParams) (MappingsResult, error) {
+	if p.Reset {
+		if err := m.store().Delete(SettingMappings); err != nil {
+			return MappingsResult{}, api.Errorf(api.CodeFailed, "mappings: %w", err)
+		}
+	} else {
+		ms := make([]api.MappingInfo, 0, len(p.Mappings))
+		for _, mp := range p.Mappings {
+			if mp.Host == "" || mp.Remote == "" {
+				return MappingsResult{}, api.Errorf(api.CodeInvalidParams, "mapping needs host and remote: %+v", mp)
+			}
+			host, err := m.app.ResolvePath(mp.Host)
+			if err != nil {
+				return MappingsResult{}, err
+			}
+			ms = append(ms, api.MappingInfo{Host: host, Remote: mp.Remote})
+		}
+		if err := settings.Set(m.store(), SettingMappings, ms); err != nil {
+			return MappingsResult{}, api.Errorf(api.CodeFailed, "mappings: %w", err)
+		}
+	}
+	res, err := m.mappingsGet(ctx, struct{}{})
+	if err == nil {
+		m.app.Bus().Publish(api.TopicMappingsChanged, api.MappingsChangedEvent{Mappings: res.Mappings, Source: res.Source})
+	}
+	return res, err
+}
+
+// ExecModeParams are the params of "runtime.execMode".
+type ExecModeParams struct {
+	// Mode, if set, changes the mode: auto (exec if the service runs, run
+	// otherwise), exec (always docker compose exec), run (always run --rm).
+	Mode string `json:"mode,omitempty"`
+}
+
+// ExecModeResult is the result of "runtime.execMode".
+type ExecModeResult struct {
+	Mode string `json:"mode"`
+}
+
+func (m *Module) execMode(_ context.Context, p ExecModeParams) (ExecModeResult, error) {
+	if p.Mode != "" {
+		if _, err := execModeOf(p.Mode); err != nil {
+			return ExecModeResult{}, api.Errorf(api.CodeInvalidParams, "%w", err)
+		}
+		if err := settings.Set(m.store(), SettingExecMode, p.Mode); err != nil {
+			return ExecModeResult{}, api.Errorf(api.CodeFailed, "exec mode: %w", err)
+		}
+		m.mu.Lock()
+		m.interps = map[string]interp.Interpreter{} // rebuild with the new mode
+		m.mu.Unlock()
+	}
+	return ExecModeResult{Mode: settings.Get(m.store(), SettingExecMode, "auto")}, nil
+}
+
+// DiagnoseParams are the params of "runtime.diagnose".
+type DiagnoseParams struct {
+	// Interpreter to diagnose; empty means the selected one.
+	Interpreter string `json:"interpreter,omitempty"`
+}
+
+// Diagnosis is the result of "runtime.diagnose".
+type Diagnosis struct {
+	Interpreter *InterpreterInfo `json:"interpreter,omitempty"`
+	Version     string           `json:"version,omitempty"`
+	// Ini holds xdebug.mode, xdebug.client_host, xdebug.client_port and
+	// xdebug.start_with_request as reported by the interpreter.
+	Ini      map[string]string `json:"ini,omitempty"`
+	ExecMode string            `json:"execMode"`
+	Mappings MappingsResult    `json:"mappings"`
+	Hints    []HintInfo        `json:"hints"`
+}
+
+// Hint codes of runtime.diagnose (compose hints keep their own codes).
+const (
+	HintNoInterpreter    = "no-interpreter"
+	HintInterpreterError = "interpreter-error"
+	HintXdebugMissing    = "xdebug-not-loaded"
+	HintXdebugNoDebug    = "xdebug-mode-without-debug"
+	HintClientPort       = "client-port"
+	HintClientHostLocal  = "client-host-loopback"
+	HintStartWithRequest = "start-with-request"
+)
+
+// DefaultDebugPort is the port the debug listener uses by default.
+const DefaultDebugPort = "9003"
+
+func (m *Module) diagnose(ctx context.Context, p DiagnoseParams) (Diagnosis, error) {
+	res := Diagnosis{Hints: []HintInfo{}, ExecMode: settings.Get(m.store(), SettingExecMode, "auto")}
+	var err error
+	if res.Mappings, err = m.mappingsGet(ctx, struct{}{}); err != nil {
+		return res, err
+	}
+	var i interp.Interpreter
+	if p.Interpreter != "" {
+		if i, err = m.interpreter(ctx, p.Interpreter); err != nil {
+			return res, err
+		}
+	} else if i, err = m.selected(ctx); err != nil {
+		return res, err
+	}
+	if i == nil {
+		res.Hints = append(res.Hints, HintInfo{"warning", HintNoInterpreter, "no interpreter selected (interp.select)"})
+		return res, nil
+	}
+	res.Interpreter = &InterpreterInfo{ID: i.ID(), Label: i.Label(), Kind: string(i.Kind()), Selected: true}
+	if ci, ok := i.(*compose.Interpreter); ok {
+		res.Interpreter.Service = ci.Service
+		if root := m.app.ProjectRoot(); root != "" {
+			if proj, err := m.loadCompose(ctx, root, nil); err == nil {
+				res.Hints = append(res.Hints, composeHints(proj, ci.Service, m.app.Options().GOOS)...)
+			}
+		}
+	}
+	if res.Version, err = i.Version(ctx); err != nil {
+		res.Hints = append(res.Hints, HintInfo{"warning", HintInterpreterError, fmt.Sprintf("interpreter does not answer: %v", err)})
+		return res, nil
+	}
+	ini, err := i.Ini(ctx)
+	if err != nil {
+		res.Hints = append(res.Hints, HintInfo{"warning", HintInterpreterError, fmt.Sprintf("reading ini values: %v", err)})
+		return res, nil
+	}
+	res.Ini = ini
+	res.Hints = append(res.Hints, iniHints(ini, i.Kind())...)
+	return res, nil
+}
+
+// iniHints checks the Xdebug ini values of an interpreter.
+func iniHints(ini map[string]string, kind interp.Kind) []HintInfo {
+	var out []HintInfo
+	mode, loaded := ini["xdebug.mode"]
+	if !loaded {
+		return append(out, HintInfo{"warning", HintXdebugMissing, "Xdebug is not loaded in this interpreter"})
+	}
+	if !strings.Contains(mode, "debug") {
+		out = append(out, HintInfo{"warning", HintXdebugNoDebug, fmt.Sprintf("xdebug.mode=%q does not enable step debugging; include \"debug\"", mode)})
+	}
+	if port := ini["xdebug.client_port"]; port != "" && port != DefaultDebugPort {
+		out = append(out, HintInfo{"info", HintClientPort, fmt.Sprintf("xdebug.client_port=%s; start the listener on that port (debug.listen addr)", port)})
+	}
+	if host := ini["xdebug.client_host"]; kind == interp.KindCompose && isLoopback(host) {
+		out = append(out, HintInfo{"warning", HintClientHostLocal, fmt.Sprintf("xdebug.client_host=%s points at the container itself; use host.docker.internal", host)})
+	}
+	if swr := ini["xdebug.start_with_request"]; swr == "no" {
+		out = append(out, HintInfo{"info", HintStartWithRequest, "xdebug.start_with_request=no: sessions only start with xdebug_break() or a trigger"})
+	}
+	return out
+}
+
+func isLoopback(host string) bool {
+	switch strings.ToLower(host) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
+}

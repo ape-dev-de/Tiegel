@@ -23,7 +23,7 @@ Flags dürfen vor oder nach dem Befehl stehen (`--name wert` oder `--name=wert`)
 | Flag | Bedeutung |
 |---|---|
 | `--json` | maschinenlesbare Ausgabe (eingerücktes JSON auf stdout) |
-| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `history`, `git-status`, `php-version`, `php-check`) nehmen ohne Angabe das Arbeitsverzeichnis. |
+| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`) nehmen ohne Angabe das Arbeitsverzeichnis. |
 | `--config-dir DIR` | Einstellungsverzeichnis statt `<UserConfigDir>/Tiegel`; alternativ Umgebungsvariable `TIEGEL_CONFIG_DIR` (Tests, CI, portable Nutzung) |
 | `--help`, `-h` | Hilfe |
 | `--version` | Version (auch `tiegel --version` ohne `--headless`) |
@@ -33,7 +33,7 @@ Flags dürfen vor oder nach dem Befehl stehen (`--name wert` oder `--name=wert`)
 | Code | Bedeutung |
 |---|---|
 | 0 | Erfolg |
-| 1 | Fehler bei der Ausführung (Datei fehlt, kein Projekt, Git-Fehler …); `search` ohne Treffer und `php-check` mit Befunden liefern ebenfalls 1 (wie `grep`/Linter) |
+| 1 | Fehler bei der Ausführung (Datei fehlt, kein Projekt, Git-Fehler …); `search` ohne Treffer, `php-check`/`lsp-check` mit Befunden und `runtime-diagnose` mit Warnungen liefern ebenfalls 1 (wie `grep`/Linter); ebenso Aufrufe eines abgeschalteten Moduls |
 | 2 | Nutzungsfehler: unbekannter Befehl/Flag, fehlende Argumente, ungültige Parameter, unbekannte API-Methode |
 
 Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Daten frei.
@@ -60,7 +60,15 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `git-status` | Branch und geänderte Dateien (`XY pfad`) | `git.status` |
 | `php-version` | PHP-Version des Projekts und ihre Quelle | `php.version` |
 | `php-check FILE... [--php VERSION]` | Features/Deprecations gegen die Projektversion prüfen | `php.check` |
-| `debug-listen [--addr HOST:PORT] [--map HOST=REMOTE]...` | Xdebug-Listener starten (Standard `127.0.0.1:9003`) und Ereignisse zeilenweise ausgeben, bis Strg+C | `debug.listen`, Events `debug.*` |
+| `debug-listen [--addr HOST:PORT] [--map HOST=REMOTE]...` | Xdebug-Listener starten (Standard `127.0.0.1:9003`; ohne `--map` Mappings aus php-runtime) und Ereignisse zeilenweise ausgeben, bis Strg+C | `debug.listen`, Events `debug.*` |
+| `breakpoints [set DATEI:ZEILE [--condition AUSDRUCK] \| remove DATEI:ZEILE \| enable DATEI:ZEILE \| disable DATEI:ZEILE]` | Projekt-Breakpoints anzeigen (`pfad:zeile [disabled] if bedingung`) oder ändern; dauerhaft pro Projekt gespeichert, in jeder neuen Debug-Sitzung automatisch gesetzt | `debug.breakpoints.*` |
+| `lsp-check FILE... [--server ID] [--command PATH] [--timeout DUR]` | startet den Language Server (Erkennung/Einstellungen, Phpactor Standard, oder `--command`), öffnet die Dateien, wartet auf die Diagnosen (Standard 10 s) und gibt sie als `datei:zeile:spalte: schwere: meldung [quelle code]` aus; Exit 1 bei Fehlern/Warnungen oder Timeout | `lsp.start`, `doc.open`, Event `lsp.diagnostics` |
+| `git-commit -m MSG [--amend] [--push] [DATEI...]` | Commit (offene Dokumente werden vorher gespeichert); mit DATEIEN nur diese (unabhängig vom Index), sonst der Index; `--push` pusht danach (Exit 1, wenn der Push scheitert – mit Fehlerart) | `git.commitSelection`, `git.commit`, `git.push` |
+| `git-diff [DATEI...] [--staged] [--base REV]` | Unified Diff (Arbeitsbaum ↔ Index, `--staged` Index ↔ HEAD, `--base` gegen Revision); `--json` geparst | `git.diff` |
+| `git-push [--remote R]` | aktuellen Branch pushen (Netzwerkzugriff nur hier) | `git.push` |
+| `runtime-diagnose [INTERPRETER-ID]` | Xdebug-Einrichtung des (gewählten) Interpreters: INI-Werte `xdebug.mode/client_host/client_port`, Exec-Modus, Pfad-Mappings, Hinweise; Exit 1 bei Warnungen | `runtime.diagnose` |
+| `mappings [set HOST=REMOTE... \| reset] [--exec-mode auto\|exec\|run]` | Pfad-Mappings anzeigen oder dauerhaft korrigieren (`reset`: wieder aus Compose); Exec-Modus für Compose-Interpreter | `runtime.mappings.*`, `runtime.execMode` |
+| `php-override [VERSION \| clear]` | dauerhaften PHP-Versions-Override setzen/entfernen, danach Version und Quelle | `php.setVersionOverride`, `php.version` |
 | `serve [--framing ndjson\|lsp] [--concurrent]` | JSON-RPC 2.0 über stdin/stdout | alle |
 | `call METHOD [JSON \| -]` | beliebige API-Methode aufrufen; `-` liest die Parameter von stdin; Ausgabe immer JSON | alle |
 | `help [BEFEHL]` | Hilfe | – |
@@ -78,6 +86,12 @@ tiegel --headless compose --json | jq -r '.candidates[].xdebugHints[] | select(.
 
 # Alle PHP-Dateien des Projekts (ohne vendor, .gitignore beachtet) prüfen
 tiegel --headless files | grep '\.php$' | xargs tiegel --headless php-check
+
+# Language-Server-Diagnosen in CI (Exit 1 bei Fehlern/Warnungen)
+git diff --name-only HEAD~1 -- '*.php' | xargs tiegel --headless lsp-check --timeout 30s
+
+# Nur ausgewählte Dateien committen und pushen
+tiegel --headless git-commit -m "Fix" --push src/Kernel.php
 
 # Projektdateien als JSON-Baum, nur Pfade
 tiegel --headless files --json | jq -r '.. | objects | select(.dir|not) | .path? // empty'
@@ -142,7 +156,10 @@ Fehler sind JSON-RPC-Fehlerobjekte `{"code": …, "message": …}`:
 | -32001 | nicht gefunden (Datei, Dokument, Revision, Modul, Sitzung, Repository) | 1 |
 | -32003 | kein Projekt geöffnet | 1 |
 | -32004 | Versionskonflikt (`version` passt nicht zum Dokument) | 1 |
-| -32005 | externes Programm/Dienst nicht verfügbar (php, git, Port belegt, Update-Server) | 1 |
+| -32005 | externes Programm/Dienst nicht verfügbar (php, git, Language Server, Port belegt, Update-Server) | 1 |
+| -32006 | Modul abgeschaltet (`module disabled`; `data: {module, method}`) – mit `modules.enable` wieder einschalten | 1 |
+
+Fehlerobjekte können `data` tragen (z.B. `git.push`: `{kind, message, stderr}`).
 
 ### Events (Notifications)
 
@@ -154,7 +171,36 @@ Alles, was auf dem Event-Bus veröffentlicht wird, kann ein Client abonnieren:
 
 Muster: exakte Topics, `präfix.*` oder `*`. Zustellung als Notification `event` mit `{"topic": …, "payload": …}`. Innerhalb eines Abos bleibt die Reihenfolge erhalten; zwischen Antworten und Events gibt es keine feste Reihenfolge (Events laufen asynchron).
 
-Von der API veröffentlichte Topics: `project.opened`, `project.closed`, `doc.opened`, `doc.changed`, `doc.saved`, `doc.closed`, `interp.selected`, `modules.changed`, `git.committed`, `settings.changed`, `debug.listening`, `debug.stopped`, `debug.session.started`, `debug.session.ended`, `debug.status`, `debug.output`, `debug.notification`, `debug.breakpoint.resolved`.
+Vom Kern veröffentlichte Topics: `project.opened`/`project.closed` (`{root, name}`), `file.opened` (`{path, file, language, version, size}`), `file.saved` (`{path, file, trigger, size}` – auch bei Autosave), `doc.opened`, `doc.changed`, `doc.edited`, `doc.saved`, `doc.closed`, `modules.changed`, `settings.changed`.
+
+`doc.edited` beschreibt **jede** Pufferänderung – egal ob über `doc.*`, Undo, Autosave-Filter oder direkt in der GUI – im Format `{path, file, language, version, start, oldEnd, newEnd, startPoint, oldEndPoint, newEndPoint, range: {start: {line, character}, end: …}, text, oldText}`: Byte-Offsets und Zeile/Byte-Spalte (Tree-sitter) sowie der ersetzte Bereich in LSP-Koordinaten (0-basiert, UTF-16). `version` steigt pro Änderung um 1.
+
+Von den Modulen veröffentlichte Topics:
+
+| Modul | Topics |
+|---|---|
+| php-runtime | `interpreter.changed` (`{id, label, kind, previous}`), `interp.selected`, `runtime.mappingsChanged` (`{mappings, source}`) |
+| php-features | `php.diagnostics` (`{path, file, version, phpVersion, source, diagnostics}`), `php.versionChanged` (`{override}`) |
+| lang-php | `lsp.status` (gestartet/gestoppt/abgestürzt), `lsp.diagnostics` (`{path, file, version, diagnostics}`) |
+| git | `git.changed` (`{op, paths}` nach jeder Änderung über die API), `git.committed` |
+| debug-xdebug | `debug.listening`, `debug.stopped`, `debug.sessionStarted`, `debug.sessionEnded`, `debug.break` (gemappte Host-Datei/Zeile), `debug.breakpointHit`, `debug.breakpoints.changed`, `debug.status`, `debug.output`, `debug.notification`, `debug.breakpoint.resolved` |
+
+## Module
+
+Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`, ohne Gio). Sie registrieren ihre Methoden beim Start und sprechen untereinander nur über Bus-Topics und Hooks:
+
+| Modul | Abhängig von | Namespaces | Hooks |
+|---|---|---|---|
+| `php-runtime` | – | `interp.*`, `compose.*`, `php.version`, `runtime.*` | stellt `php.resolveVersion` und `runtime.pathMappings` (Filter) bereit |
+| `php-features` | `php-runtime` | `php.check`, `php.diagnostics`, `php.setVersionOverride` | nutzt `php.resolveVersion` |
+| `lang-php` | (`php-runtime` optional) | `lsp.*` | nutzt `php.resolveVersion` |
+| `git` | – | `git.*` | ruft Guard `commit.before` (Kern: Autosave) und Filter `commit.message` |
+| `debug-xdebug` | `php-runtime` | `debug.*` | ruft Guard `debug.before` (Kern: Autosave), nutzt `runtime.pathMappings` |
+
+`modules.enable`/`modules.disable` wirken sofort (und dauerhaft): ein abgeschaltetes Modul räumt Hooks und Abos ab, seine Methoden antworten mit `-32006 module disabled`. `app.methods` zeigt zu jeder Methode `module` und `disabled`.
+
+Hintergrundarbeit: php-features prüft offene PHP-Dokumente nach jeder Änderung (entprellt, inkrementelles Tree-sitter-Update aus `doc.edited`) und veröffentlicht `php.diagnostics`. lang-php hält einen gestarteten Language Server automatisch synchron: `doc.open` → didOpen, jede Änderung (auch direkt am Puffer) → didChange (inkrementell, UTF-16), `doc.close` → didClose, Speichern → didSave; bei `interpreter.changed` und `php.versionChanged` startet der Server neu.
+
 
 ## Methoden
 
@@ -166,7 +212,7 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 |---|---|---|
 | `app.info` | – | Version, API-Version, Konfig-Verzeichnis, Projekt, Methodenzahl |
 | `app.version` | – | `version`, `commit`, `date`, `dev`, `string` |
-| `app.methods` | – | `[{name, summary}]` |
+| `app.methods` | – | `[{name, summary, module, disabled}]` |
 | `update.check` | `source?`, `prereleases?` | `current`, `available`, `latest`, `url`, `notes` |
 | `events.subscribe` / `events.unsubscribe` | `topics: [..]` | aktive Muster |
 | `events.publish` | `topic`, `payload?` | – |
@@ -190,38 +236,96 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `history.restore` | `path`, `id` | neue Revision (offenes Dokument wird neu geladen) |
 | `search.inDoc` | `path`, `pattern`, `regex?`, `caseSensitive?`, `wholeWord?`, `limit?` | Treffer mit `line`, `col`, `text`, `lineText` (offenes Dokument oder Datei) |
 | `search.replaceInDoc` | wie `search.inDoc` + `replacement` | Zustand + `replaced` (ein Undo-Schritt) |
+| `modules.list` | – | `{id, dependsOn, enabled, running, error}` |
+| `modules.enable` / `modules.disable` | `id`, `withDependencies?` | Modulzustand (wirkt sofort) |
+
+**php-runtime**
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
 | `interp.list` | `compose?` | Interpreter `{id, label, kind, version, path, service, score, selected}` |
-| `interp.select` | `id` | gewählter Interpreter |
+| `interp.select` | `id` | gewählter Interpreter (Events `interpreter.changed`, `interp.selected`) |
 | `interp.version` | `id?`, `modules?`, `ini?` | `version`, `modules`, `ini` |
 | `compose.detect` | `dir?`, `profiles?` | `found`, `files`, `services`, `candidates[{service, score, reasons, image, mappings, xdebugHints}]` |
+| `php.version` | `override?`, `interpreter?`, `noInterpreter?` | `version`, `short`, `source` (`override`, `interpreter`, `composer …`), `detail`; ohne `override` gilt der gespeicherte Override; bei Compose-Interpretern kommt die Version aus dem Container |
+| `runtime.mappings.get` | – | `mappings[{host, remote}]`, `source` (`settings`, `compose`, `none`), `service` |
+| `runtime.mappings.set` | `mappings` oder `reset: true` | wie `get` (dauerhaft pro Projekt; Event `runtime.mappingsChanged`) |
+| `runtime.execMode` | `mode?` (`auto`, `exec`, `run`) | `mode` – wie PHP im Compose-Dienst läuft (`docker compose exec`/`run --rm`) |
+| `runtime.diagnose` | `interpreter?` | `interpreter`, `version`, `ini` (`xdebug.mode`, `xdebug.client_host`, `xdebug.client_port`, `xdebug.start_with_request`), `execMode`, `mappings`, `hints[{severity, code, message}]` (Compose-Hinweise + INI-Prüfung) |
+
+**php-features**
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `php.check` | `path`, `version?` | `version`, `source`, `diagnostics[{feature, severity, message, start, end, line, col, endLine, endCol, text}]` (offenes Dokument oder Datei) |
+| `php.diagnostics` | `path` | letzte Hintergrund-Diagnosen des offenen Dokuments (`{path, version, phpVersion, source, diagnostics}`) |
+| `php.setVersionOverride` | `version` (leer = entfernen) | `override` (dauerhaft; Event `php.versionChanged`) |
+
+**lang-php** – Bereiche in Ergebnissen sind `{start, end}` mit `{offset, line, col}` (1-basiert, Spalte in Zeichen); die Umrechnung nach UTF-16 erfolgt intern.
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
 | `lsp.servers` | `all?` | installierte Server `{id, name, path, args, license}` |
 | `lsp.known` | – | unterstützte Server |
-| `debug.listen` | `addr?`, `mappings?: [{host, remote}]` | `listening`, `addr` |
-| `debug.stop` | – | – |
-| `debug.sessions` | – | Sitzungen `{id, file, ideKey, engine, status, …}` |
-| `debug.continue` | `session?`, `action` (`run`, `stepInto`, `stepOver`, `stepOut`, `stop`, `detach`) | Status mit Datei/Zeile |
-| `debug.stack` | `session?` | Stack-Frames |
-| `debug.eval` | `session?`, `expr` | Property |
-| `debug.setBreakpoint` | `session?`, `file`, `line`, `condition?` | Breakpoint |
-| `modules.list` | – | `{id, dependsOn, enabled, running, error}` |
-| `modules.enable` / `modules.disable` | `id`, `withDependencies?` | Modulzustand |
+| `lsp.start` | `server?`, `command?`, `args?` (ohne Angabe: Einstellungen `lsp.server`/`lsp.command`/`lsp.args`, sonst erkannter Server, Phpactor bevorzugt; PHP-Version über Hook `php.resolveVersion`) | Status `{running, server, name, command, args, phpVersion, openDocs, serverInfo, generation}` |
+| `lsp.stop` / `lsp.status` | – | Status |
+| `lsp.diagnostics` | `path?` (ohne: alle) | `[{path, file, version, diagnostics[{severity, message, source, code, start, end, line, col, endLine, endCol}]}]` |
+| `lsp.completion` | `path`, `at` (Pos) | `{incomplete, items[{label, kind, detail, documentation, insertText, snippet, edit{range, newText}}]}` |
+| `lsp.hover` | `path`, `at` | `{found, kind, contents, range?}` |
+| `lsp.signature` | `path`, `at` | `{signatures[{label, documentation, parameters[{label, documentation}]}], activeSignature, activeParameter}` |
+| `lsp.definition` / `lsp.implementation` | `path`, `at` | `[{path, file, range}]` |
+| `lsp.semanticTokens` | `path` | `[{range, type, modifiers}]` |
+
+**git** – Hunk-Indizes beziehen sich auf `git.diff` mit denselben Optionen.
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
 | `git.status` | `ignored?`, `noUntracked?`, `paths?` | Branch, Upstream, ahead/behind, `files[{path, index, worktree, staged, unstaged}]` |
 | `git.diff` | `base?`, `target?`, `staged?`, `context?`, `paths?`, `raw?` | Dateien mit Hunks oder Rohtext |
 | `git.log` | `rev?`, `all?`, `skip?`, `max?` (Standard 100), `path?`, `follow?` | Commits |
 | `git.branches` | – | Branches |
-| `git.commit` | `message`, `stage?`, `amend?`, `allowEmpty?`, `noVerify?`, `signOff?` | `hash` (speichert offene Dokumente vorher) |
-| `php.version` | `override?`, `interpreter?`, `noInterpreter?` | `version`, `short`, `source`, `detail` |
-| `php.check` | `path`, `version?` | `version`, `source`, `diagnostics[{feature, severity, message, line, col, …}]` |
+| `git.commit` | `message`, `stage?`, `amend?`, `allowEmpty?`, `noVerify?`, `signOff?` | `hash` (Guard `commit.before` speichert offene Dokumente, Filter `commit.message`) |
+| `git.stage` / `git.unstage` | `paths?` oder `path` + `hunks?: [{hunk, lines?}]` (Indizes aus `git.diff`: stage ohne Basis, unstage mit `staged`) | Status |
+| `git.discard` | `path`, `hunks` oder `all: true` | `path`, `reloaded` (offenes, ungeändertes Dokument neu geladen, ein Undo-Schritt) |
+| `git.commitSelection` | `message`, `paths?`, `hunks?: [{path, hunks}]` (Indizes aus `git.diff` mit `base: "HEAD"`), `amend?`, `push?`, `noVerify?`, `signOff?`, `allowEmpty?` | `hash`, `message`, `pushed`, `push?`, `pushError?: {kind, message}`; Guard `commit.before` (Autosave), Filter `commit.message` |
+| `git.push` | `remote?`, `branch?`, `remoteBranch?`, `setUpstream?`, `forceWithLease?`, `tags?` | `remote`, `branch`, `remoteBranch`; Fehler -32000 mit `data: {kind, message, stderr}`, `kind` = `rejected`, `remoteRejected`, `auth`, `network`, `repoNotFound`, `noRemote`, `failed` |
+| `git.recentMessages` | `max?` (20) | Nachrichten, neueste zuerst |
+| `git.gutter` | `path`, `base?` (`head`/`index`) | `ranges[{kind, start, end, baseStart, baseEnd}]` (1-basiert, `end` exklusiv; gelöscht: `start == end`), aus dem Pufferinhalt |
+| `git.rollback` | `path`, `line`, `base?` | Dokumentzustand (Änderung als Undo-fähige Bearbeitung des offenen Dokuments) |
+| `git.show` | `rev?` (HEAD), `path` | `content`, `encoding` (`utf-8`/`base64`) |
+| `git.checkout` | `ref` | Status (offene, ungeänderte Dokumente werden neu geladen) |
+| `git.createBranch` / `git.deleteBranch` | `name`, `start?`, `checkout?` / `force?` | Branches |
+| `git.conflicts` | – | Dateien mit Konflikt |
+| `git.mergeData` | `path` | `base`, `ours`, `theirs`, `has*`, `blocks[{index, kind, conflict, base, ours, theirs, *Start}]`, `merged` (mit Markern), `conflicts` |
+| `git.resolve` | `path`, `content?` oder `resolutions: [{block, resolution: ours\|theirs\|oursFirst\|theirsFirst\|base\|custom, custom?}]` | `content`, `reloaded` |
+
+**debug-xdebug**
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `debug.listen` | `addr?`, `mappings?: [{host, remote}]` (ohne: Mappings aus php-runtime, folgt `runtime.mappingsChanged`) | `listening`, `addr`, `mappings`; vorher Guard `debug.before` (speichert offene Dokumente) |
+| `debug.stop` | – | Listener beenden (alle Sitzungen enden) |
+| `debug.sessions` | – | Sitzungen `{id, file, ideKey, engine, status, …}` |
+| `debug.run` / `debug.stepInto` / `debug.stepOver` / `debug.stepOut` / `debug.stopSession` / `debug.detach` | `session?` | Status mit Host-Datei/Zeile |
+| `debug.continue` | `session?`, `action` (`run`, `stepInto`, `stepOver`, `stepOut`, `stop`, `detach`) | Status mit Datei/Zeile |
+| `debug.stack` | `session?` | Stack-Frames |
+| `debug.eval` | `session?`, `expr` | Property |
+| `debug.variables` | `session?`, `depth?`, `context?`, `fullname?`, `page?`, `maxData?` | `contexts`, `variables[{name, fullname, type, value, numChildren, children}]`, `parent`, `hasMore` (Kinder per `fullname`, seitenweise) |
+| `debug.watches` / `debug.watches.set` | `session?` / `expressions` | ausgewertete Watches `[{expr, value, error}]` / gespeicherte Liste |
+| `debug.setBreakpoint` | `session?`, `file`, `line`, `condition?` | Breakpoint nur in dieser Sitzung |
+| `debug.breakpoints.list` | – | `breakpoints[{id, path, line, condition, enabled}]` |
+| `debug.breakpoints.set` | `file`, `line`, `condition?`, `enabled?` | Liste + `changed` (dauerhaft pro Projekt, wirkt sofort in laufenden Sitzungen, neue Sitzungen bekommen alle aktiven Breakpoints) |
+| `debug.breakpoints.remove` | `file`+`line` oder `id` | Liste + `changed` |
+| `debug.breakpoints.enable` | `file`+`line` oder `id`, `enabled` | Liste + `changed` |
 
 `session` bei `debug.*` darf fehlen, wenn genau eine Sitzung aktiv ist.
 
 ## Erweitern: neue Namespaces
 
-Neue Backend-Pakete registrieren nur einen Namespace in `internal/api` – CLI (`call`), `serve` und GUI sehen ihn sofort. Das Muster (ausführlich in `internal/api/doc.go`):
+Neue Funktionen kommen entweder in den Kern (`internal/api`, `mustHandle` in `New`) oder – der Normalfall – in ein Modul unter `internal/modules/<name>` (ausführlich in `internal/api/doc.go`):
 
-1. `internal/api/<namespace>.go` mit Param-/Ergebnis-Structs (JSON-Tags) und Handlern `func (a *App) xyz(ctx context.Context, p Params) (Result, error)`.
-2. `func (a *App) registerXyz()` mit `mustHandle(a, "xyz.verb", "Kurzbeschreibung", a.xyz)` und Aufruf in `New`.
-3. Erwartbare Fehler als `Errorf(CodeNotFound, …)` usw., Zustandsänderungen als Bus-Event.
-4. Tests gegen `App.Call`, bei Bedarf ein bequemer CLI-Befehl in `internal/headless/commands.go`, Methode hier in die Tabelle.
-
-Außerhalb des Pakets geht es ohne Änderung an `New` über `api.Options.Extensions` und `api.Handle`.
+1. Param-/Ergebnis-Structs (JSON-Tags) und Handler `func (m *Module) xyz(ctx context.Context, p Params) (Result, error)`.
+2. In `Start`: `api.AppFrom(ctx)` für den Kernzugriff, Methoden mit `api.Provide`/`api.Add`, Hooks mit `hooks.WithOwner(ctx.ModuleID())`, Bus-Abos über `ctx.OnStop(bus.Subscribe(...))`. `Claims()` meldet die Methoden an, damit sie bei abgeschaltetem Modul `module disabled` liefern.
+3. Erwartbare Fehler als `api.Errorf(api.CodeNotFound, …)` (bei Bedarf `.WithData(...)`), Zustandsänderungen als Bus-Event, gemeinsame Daten über Topics/Hooks aus `internal/api/contract.go` – nie direkte Aufrufe anderer Module.
+4. Dokument-Inhalte immer über `App.Document`/`Doc.Snapshot` bzw. `doc.edited` lesen; Bearbeitungen über `App.EditDocument` (Undo-fähig).
+5. Tests mit `internal/modules/modtest`, bei Bedarf ein CLI-Befehl in `internal/headless/cmd_<bereich>.go` (eigene Flags per `init` in `flagSpec`), Methode hier in die Tabelle.

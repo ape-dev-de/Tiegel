@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
+	"github.com/ape-dev-de/tiegel/internal/modules"
 )
 
 // Exit codes.
@@ -36,6 +37,8 @@ type Env struct {
 	// Options are the base options for the App; ConfigDir is overridden by
 	// --config-dir or $TIEGEL_CONFIG_DIR.
 	Options api.Options
+	// Modules configures the compiled-in modules (all are installed).
+	Modules modules.Options
 }
 
 // usageError marks wrong command-line usage (exit code 2).
@@ -46,6 +49,7 @@ func (e *usageError) Error() string { return e.msg }
 func usagef(format string, args ...any) error { return &usageError{fmt.Sprintf(format, args...)} }
 
 // flagSpec lists the known flags; true means the flag takes a value.
+// Command files add their own flags in init.
 var flagSpec = map[string]bool{
 	// global
 	"json": false, "version": false, "project": true, "config-dir": true, "help": false, "h": false,
@@ -189,6 +193,7 @@ func Run(ctx context.Context, args []string, env Env) int {
 	}
 
 	opts := env.Options
+	opts.Extensions = append(append([]func(*api.App) error(nil), opts.Extensions...), modules.Installer(env.Modules))
 	if dir := p.value("config-dir"); dir != "" {
 		opts.ConfigDir = dir
 	} else if dir := env.Getenv("TIEGEL_CONFIG_DIR"); dir != "" {
