@@ -1,0 +1,15 @@
+# branch.oid 4f2c9e1b7a3d5e6f8a9b0c1d2e3f4a5b6c7d8e9f
+# branch.head feature/invoices
+# branch.upstream origin/feature/invoices
+# branch.ab +2 -0
+1 .M N... 100644 100644 100644 3b18e51 3b18e51 config/services.yaml
+1 .M N... 100644 100644 100644 6772730 6772730 public/logo.png
+1 A. N... 000000 100644 100644 0000000 e69c3a1 src/Domain/Invoice.php
+1 .M N... 100644 100644 100644 51c0a2e 51c0a2e src/Http/Controller/UserController.php
+1 MM N... 100644 100644 100644 c9e9e05 c9e9e05 src/Mail/Mailer.php
+2 R. N... 100644 100644 100644 a3fb829 a3fb829 R91 src/Support/Str.php
+src/Util/Str.php
+1 .D N... 100644 100644 000000 b8962c3 b8962c3 tests/Legacy/LegacyMailerTest.php
+u UU N... 100644 100644 100644 100644 1111111 2222222 3333333 src/Billing/PriceCalculator.php
+? src/Domain/InvoiceNumber.php
+? docs/invoices.md
