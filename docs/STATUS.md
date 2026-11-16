@@ -16,7 +16,7 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 | 3.4–3.6 | Editor-Widget, Highlighting, Keymap | 🟡 | Welle 2 |
 | 4.1 | LSP-Client | ✅ | Fake-Server-Tests; Smoke-Test mit Phpactor offen (nicht installiert) |
 | 4.2–4.3 | lang-php Modul + UI | ⬜ | |
-| 5.1–5.4 | Interpreter, Compose, PHP-Version, Features | 🟡 | 5.1–5.2 ✅ (interp, compose); 5.3–5.4 in Arbeit |
+| 5.1–5.4 | Interpreter, Compose, PHP-Version, Features | ✅ | interp/compose 96–98 %; syntax (Tree-sitter) + phpver 96 %, 41 Features + 13 Deprecations; Erst-Parse 100k Zeilen ~0,5 s → im Hintergrund |
 | 5.5 | Runtime-UI | ⬜ | |
 | 6.1 | Git-CLI-Wrapper | ✅ | 95 %; Teil-Commit über temporären Index, Myers-Diff, Merge3; git ≥ 2.28 |
 | 6.2–6.5 | Git-UI, Commit-Dialog, Merge | ⬜ | |
