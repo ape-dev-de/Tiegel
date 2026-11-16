@@ -78,6 +78,9 @@ type Module struct {
 
 	// syncMu serialises document sync (bus events vs. requests).
 	syncMu sync.Mutex
+
+	// actions caches the code actions of recent lsp.codeActions calls.
+	actions actionCache
 }
 
 // server is a running language server.
@@ -128,6 +131,7 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "lsp.definition", "Definition locations of the symbol at a position", m.lspDefinition)
 	api.Add(p, "lsp.implementation", "Implementations of the symbol at a position", m.lspImplementation)
 	api.Add(p, "lsp.semanticTokens", "Semantic tokens of a document", m.lspSemanticTokens)
+	m.registerRefactoring(p)
 	if err := p.Err(); err != nil {
 		return err
 	}
@@ -290,6 +294,7 @@ func (m *Module) startLocked(ctx context.Context, p StartParams) error {
 		ClientName: "Tiegel", ClientVersion: m.app.Options().AppVersion,
 		Logger:        m.app.Logger().With("module", ID),
 		OnDiagnostics: func(dp protocol.PublishDiagnosticsParams) { m.onDiagnostics(s, dp) },
+		OnApplyEdit:   m.onApplyEdit,
 	}
 	connect := m.opts.Connect
 	if connect == nil {

@@ -97,10 +97,11 @@ type App struct {
 	claims  map[string][]string
 	docSeq  uint64 // last document generation, guarded by mu
 
-	watchMu sync.Mutex
-	watcher *watch.Watcher
-	closing chan struct{} // closed by Close
-	closeMu sync.Once
+	watchMu  sync.Mutex
+	watcher  *watch.Watcher
+	closing  chan struct{} // closed by Close
+	closeMu  sync.Once
+	searches searchRegistry // running project searches (search.cancel)
 	// trash moves a path to the trash (files.delete); start launches a
 	// detached program (files.reveal). Tests replace both.
 	trash func(path string) error

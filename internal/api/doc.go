@@ -15,7 +15,7 @@
 //	doc.*      open, close, list, text, insert, delete, replace, undo, redo, save, saveAll, resolveExternal
 //	watch.*    start, stop, status, refresh (project file watcher, external changes)
 //	history.*  list, content, restore
-//	search.*   inDoc, replaceInDoc
+//	search.*   inDoc, replaceInDoc, inProject, cancel, replaceInProject
 //	modules.*  list, enable, disable
 //
 // and the compiled-in modules (internal/modules) add theirs while they run:
