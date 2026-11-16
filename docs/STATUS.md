@@ -17,11 +17,11 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 | 4.1 | LSP-Client | ✅ | Fake-Server-Tests; Smoke-Test mit Phpactor offen (nicht installiert) |
 | 4.2–4.3 | lang-php Modul + UI | 🟡 | Modul + API (`lsp.*`, Auto-Sync, Diagnosen) ✅; UI (Completion, Hover, Signatur, Go to Definition/Implementation) ✅; Test mit echtem Phpactor offen |
 | 5.1–5.4 | Interpreter, Compose, PHP-Version, Features | ✅ | interp/compose 96–98 %; syntax (Tree-sitter) + phpver 96 %, 41 Features + 13 Deprecations; Erst-Parse 100k Zeilen ~0,5 s → im Hintergrund |
-| 5.5 | Runtime-UI | 🟡 | Module php-runtime/php-features ✅ (Mappings, Override, Hintergrund-Check); Organismen ✅; Anbindung in Shell offen |
+| 5.5 | Runtime-UI | ✅ | Interpreter/Mappings/Hinweise in Einstellungen, Versions-Override in Statusleiste |
 | 6.1 | Git-CLI-Wrapper | ✅ | 95 %; Teil-Commit über temporären Index, Myers-Diff, Merge3; git ≥ 2.28 |
-| 6.2–6.5 | Git-UI, Commit-Dialog, Merge | 🟡 | Organismen ✅ (CommitPanel, DiffView, LogView, BranchList, MergeView); Anbindung in Shell offen; Gutter-Marker offen |
+| 6.2–6.5 | Git-UI, Commit-Dialog, Merge | ✅ | Commit-Fenster (Hunk/Zeilen), Log, Branches, Merge-Fenster, Gutter-Marker + Rollback; Push nur gegen Fake getestet |
 | 7.1 | DBGp-Server | ✅ | 93 %; Test mit echtem Xdebug offen (lokal nicht installiert) |
-| 7.2–7.3 | Debug-Modul + UI | 🟡 | Modul debug-xdebug ✅ (Breakpoints persistent, Stepping, Variablen, Watches); Organismen ✅; Anbindung in Shell offen |
+| 7.2–7.3 | Debug-Modul + UI | ✅ | Debug-Fenster, Breakpoint-Gutter, Ausführungspunkt, Variablen/Watches; Test mit echtem Xdebug offen |
 | M8 | Mac-Paketierung | ⚠️ | Skripte, Universal-App, DMG, release.yml, opt-in Update-Check fertig; echte Signatur/Notarisierung braucht Apple-Zertifikate + Secrets (docs/release.md) |
 | M9 | Linux/WSL | 🟡 | Backend ✅: Socket-Transport mit Token, `api.Caller` (in-process/remote), Client, docsync, WSL-Interpreter + Pfade, `syntax.*`-API, CI Windows/Cross; GUI-Umschaltung, Pakete/Installer offen |
 
@@ -32,3 +32,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-16: Module langphp, phpruntime, phpfeatures, git, debugxdebug als headless Backend gemergt (D42); geteilte Puffer für In-Process-GUI (`App.Document`).
 - 2026-11-16: M9-Backend gemergt (D80–D83).
 - 2026-11-16: GUI Teil A gemergt (D90–D93). Nächster Schritt: Git- und Debug-Anbindung (Teil B).
+- 2026-11-16: GUI Teil B gemergt (D100–D103) – MVP-Funktionsumfang vollständig verdrahtet. Review-Fixes in Arbeit.
