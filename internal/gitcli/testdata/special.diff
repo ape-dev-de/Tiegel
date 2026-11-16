@@ -1,0 +1,33 @@
+From 1234567 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] preamble is ignored
+
+---
+diff --cc conflict.txt
+index 1111111,2222222..0000000
+--- a/conflict.txt
++++ b/conflict.txt
+@@@ -1,1 -1,1 +1,5 @@@
+++<<<<<<< HEAD
+ +ours
+++=======
++ theirs
+++>>>>>>> other
+diff --git a/img.png b/img.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..1c2f4a1b1e0c7e4b6ea4b6f1ad3c1b4e5e0a0b11
+GIT binary patch
+literal 4
+LcmZQzWMT#Y01f~L
+
+literal 0
+HcmV?d00001
+
+diff --git a/copy.txt b/copied.txt
+similarity index 100%
+copy from copy.txt
+copy to copied.txt
+diff --git a/same name.txt b/same name.txt
+index 1111111..2222222 100644
+Binary files a/same name.txt and b/same name.txt differ
+--
+2.39.2

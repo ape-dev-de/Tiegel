@@ -1,0 +1,12 @@
+--- old/file.php	2026-01-01 10:00:00.000000000 +0100
++++ new/file.php	2026-01-02 10:00:00.000000000 +0100
+@@ -1,4 +1,4 @@
+ <?php
+--- a line that starts with dashes
++++ a line that starts with pluses
+
+ echo 1;
+--- other.txt
++++ other.txt
+@@ -1 +0,0 @@
+-x
