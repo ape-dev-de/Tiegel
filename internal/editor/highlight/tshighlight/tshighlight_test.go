@@ -172,6 +172,10 @@ func TestInitialParseMatchesFresh(t *testing.T) {
 	if !h.Ready() || !h.Idle() || h.Err() != nil {
 		t.Fatal("not ready")
 	}
+	// Invalidate runs after the state change that ends Wait, so it may lag.
+	for deadline := time.Now().Add(5 * time.Second); calls.Load() == 0 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
 	if calls.Load() == 0 {
 		t.Error("invalidate not called")
 	}
