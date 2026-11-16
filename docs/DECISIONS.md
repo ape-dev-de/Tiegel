@@ -13,3 +13,4 @@ Beantwortet die offenen Fragen aus [konzept.md](konzept.md). Jede Entscheidung i
 | D7 | Tree-sitter-Anbindung | `github.com/tree-sitter/go-tree-sitter` (cgo) + offizielle Grammatik-Bindings | Offizielle Bindings, MIT; cgo ist für Gio auf macOS ohnehin nötig. |
 | D8 | Persistenz Einstellungen | Intern verwaltete Dateien unter `os.UserConfigDir()/Tiegel` (global) und `…/projects/<hash>` (pro Projekt) | „Ohne Konfig-Dateien“ heißt: nichts im Projekt, nichts von Hand zu editieren. |
 | D9 | Sprache | Code, Bezeichner, Kommentare: Englisch. Doku in `docs/`: Deutsch. UI-Texte: Englisch zuerst (i18n-fähig). | Offenes Projekt, breite Zielgruppe. |
+| D10 | Grapheme-Cluster im Editor | `github.com/rivo/uniseg` (MIT) | Unicode-konforme Grapheme-Grenzen (UAX #29) und Monospace-Breiten für Cursorbewegung, Spalten und Löschen; reines Go ohne cgo, aktiv gepflegt, keine weiteren Abhängigkeiten. Eigenbau der Unicode-Tabellen wäre fehleranfällig. |
