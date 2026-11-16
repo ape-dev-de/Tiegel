@@ -1,8 +1,6 @@
 package gui
 
 import (
-	"strings"
-
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
@@ -50,8 +48,10 @@ const (
 )
 
 // editorMenuAction is an Edit menu entry running an editor keymap action.
+// Its ID is the keymap action: the editor binds the keys, the window does
+// not; menus show the keymap's chord.
 func editorMenuAction(a keymap.Action, title, section string) Action {
-	return Action{ID: "menu." + a, Title: title, Menu: "Edit", Section: section,
+	return Action{ID: a, Title: title, Menu: "Edit", Section: section,
 		Run: func(v *View) { v.pendingEdit = a; v.focusEditor = true }}
 }
 
@@ -239,10 +239,8 @@ func (r *Registry) ChordText(id keymap.Action, goos string) string {
 		return a.KeyHint
 	}
 	// Edit menu entries show the editor keymap's chord.
-	if ed, ok := strings.CutPrefix(string(id), "menu."); ok {
-		if cs := keymap.ForOS(goos).ChordsFor(keymap.Action(ed)); len(cs) > 0 {
-			return cs[0].String()
-		}
+	if cs := keymap.ForOS(goos).ChordsFor(id); len(cs) > 0 {
+		return cs[0].String()
 	}
 	return ""
 }

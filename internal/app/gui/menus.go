@@ -8,6 +8,7 @@ import (
 
 	"gioui.org/layout"
 
+	"github.com/ape-dev-de/tiegel/internal/actions"
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
 	"github.com/ape-dev-de/tiegel/internal/app/gui/native"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
@@ -23,7 +24,7 @@ import (
 // (Cmd+Shift+A) searches all actions by title.
 
 // MenuOrder is the order of the top-level menus.
-var MenuOrder = []string{"File", "Edit", "View", "Navigate", "Git", "Run", "Window", "Help"}
+var MenuOrder = []string{"File", "Edit", "View", "Navigate", "Code", "Refactor", "Git", "Run", "Window", "Help"}
 
 // menuNode is a menu or submenu built from the registry.
 type menuNode struct {
@@ -80,31 +81,9 @@ func (r *Registry) buildMenus() []*menuNode {
 	return out
 }
 
-// items turns a menu node into MenuItems (with separators between
-// sections).
-func (n *menuNode) items(r *Registry, goos string) []MenuItem {
-	var out []MenuItem
-	sub := 0
-	addSubs := func(at int) {
-		for sub < len(n.subs) && n.subAt[sub] == at {
-			out = append(out, MenuItem{Title: n.subs[sub].title, Children: n.subs[sub].items(r, goos)})
-			sub++
-		}
-	}
-	for i, a := range n.actions {
-		addSubs(i)
-		if i > 0 && n.sections[i] != n.sections[i-1] {
-			out = append(out, MenuItem{Separator: true})
-		}
-		out = append(out, MenuItem{Title: a.Title, Action: a.ID, Shortcut: r.ChordText(a.ID, goos)})
-	}
-	addSubs(len(n.actions))
-	return out
-}
-
-// nativeMenus converts the menus for the native menu bar; item IDs are
-// action IDs.
-func nativeMenus(r *Registry, goos string) []native.Menu {
+// nativeMenus converts the resolved main menu (action model, D160) for
+// the native menu bar; item IDs are action IDs.
+func nativeMenus(r *Registry, goos string, c actions.Context) []native.Menu {
 	var conv func(items []MenuItem) []native.MenuItem
 	conv = func(items []MenuItem) []native.MenuItem {
 		out := make([]native.MenuItem, 0, len(items))
@@ -115,8 +94,8 @@ func nativeMenus(r *Registry, goos string) []native.Menu {
 		return out
 	}
 	var out []native.Menu
-	for _, n := range r.buildMenus() {
-		out = append(out, native.Menu{Title: n.title, Items: conv(n.items(r, goos))})
+	for _, m := range r.MainMenus(c, goos) {
+		out = append(out, native.Menu{Title: m.Title, Items: conv(m.Items)})
 	}
 	return out
 }
@@ -252,22 +231,6 @@ func (v *View) chooserMenu(title string, items []MenuItem) {
 	})
 }
 
-// openFindAction searches all actions (Cmd+Shift+A).
-func (v *View) openFindAction() {
-	var items []MenuItem
-	for _, a := range v.Registry.Actions() {
-		if a.Title == "" || a.Run == nil {
-			continue
-		}
-		title := a.Title
-		if a.Menu != "" {
-			title += "  (" + strings.ReplaceAll(a.Menu, "/", " › ") + ")"
-		}
-		items = append(items, MenuItem{Title: title, Action: a.ID})
-	}
-	v.ShowMenu("Find Action", items)
-}
-
 // ---- in-app menu bar (platforms without a native menu bar) -----------------
 
 // menuBar is a row of menu titles; a click shows the menu as a list.
@@ -279,7 +242,7 @@ func (m *menuBar) layout(gtx layout.Context, th *tokens.Theme, v *View) layout.D
 	if m.btns == nil {
 		m.btns = map[string]*atoms.Button{}
 	}
-	menus := v.Registry.buildMenus()
+	menus := v.Registry.MainMenus(v.actionContext(actions.CtxMain), v.goos)
 	h := gtx.Dp(th.Size.ControlH)
 	w := gtx.Constraints.Max.X
 	bg := gtx
@@ -287,13 +250,13 @@ func (m *menuBar) layout(gtx layout.Context, th *tokens.Theme, v *View) layout.D
 	atoms.Surface{Kind: atoms.SurfaceAlt}.Paint(bg, th)
 	children := make([]layout.FlexChild, 0, len(menus))
 	for _, n := range menus {
-		b := m.btns[n.title]
+		b := m.btns[n.Title]
 		if b == nil {
-			b = &atoms.Button{Text: n.title, Kind: atoms.Ghost}
-			m.btns[n.title] = b
+			b = &atoms.Button{Text: n.Title, Kind: atoms.Ghost}
+			m.btns[n.Title] = b
 		}
 		if b.Clicked(gtx) {
-			v.ShowMenu(n.title, n.items(v.Registry, v.goos))
+			v.ShowMenu(n.Title, n.Items)
 		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return b.Layout(gtx, th) }))
 	}
@@ -309,6 +272,7 @@ var nativeMenu struct {
 	sync.Mutex
 	owner   *View
 	version uint64
+	state   string
 }
 
 // syncNativeMenu installs the menu bar when this window has the focus and
@@ -320,11 +284,14 @@ func (v *View) syncNativeMenu(focused bool, route func(id string)) {
 	nativeMenu.Lock()
 	defer nativeMenu.Unlock()
 	ver := v.Registry.Version()<<1 | boolBit(v.ctl.Project.Open)
-	if nativeMenu.owner == v && nativeMenu.version == ver {
+	// Enabled states follow the active editor (language, selection).
+	ac := v.actionContext(actions.CtxMain)
+	state := fmt.Sprint(ac.Language, ac.Selection, ac.Modified, len(ac.Paths), ac.Values["git"])
+	if nativeMenu.owner == v && nativeMenu.version == ver && nativeMenu.state == state {
 		return
 	}
-	nativeMenu.owner, nativeMenu.version = v, ver
-	native.SetMenus(nativeMenus(v.Registry, v.goos), route)
+	nativeMenu.owner, nativeMenu.version, nativeMenu.state = v, ver, state
+	native.SetMenus(nativeMenus(v.Registry, v.goos, ac), route)
 }
 
 func boolBit(b bool) uint64 {

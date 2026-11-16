@@ -291,6 +291,7 @@ func (e *Editor) paint(gtx layout.Context, th *tokens.Theme) {
 			draw.Rect(ops, row, th.Editor.CurrentLine)
 		}
 	}
+	e.paintHighlights(ops, th, s, vis, ox)
 	e.paintSearch(ops, th, s, vis, primary, ox)
 	e.paintSelections(ops, th, vis, sels, ox)
 	e.paintBrackets(ops, th, s, vis, primary, ox)

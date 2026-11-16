@@ -6,6 +6,7 @@ import (
 
 	"gioui.org/layout"
 
+	"github.com/ape-dev-de/tiegel/internal/actions"
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
@@ -192,6 +193,8 @@ type MenuItem struct {
 	Checked   bool
 	Separator bool
 	Children  []MenuItem
+	// Icon names a glyph (atoms.GlyphNamed), e.g. from the action model.
+	Icon string
 }
 
 // ContextMenuProvider returns the entries a feature adds to a context
@@ -225,6 +228,11 @@ type Registry struct {
 	contexts     map[ContextID][]ContextMenuProvider
 	tabTypes     map[string]TabType
 	version      uint64
+	// model is the action model (menus, Find Action, labels, shortcuts
+	// texts, enabled states; D160), see actionmodel.go.
+	model     *actions.Registry
+	modelGOOS string
+	mainSeen  uint64
 }
 
 // NewRegistry returns an empty registry.
@@ -312,6 +320,7 @@ func (r *Registry) AddAction(a Action) {
 		r.order = append(r.order, a.ID)
 	}
 	r.actions[a.ID] = a
+	r.mirror(a)
 	r.version++
 }
 
@@ -321,6 +330,7 @@ func (r *Registry) RemoveAction(id keymap.Action) {
 		return
 	}
 	delete(r.actions, id)
+	r.unmirror(id)
 	for i, a := range r.order {
 		if a == id {
 			r.order = append(r.order[:i], r.order[i+1:]...)

@@ -28,6 +28,10 @@ type ChooserSpec struct {
 	// OnChoose receives the chosen item index (-1 without list) and the
 	// query.
 	OnChoose func(index int, query string)
+	// Tabs are categories (Tab/Shift+Tab switch); OnTab returns the items
+	// of category index for the query.
+	Tabs  []string
+	OnTab func(index int, query string) []palette.Item
 }
 
 // OpenChooser shows a chooser.
@@ -38,6 +42,7 @@ func (v *View) OpenChooser(cs ChooserSpec) {
 	v.chooseMode = chooseCustom
 	v.chooser.Open(cs.Title, cs.Hint, cs.Query)
 	v.chooser.NoList = cs.NoList
+	v.chooser.Tabs, v.chooser.Tab = cs.Tabs, 0
 	v.chooser.Items = append(v.chooser.Items[:0], cs.Items...)
 }
 

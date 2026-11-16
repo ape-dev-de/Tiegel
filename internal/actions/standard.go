@@ -70,7 +70,7 @@ func hasValue(key string) func(Context) bool {
 // debug) are part of it so that menus can be declared in one place; the
 // host hides them with Registry.Remove when the module is disabled.
 func StandardActions() []Action {
-	return []Action{
+	return append([]Action{
 		{ID: FileNewFile, Label: "File…", Icon: "file", Keywords: []string{"new", "create"}},
 		{ID: FileNewDir, Label: "Directory…", Icon: "folder", Keywords: []string{"new", "create", "folder"}},
 		{ID: FileNewPHPClass, Label: "PHP Class…", Icon: "file-code", Keywords: []string{"new", "create", "interface", "trait", "enum"}},
@@ -96,9 +96,9 @@ func StandardActions() []Action {
 		{ID: EditPaste, Label: "Paste", Shortcut: Shortcut{Mac: "Cmd+V", PC: "Ctrl+V"}},
 		{ID: EditSelectAll, Label: "Select All", Shortcut: Shortcut{Mac: "Cmd+A", PC: "Ctrl+A"}},
 		{ID: EditComment, Label: "Comment Line", Shortcut: Shortcut{Mac: "Cmd+/", PC: "Ctrl+/"}},
-		{ID: NavDefinition, Label: "Go to Definition", Shortcut: Shortcut{Mac: "Cmd+B", PC: "Ctrl+B"}, Visible: php},
-		{ID: NavImplement, Label: "Go to Implementation", Shortcut: Shortcut{Mac: "Cmd+Alt+B", PC: "Ctrl+Alt+B"}, Visible: php},
-		{ID: EditorFindUses, Label: "Find Usages", Shortcut: Shortcut{Mac: "Alt+F7", PC: "Alt+F7"}, Visible: php},
+		{ID: NavDefinition, Label: "Go to Definition", Shortcut: Shortcut{Mac: "Cmd+B", PC: "Ctrl+B"}, Enabled: php},
+		{ID: NavImplement, Label: "Go to Implementation", Shortcut: Shortcut{Mac: "Cmd+Alt+B", PC: "Ctrl+Alt+B"}, Enabled: php},
+		{ID: EditorFindUses, Label: "Find Usages", Shortcut: Shortcut{Mac: "Alt+F7", PC: "Alt+F7"}, Enabled: php},
 
 		{ID: GutterToggleBreakpoint, Label: "Toggle Breakpoint", Icon: "debug", Shortcut: Shortcut{Mac: "Cmd+F8", PC: "Ctrl+F8"}, Visible: php},
 		{ID: GutterShowLineNumbers, Label: "Show Line Numbers", Check: CheckBox, Checked: func(c Context) bool { return c.Value("lineNumbers") != "" }},
@@ -116,7 +116,7 @@ func StandardActions() []Action {
 		{ID: ToolHide, Label: "Hide", Shortcut: Shortcut{Mac: "Shift+Escape", PC: "Shift+Escape"}},
 		{ID: ToolMaximize, Label: "Maximize", Check: CheckBox, Checked: func(c Context) bool { return c.Value("maximized") != "" }},
 		{ID: ToolFloat, Label: "Floating Window", Check: CheckBox, Checked: func(c Context) bool { return c.Value("floating") != "" }},
-	}
+	}, editorActions()...)
 }
 
 // revealLabel is the platform name of "show in file manager".
@@ -149,13 +149,8 @@ func StandardMenus() map[ContextID][]MenuItem {
 			Item(FileRename), Item(FileCopy), Item(FileDelete), Separator(),
 		}, append(fileOps(), Separator(), Item(FileHistory),
 			Sub("Git", Item(GitStage), Item(GitCommitFiles), Item(GitShowDiff), Item(GitRollback)))...),
-		CtxEditor: {
-			Item(EditCut), Item(EditCopy), Item(EditPaste), Separator(),
-			Item(NavDefinition), Item(NavImplement), Item(EditorFindUses), Separator(),
-			Item(EditComment), Item(EditSelectAll), Separator(),
-			Item(FileReveal), Item(FileHistory),
-		},
-		CtxEditorGutter: {Item(GutterToggleBreakpoint), Separator(), Item(GutterShowLineNumbers), Item(GutterAnnotate)},
+		CtxEditor:       editorMenu(),
+		CtxEditorGutter: gutterMenu(),
 		CtxTab: append([]MenuItem{
 			Item(TabClose), Item(TabCloseOthers), Item(TabCloseRight), Item(TabCloseAll), Separator(),
 			Item(TabPin), Item(TabSplitRight), Separator(), Item(FileRename),
