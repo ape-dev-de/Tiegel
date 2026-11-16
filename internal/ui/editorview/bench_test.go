@@ -33,8 +33,15 @@ var big100k = bigPHP(100_000)
 
 // bigRig opens the 100k-line document with highlighting, folding and the
 // caret in the middle, focused.
-func bigRig(tb testing.TB) *rig {
+func bigRig(tb testing.TB) *rig { return bigRigTheme(tb, nil) }
+
+// bigRigTheme is bigRig with theme th (nil = the harness default with the
+// bundled fonts).
+func bigRigTheme(tb testing.TB, th *tokens.Theme) *rig {
 	r := &rig{t: tb, h: uitest.NewHarness(image.Pt(1200, 900)), e: New(buffer.NewString(big100k))}
+	if th != nil {
+		r.h.Theme = th
+	}
 	tb.Cleanup(r.e.Close)
 	r.e.Keymap = keymap.Mac()
 	r.e.Highlighter = highlight.PHPDemo
@@ -66,6 +73,19 @@ func BenchmarkLayout100k(b *testing.B) {
 // shapes all lines anew.
 func BenchmarkScrollFrame100k(b *testing.B) {
 	r := bigRig(b)
+	page := r.e.geo.size.Y
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r.e.SetScrollOffset(image.Pt(0, (i%2000)*page))
+		r.frame()
+	}
+}
+
+// BenchmarkScrollFrame100kSystemFonts is BenchmarkScrollFrame100k with
+// the system font shaper and fallback chain.
+func BenchmarkScrollFrame100kSystemFonts(b *testing.B) {
+	uitest.SkipWithoutSystemMono(b)
+	r := bigRigTheme(b, tokens.Dark(tokens.NewShaper()))
 	page := r.e.geo.size.Y
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

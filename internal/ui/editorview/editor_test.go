@@ -476,11 +476,11 @@ func TestFoldActions(t *testing.T) {
 	r.e.SetFoldRanges(highlight.BraceFolds(r.e.Buffer().Snapshot()))
 	r.focus()
 	r.e.SetCaret(r.e.Buffer().LineStart(1))
-	r.press("Cmd+-")
+	r.press("Cmd+Alt+-")
 	if !r.e.Folds().IsCollapsed(0) || caret(r.e) != r.e.Buffer().LineEnd(0) {
 		t.Fatalf("collapse at caret: caret %d", caret(r.e))
 	}
-	r.press("Cmd+=")
+	r.press("Cmd+Alt+=")
 	if r.e.Folds().IsCollapsed(0) {
 		t.Fatal("expand")
 	}

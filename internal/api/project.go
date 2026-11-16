@@ -81,6 +81,14 @@ func (a *App) projectOpen(ctx context.Context, p PathParams) (ProjectInfo, error
 	if !st.IsDir() {
 		return ProjectInfo{}, Errorf(CodeInvalidParams, "project: %s is not a directory", root)
 	}
+	// Switching to another project closes the previous one first, so its
+	// documents do not leak into the new project (unsaved changes are
+	// kept as recovery points like on project.close).
+	if cur := a.ProjectRoot(); cur != "" && cur != root {
+		if _, err := a.projectClose(ctx, struct{}{}); err != nil {
+			return ProjectInfo{}, err
+		}
+	}
 	ps, err := settings.OpenProject(a.opts.ConfigDir, root, a.bus)
 	if err != nil {
 		return ProjectInfo{}, Errorf(CodeFailed, "project settings: %w", err)

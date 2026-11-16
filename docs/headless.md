@@ -238,7 +238,7 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `update.check` | `source?`, `prereleases?` | `current`, `available`, `latest`, `url`, `notes` |
 | `events.subscribe` / `events.unsubscribe` | `topics: [..]` | aktive Muster |
 | `events.publish` | `topic`, `payload?` | – |
-| `project.open` | `path` | Projektinfo |
+| `project.open` | `path` | Projektinfo (ein anderes offenes Projekt wird vorher wie mit `project.close` geschlossen) |
 | `project.info` / `project.close` | – | Projektinfo |
 | `files.list` | `path?`, `depth?`, `ignored?`, `libraries?`, `limit?` | Baum `{name, path, dir, size, ignored, library, collapsed, children}` + Zähler |
 | `files.read` | `path`, `maxBytes?` | `content`, `encoding` (`utf-8`/`base64`), `language`, `size`, `truncated` |

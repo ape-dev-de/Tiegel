@@ -22,7 +22,15 @@ type Event interface{ isWelcomeEvent() }
 // OpenEvent: open the project directory Path.
 type OpenEvent struct{ Path string }
 
-func (OpenEvent) isWelcomeEvent() {}
+// BrowseEvent: "Open…" was clicked (the host shows a folder chooser).
+type BrowseEvent struct{}
+
+// RemoveEvent: remove Path from the recent projects.
+type RemoveEvent struct{ Path string }
+
+func (OpenEvent) isWelcomeEvent()   {}
+func (BrowseEvent) isWelcomeEvent() {}
+func (RemoveEvent) isWelcomeEvent() {}
 
 // View is the welcome organism.
 type View struct {
@@ -32,12 +40,17 @@ type View struct {
 	Version string
 	// Error is shown under the path field (e.g. not a directory).
 	Error string
+	// Hints are shortcut hints shown below the recent projects
+	// ("Open…  Cmd+Shift+O").
+	Hints []string
 
-	path   atoms.TextField
-	open   atoms.Button
-	rows   []molecules.ListRow
-	list   molecules.ScrollList
-	inited bool
+	path    atoms.TextField
+	open    atoms.Button
+	browse  atoms.Button
+	rows    []molecules.ListRow
+	removes []atoms.IconButton
+	list    molecules.ScrollList
+	inited  bool
 }
 
 func (v *View) init() {
@@ -47,7 +60,8 @@ func (v *View) init() {
 	v.inited = true
 	v.path.Hint, v.path.Leading = "Project directory, e.g. ~/code/shop", atoms.GlyphFolder
 	v.path.Editor.SingleLine, v.path.Editor.Submit = true, true
-	v.open = atoms.Button{Text: "Open", Kind: atoms.Primary, Glyph: atoms.GlyphFolderOpen}
+	v.open = atoms.Button{Text: "Open", Kind: atoms.Secondary}
+	v.browse = atoms.Button{Text: "Open…", Kind: atoms.Primary, Glyph: atoms.GlyphFolderOpen}
 }
 
 // SetPath fills the path field.
@@ -58,6 +72,7 @@ func (v *View) Update(gtx layout.Context) []Event {
 	v.init()
 	for len(v.rows) < len(v.Recent) {
 		v.rows = append(v.rows, molecules.ListRow{})
+		v.removes = append(v.removes, atoms.IconButton{Glyph: atoms.GlyphClose, Description: "Remove from recent projects"})
 	}
 	var out []Event
 	for {
@@ -72,7 +87,14 @@ func (v *View) Update(gtx layout.Context) []Event {
 	if v.open.Clicked(gtx) && v.path.Text() != "" {
 		out = append(out, OpenEvent{Path: v.path.Text()})
 	}
+	if v.browse.Clicked(gtx) {
+		out = append(out, BrowseEvent{})
+	}
 	for i, p := range v.Recent {
+		if v.removes[i].Clicked(gtx) {
+			out = append(out, RemoveEvent{Path: p})
+			continue
+		}
 		if c, _ := v.rows[i].Update(gtx); c {
 			out = append(out, OpenEvent{Path: p})
 		}
@@ -105,6 +127,8 @@ func (v *View) column(th *tokens.Theme) layout.Widget {
 			layout.Rigid(layout.Spacer{Height: th.Space.S}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return v.browse.Layout(gtx, th) }),
+					layout.Rigid(layout.Spacer{Width: th.Space.M}.Layout),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return v.path.Layout(gtx, th) }),
 					layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return v.open.Layout(gtx, th) }),
@@ -133,11 +157,37 @@ func (v *View) column(th *tokens.Theme) layout.Widget {
 							layout.Rigid(atoms.Strong(filepath.Base(p)).Fn(th)),
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 								gtx.Constraints.Min.X = 0
-								return layout.Inset{Left: th.Space.M}.Layout(gtx, atoms.Small(p).SingleLine().Fn(th))
+								d := layout.Inset{Left: th.Space.M}.Layout(gtx, atoms.Small(p).SingleLine().Fn(th))
+								d.Size.X = gtx.Constraints.Max.X // the remove button sits at the right end
+								return d
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								b := &v.removes[i]
+								b.Size, b.IconSize = th.Size.RowH, th.Size.IconSmall
+								if !v.rows[i].Hovered() && !b.Hovered() {
+									m := op.Record(gtx.Ops)
+									d := b.Layout(gtx, th)
+									m.Stop()
+									return d
+								}
+								return b.Layout(gtx, th)
 							}),
 						)
 					})
 				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if len(v.Hints) == 0 {
+					return layout.Dimensions{}
+				}
+				rows := make([]layout.FlexChild, 0, len(v.Hints)+1)
+				rows = append(rows, layout.Rigid(layout.Spacer{Height: th.Space.XL}.Layout))
+				for _, h := range v.Hints {
+					rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Bottom: th.Space.XS}.Layout(gtx, atoms.Muted(h).Fn(th))
+					}))
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
 			}),
 		)
 	}

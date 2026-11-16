@@ -91,7 +91,7 @@ func (v *View) handleRecovery(gtx layout.Context) {
 func (v *View) layoutEditorArea(gtx layout.Context) layout.Dimensions {
 	pts := v.ctl.Recovery
 	if len(pts) == 0 {
-		return v.layoutEditor(gtx)
+		return v.layoutGroups(gtx)
 	}
 	th, r := v.th, v.recovery
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -108,6 +108,6 @@ func (v *View) layoutEditorArea(gtx layout.Context) layout.Dimensions {
 				)
 			})
 		}),
-		layout.Flexed(1, v.layoutEditor),
+		layout.Flexed(1, v.layoutGroups),
 	)
 }

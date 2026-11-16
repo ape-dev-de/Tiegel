@@ -39,6 +39,8 @@ const (
 	ActPush     keymap.Action = "git.push"
 	ActRollback keymap.Action = "git.rollback"
 	ActGitView  keymap.Action = "view.git"
+	// ActCommitView toggles the commit tool window.
+	ActCommitView keymap.Action = "view.commit"
 )
 
 // gitDock is the view side of the git feature.
@@ -135,6 +137,7 @@ func (d *gitDock) install() {
 	g := d.git()
 	r.AddToolWindow(ToolWindow{
 		ID: ToolCommit, Title: "Commit", Glyph: atoms.GlyphCommit, Order: 20, Share: 0.45,
+		Mac: "Cmd+0", PC: "Alt+0", ActionID: ActCommitView,
 		Badge: func() (string, atoms.BadgeKind) {
 			if n := len(d.v.ctl.Git); n > 0 {
 				return fmt.Sprint(n), atoms.BadgeInfo
@@ -149,6 +152,7 @@ func (d *gitDock) install() {
 	})
 	r.AddToolWindow(ToolWindow{
 		ID: ToolGit, Title: "Git", Glyph: atoms.GlyphBranch, Order: 30, Share: 0.45,
+		Mac: "Cmd+9", PC: "Alt+9", ActionID: ActGitView,
 		Badge: func() (string, atoms.BadgeKind) {
 			if n := len(g.Conflicts); n > 0 {
 				return fmt.Sprint(n), atoms.BadgeDanger
@@ -183,15 +187,14 @@ func (d *gitDock) uninstall() {
 
 func (d *gitDock) actions() []Action {
 	return []Action{
-		{ID: ActCommit, Title: "Commit…", Mac: "Cmd+K", PC: "Ctrl+K", Run: func(v *View) {
+		{ID: ActCommit, Title: "Commit…", Mac: "Cmd+K", PC: "Ctrl+K", Menu: "Git", Section: "commit", Run: func(v *View) {
 			v.ShowTool(ToolCommit)
 		}},
-		{ID: ActPush, Title: "Push", Mac: "Cmd+Shift+K", PC: "Ctrl+Shift+K", Run: func(v *View) {
+		{ID: ActPush, Title: "Push", Mac: "Cmd+Shift+K", PC: "Ctrl+Shift+K", Menu: "Git", Section: "commit", Run: func(v *View) {
 			v.ctl.Status.Notice = "Pushing…"
 			d.git().Push()
 		}},
-		{ID: ActRollback, Title: "Rollback Changes", Mac: "Cmd+Alt+Z", PC: "Ctrl+Alt+Z", Run: func(v *View) { d.rollbackAtCaret() }},
-		{ID: ActGitView, Title: "Git", Mac: "Cmd+9", PC: "Alt+9", Run: func(v *View) { v.ToggleTool(ToolGit) }},
+		{ID: ActRollback, Title: "Rollback Changes", Mac: "Cmd+Alt+Z", PC: "Ctrl+Alt+Z", Menu: "Git", Section: "changes", Run: func(v *View) { d.rollbackAtCaret() }},
 	}
 }
 

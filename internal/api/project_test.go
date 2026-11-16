@@ -7,6 +7,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/ape-dev-de/tiegel/internal/core/bus"
 )
 
 func TestProjectLifecycle(t *testing.T) {
@@ -40,6 +43,43 @@ func TestProjectLifecycle(t *testing.T) {
 	}
 	wantCode(t, a, "files.list", nil, CodeNoProject)
 	wantCode(t, a, "history.list", PathParams{Path: "/x"}, CodeNoProject)
+}
+
+// Opening another project closes the previous one: its documents are
+// gone (no leak into the new project) and project.closed is published.
+func TestProjectSwitchClosesDocuments(t *testing.T) {
+	a := newTestApp(t)
+	one, two := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(one, "a.php"), "<?php\n")
+	writeFile(t, filepath.Join(two, "b.txt"), "b")
+	var info ProjectInfo
+	call(t, a, "project.open", PathParams{Path: one}, &info)
+	closed := make(chan string, 1)
+	unsub := a.Bus().Subscribe(TopicProjectClosed, func(e bus.Event) {
+		if p, ok := e.Payload.(ProjectEvent); ok {
+			closed <- p.Root
+		}
+	})
+	defer unsub()
+	call(t, a, "doc.open", PathParams{Path: "a.php"}, nil)
+	call(t, a, "project.open", PathParams{Path: two}, &info)
+	if info.OpenDocs != 0 || a.ProjectRoot() != info.Root {
+		t.Fatalf("after switch %+v", info)
+	}
+	select {
+	case r := <-closed:
+		if filepath.Base(r) != filepath.Base(one) {
+			t.Fatalf("closed %s", r)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no project.closed")
+	}
+	// Reopening the same project keeps it (no close).
+	call(t, a, "doc.open", PathParams{Path: filepath.Join(two, "b.txt")}, nil)
+	call(t, a, "project.open", PathParams{Path: two}, &info)
+	if info.OpenDocs != 1 {
+		t.Fatalf("reopen same project closed documents: %+v", info)
+	}
 }
 
 // paths flattens a tree into "path[/][!ignored][@library][+collapsed]".

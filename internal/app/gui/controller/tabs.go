@@ -23,6 +23,14 @@ type Tab struct {
 	// Generation identifies the opened document instance (doc.open); the
 	// tab's doc.close carries it so it cannot close a reopened document.
 	Generation uint64
+	// Virtual is the kind of a virtual tab (no file, e.g. "diff"); File
+	// is then a unique key ("virtual:<kind>:<id>") and Doc is nil. The
+	// view draws it with the tab type registered for the kind.
+	Virtual string
+	// Label overrides the tab title (virtual tabs).
+	Label string
+	// Data is the payload of a virtual tab (owned by its tab type).
+	Data any
 }
 
 // pendingCloses holds, per controller and file, a channel that is closed
@@ -46,8 +54,43 @@ func (c *Controller) waitPendingClose(ctx context.Context, file string) {
 	}
 }
 
-// Title is the tab title (file name).
-func (t *Tab) Title() string { return filepath.Base(t.File) }
+// Title is the tab title (file name or the label of a virtual tab).
+func (t *Tab) Title() string {
+	if t.Label != "" {
+		return t.Label
+	}
+	return filepath.Base(t.File)
+}
+
+// VirtualKey returns the File key of a virtual tab.
+func VirtualKey(kind, id string) string { return "virtual:" + kind + ":" + id }
+
+// OpenVirtual opens (or activates) a virtual tab of kind with id in the
+// active group, e.g. a diff. title is shown in the tab; data is handed to
+// the tab type's layout.
+func (c *Controller) OpenVirtual(kind, id, title string, data any) *Tab {
+	key := VirtualKey(kind, id)
+	if i := c.tabIndex(key); i >= 0 {
+		c.Tabs[i].Data, c.Tabs[i].Label = data, title
+		c.Activate(i)
+		return c.Tabs[i]
+	}
+	t := &Tab{File: key, Path: title, Virtual: kind, Label: title, Data: data}
+	c.insertTab(t)
+	return t
+}
+
+// insertTab inserts t after the active tab and activates it.
+func (c *Controller) insertTab(t *Tab) {
+	pos := c.Active + 1
+	if pos <= 0 || pos > len(c.Tabs) {
+		pos = len(c.Tabs)
+	}
+	c.Tabs = append(c.Tabs, nil)
+	copy(c.Tabs[pos+1:], c.Tabs[pos:])
+	c.Tabs[pos] = t
+	c.Activate(pos)
+}
 
 // Tab returns the open tab of an absolute file, or nil.
 func (c *Controller) Tab(file string) *Tab {
@@ -88,6 +131,14 @@ func (c *Controller) OpenFile(file string, at *Location) {
 		}
 		return
 	}
+	// Open in another group: share its document (no second doc.open).
+	if o := c.sharedTab(abs, nil); o != nil && o.Doc != nil {
+		c.insertTab(o.clone())
+		if at != nil {
+			c.Reveal = at
+		}
+		return
+	}
 	c.Go(func(ctx context.Context) func() {
 		c.waitPendingClose(ctx, abs)
 		var st struct {
@@ -110,14 +161,7 @@ func (c *Controller) OpenFile(file string, at *Location) {
 			}
 			t := &Tab{File: abs, Path: c.Rel(abs), Language: st.Language, EOL: st.EOL, Modified: st.Modified, Doc: doc, Generation: st.Generation}
 			// Insert after the active tab like most editors do.
-			pos := c.Active + 1
-			if pos <= 0 || pos > len(c.Tabs) {
-				pos = len(c.Tabs)
-			}
-			c.Tabs = append(c.Tabs, nil)
-			copy(c.Tabs[pos+1:], c.Tabs[pos:])
-			c.Tabs[pos] = t
-			c.Activate(pos)
+			c.insertTab(t)
 			if at != nil {
 				c.Reveal = at
 			}
@@ -138,7 +182,9 @@ func (c *Controller) Activate(i int) {
 	c.CloseCompletion()
 	c.Signature = SignatureHelp{}
 	c.Hover = HoverInfo{}
-	c.touchRecent(c.Tabs[i].File)
+	if c.Tabs[i].Virtual == "" {
+		c.touchRecent(c.Tabs[i].File)
+	}
 }
 
 // touchRecent moves file to the front of the recent files.
@@ -169,10 +215,25 @@ func (c *Controller) CloseTab(i int) {
 	case c.Active > i || c.Active == len(c.Tabs):
 		c.Active--
 	}
-	if c.Active >= 0 {
+	if c.Active >= 0 && c.Tabs[c.Active].Virtual == "" {
 		c.touchRecent(c.Tabs[c.Active].File)
 	}
 	c.CloseCompletion()
+	// An emptied split closes; its neighbour becomes active.
+	if len(c.Tabs) == 0 && len(c.groups) > 1 {
+		c.Unsplit()
+	}
+	// Virtual tabs have no document; a file still open in another group
+	// keeps the shared document open.
+	if t.Virtual != "" || t.Doc == nil {
+		return
+	}
+	if o := c.sharedTab(t.File, t); o != nil {
+		if t.Modified {
+			c.Save(t.File)
+		}
+		return
+	}
 	key := closeKey{c, t.File}
 	done := make(chan struct{})
 	pendingCloses.Store(key, done)

@@ -877,7 +877,7 @@ func (g *Git) scheduleGutter(file string) {
 // reloadGutters reloads the gutters of open tabs and forgets the others.
 func (g *Git) reloadGutters() {
 	for file := range g.gutters {
-		if g.c.Tab(file) == nil {
+		if !g.c.FileOpen(file) {
 			delete(g.gutters, file)
 			continue
 		}

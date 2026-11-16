@@ -28,7 +28,7 @@ func buildPages() []*page {
 		editorPage(),
 		debugToolbarPage(), callStackPage(), variablesPage(), watchesPage(), breakpointsListPage(), sessionListPage(),
 		interpreterPickerPage(), pathMappingPage(), hintsPage(), statusbarVersionPage(),
-		debugPanelPage(),
+		debugPanelPage(), settingsPage(),
 	}, gitPages()...)
 	// Group by level so the sidebar shows each level once.
 	order := map[string]int{"Tokens": 0, "Atoms": 1, "Molecules": 2, "Organisms": 3, "Templates": 4}
@@ -207,7 +207,7 @@ func syntaxPage() *page {
 func typographyPage() *page {
 	return &page{
 		Level: "Tokens", Name: "Typography & Spacing", Glyph: atoms.GlyphFileText,
-		Summary: "Go fonts (bundled), type scale, 4dp spacing grid and corner radii.",
+		Summary: "Font fallback chains (system fonts first, bundled Go fonts as fallback; the app applies the user's FontPrefs with Theme.WithFonts), type scale, 4dp spacing grid and corner radii.",
 		Variants: func(th *tokens.Theme) []variant {
 			bar := func(name string, dp unit.Dp) layout.Widget {
 				return func(gtx layout.Context) layout.Dimensions {
@@ -236,8 +236,8 @@ func typographyPage() *page {
 				)
 			}
 			s, r := th.Space, th.Radius
-			return []variant{
-				{"Type scale (UI font: " + string(th.Font.UI.Typeface) + ", code: " + string(th.Font.Mono.Typeface) + ")", column(th.Space.S,
+			return append(fontVariants(th), []variant{
+				{"Type scale", column(th.Space.S,
 					atoms.Title(fmt.Sprintf("Title %vsp", float32(th.Text.Title))).Fn(th),
 					atoms.Heading(fmt.Sprintf("Heading %vsp", float32(th.Text.Heading))).Fn(th),
 					atoms.Label{Text: fmt.Sprintf("Large %vsp", float32(th.Text.Large))}.Fn(th),
@@ -250,7 +250,7 @@ func typographyPage() *page {
 					bar("L", s.L), bar("XL", s.XL), bar("XXL", s.XXL),
 				)},
 				{"Radii", flow(th.Space.L, radius("S", r.S), radius("M", r.M), radius("L", r.L), radius("Pill", r.Pill))},
-			}
+			}...)
 		},
 	}
 }

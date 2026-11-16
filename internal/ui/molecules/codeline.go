@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/text"
@@ -188,9 +189,11 @@ func runeCount(s string) int {
 	return n
 }
 
-// codeMetricsKey identifies a shaper, code font size and pixel density.
+// codeMetricsKey identifies a shaper, code font (family chain and size)
+// and pixel density.
 type codeMetricsKey struct {
 	shaper *text.Shaper
+	font   font.Font
 	size   float32
 	pxSp   float32
 }
@@ -200,7 +203,7 @@ type codeMetricsKey struct {
 var codeMetrics sync.Map // codeMetricsKey -> image.Point{advance, height}
 
 func codeMetric(gtx layout.Context, th *tokens.Theme) image.Point {
-	k := codeMetricsKey{th.Shaper, float32(th.Text.Code), gtx.Metric.PxPerSp}
+	k := codeMetricsKey{th.Shaper, th.Font.Mono, float32(th.Text.Code), gtx.Metric.PxPerSp}
 	if v, ok := codeMetrics.Load(k); ok {
 		return v.(image.Point)
 	}

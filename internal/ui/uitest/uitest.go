@@ -61,12 +61,13 @@ func Layout(th *tokens.Theme, max image.Point, w Widget) (dims layout.Dimensions
 	return dims, nil
 }
 
-// Smoke lays out w in both themes within max and fails t if it panics,
+// Smoke lays out w in both themes (with the deterministic bundled-fonts
+// shaper) within max and fails t if it panics,
 // returns an empty size, or exceeds the constraints. It returns the
 // dimensions from the dark theme.
 func Smoke(t testing.TB, name string, max image.Point, w Widget) layout.Dimensions {
 	t.Helper()
-	sh := tokens.NewShaper()
+	sh := tokens.NewBundledShaper()
 	var first layout.Dimensions
 	for i, th := range []*tokens.Theme{tokens.Dark(sh), tokens.Light(sh)} {
 		d, err := Layout(th, max, w)
@@ -136,7 +137,19 @@ type Harness struct {
 	clock  time.Duration
 }
 
-// NewHarness returns a harness with the dark theme.
+// SkipWithoutSystemMono skips t unless an installed monospace system font
+// exists (tokens.MonospaceFamilies lists more than the bundled Go Mono).
+// Tests of the system shaper (tokens.NewShaper) use it, because CI
+// machines may have no fonts installed.
+func SkipWithoutSystemMono(t testing.TB) {
+	t.Helper()
+	if len(tokens.MonospaceFamilies()) < 2 {
+		t.Skip("no monospace system font installed")
+	}
+}
+
+// NewHarness returns a harness with the dark theme and the deterministic
+// bundled-fonts shaper.
 func NewHarness(max image.Point) *Harness {
 	return &Harness{Theme: tokens.Dark(nil), Max: max}
 }
