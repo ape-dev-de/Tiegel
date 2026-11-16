@@ -72,6 +72,7 @@ func (s *StatusbarVersion) Update(gtx layout.Context) []Event {
 func (s *StatusbarVersion) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	s.Update(gtx)
 	s.tip.Text = s.Tooltip()
+	s.tip.Above = true // the status bar sits at the window bottom
 	gtx.Constraints.Min = image.Point{}
 	return s.tip.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
 		return s.click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {

@@ -74,12 +74,18 @@ type FileRow struct {
 
 	row    widget.Clickable
 	toggle widget.Clickable
+	double bool
 }
+
+// DoubleClicked reports whether the last Update saw a double click on the
+// row (files: open them).
+func (r *FileRow) DoubleClicked() bool { return r.double }
 
 // Update processes input. clicked reports a click on the row (selection);
 // toggled reports that a directory's arrow was clicked or the row was
 // double-clicked, in which case Expanded has already been flipped.
 func (r *FileRow) Update(gtx layout.Context) (clicked, toggled bool) {
+	r.double = false
 	for {
 		if _, ok := r.toggle.Update(gtx); !ok {
 			break
@@ -95,6 +101,9 @@ func (r *FileRow) Update(gtx layout.Context) (clicked, toggled bool) {
 			break
 		}
 		clicked = true
+		if c.NumClicks >= 2 {
+			r.double = true
+		}
 		if c.NumClicks >= 2 && r.Dir {
 			r.Expanded = !r.Expanded
 			toggled = true

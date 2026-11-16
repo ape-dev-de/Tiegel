@@ -1,0 +1,714 @@
+package gui
+
+import (
+	"fmt"
+	"path"
+	"runtime"
+	"strings"
+	"time"
+
+	"gioui.org/io/key"
+	"gioui.org/layout"
+	"gioui.org/text"
+
+	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
+	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
+	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/completion"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/filetree"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/findbar"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/palette"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/problems"
+	rtui "github.com/ape-dev-de/tiegel/internal/ui/organisms/runtime"
+	settingsui "github.com/ape-dev-de/tiegel/internal/ui/organisms/settings"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/statusbar"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/tabs"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/welcome"
+	"github.com/ape-dev-de/tiegel/internal/ui/templates"
+	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
+	"github.com/ape-dev-de/tiegel/internal/version"
+)
+
+// toolProblems is the ID of the built-in Problems tool window.
+const toolProblems = "problems"
+
+// chooser modes.
+const (
+	chooseNone = iota
+	chooseFiles
+	chooseRecent
+	chooseLine
+	chooseLocations
+	choosePHP
+)
+
+// View is the main window content: it lays out the workbench from the
+// controller state, routes input to the organisms and turns their events
+// into controller calls. All methods run on the UI goroutine.
+type View struct {
+	ctl *controller.Controller
+	// Registry holds tool windows, gutter providers, actions and status
+	// items (docking points for further features).
+	Registry *Registry
+	// Invalidate requests a frame (set by the window).
+	Invalidate func()
+
+	goos   string
+	shaper *text.Shaper
+	th     *tokens.Theme
+	theme  string // resolved preference the theme was built for
+	// systemDark reports the OS appearance for the "system" theme.
+	systemDark   func() bool
+	systemAt     time.Time
+	systemIsDark bool
+
+	bench    templates.Workbench
+	tree     filetree.Tree
+	treeSeen [2]uint64 // tree and git versions applied to the organism
+	tabBar   tabs.Bar
+	status   statusbar.Bar
+	php      rtui.StatusbarVersion
+	find     findbar.Bar
+	findOpen bool
+	probs    problems.List
+	probData []controller.Diagnostic
+	probSeen uint64
+	compl    completion.List
+
+	chooser     palette.Chooser
+	chooseMode  int
+	chooseFiles []string // candidates of the files/recent chooser
+	chooseIdx   []int    // chooser item → candidate index
+
+	settings     settingsui.Panel
+	settingsOpen bool
+	mappings     []controller.Mapping
+
+	welcome welcome.View
+
+	editors map[string]*editorSession
+
+	global, editorKeys shortcuts
+	lastActive         string
+	// focusEditor moves the keyboard focus to the editor on the next
+	// frame (after choosers and jumps).
+	focusEditor bool
+}
+
+// NewView returns the view for ctl. goos selects the keymap ("darwin":
+// Cmd shortcuts).
+func NewView(ctl *controller.Controller, goos string) *View {
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	v := &View{
+		ctl: ctl, goos: goos, Registry: NewRegistry(), shaper: tokens.NewShaper(),
+		editors: map[string]*editorSession{}, Invalidate: func() {},
+		systemDark: systemDarkMode,
+	}
+	for _, a := range defaultActions() {
+		v.Registry.AddAction(a)
+	}
+	v.Registry.AddToolWindow(ToolWindow{
+		ID: toolProblems, Title: "Problems", Glyph: atoms.GlyphWarning, Order: 10,
+		Badge: func() (string, atoms.BadgeKind) {
+			e, w := ctl.ProblemCounts()
+			switch {
+			case e > 0:
+				return fmt.Sprint(e + w), atoms.BadgeDanger
+			case w > 0:
+				return fmt.Sprint(w), atoms.BadgeWarning
+			}
+			return "", 0
+		},
+		Layout: v.layoutProblems,
+	})
+	v.bench.SidebarVisible = true
+	v.bench.ActiveTool = toolProblems
+	v.welcome.Version = version.Version
+	v.applyTheme()
+	return v
+}
+
+// Controller returns the controller.
+func (v *View) Controller() *controller.Controller { return v.ctl }
+
+// Theme returns the current theme.
+func (v *View) Theme() *tokens.Theme { return v.th }
+
+// RunAction runs a registered action.
+func (v *View) RunAction(id keymap.Action) {
+	if a, ok := v.Registry.Action(id); ok && a.Run != nil {
+		a.Run(v)
+	}
+}
+
+// applyTheme rebuilds the theme when the preference changed.
+func (v *View) applyTheme() {
+	pref := v.ctl.Prefs.Theme
+	mode := tokens.ModeDark
+	switch pref {
+	case "light":
+		mode = tokens.ModeLight
+	case "system":
+		if v.systemDark != nil && time.Since(v.systemAt) > 5*time.Second {
+			v.systemAt, v.systemIsDark = time.Now(), v.systemDark()
+		}
+		if !v.systemIsDark {
+			mode = tokens.ModeLight
+		}
+	}
+	if v.th != nil && v.theme == pref && v.th.Mode == mode {
+		return
+	}
+	v.theme = pref
+	v.th = tokens.New(mode, v.shaper)
+}
+
+// Frame lays out one frame of the window filling gtx.
+func (v *View) Frame(gtx layout.Context) layout.Dimensions {
+	v.ctl.Drain()
+	v.applyTheme()
+	th := v.th
+	if !v.ctl.Project.Open {
+		v.welcome.Recent = v.ctl.RecentProjects
+		v.welcome.Error = v.ctl.Status.Notice
+		for _, e := range v.welcome.Update(gtx) {
+			if o, ok := e.(welcome.OpenEvent); ok {
+				v.ctl.Status.Notice = ""
+				v.ctl.OpenProject(expandHome(o.Path))
+			}
+		}
+		v.global.build(v.Registry, v.goos, ScopeGlobal, nil)
+		v.global.process(gtx, v)
+		return v.welcome.Layout(gtx, th)
+	}
+
+	v.global.build(v.Registry, v.goos, ScopeGlobal, nil)
+	v.global.process(gtx, v)
+	v.handleWorkbench(gtx)
+	v.handleTree(gtx)
+	v.handleTabs(gtx)
+	v.handleStatus(gtx)
+	v.handleProblems(gtx)
+	v.handleOverlay(gtx)
+	v.closeStaleEditors()
+
+	slots := templates.Slots{
+		Sidebar: func(gtx layout.Context) layout.Dimensions { return v.tree.Layout(gtx, th) },
+		Tabs:    v.layoutTabs,
+		Editor:  v.layoutEditor,
+		Status:  func(gtx layout.Context) layout.Dimensions { return v.status.Layout(gtx, th) },
+	}
+	if v.findOpen && v.activeSession() != nil {
+		slots.Find = v.layoutFind
+	}
+	if tw := v.Registry.ToolWindows(Bottom); len(tw) > 0 {
+		v.bench.ToolTabs = v.bench.ToolTabs[:0]
+		for _, t := range tw {
+			tt := templates.ToolTab{ID: t.ID, Title: t.Title, Glyph: t.Glyph}
+			if t.Badge != nil {
+				tt.Badge, tt.BadgeKind = t.Badge()
+			}
+			v.bench.ToolTabs = append(v.bench.ToolTabs, tt)
+		}
+		if t, ok := v.Registry.ToolWindow(v.bench.ActiveTool); ok {
+			slots.Tool = func(gtx layout.Context) layout.Dimensions { return t.Layout(gtx, th) }
+		}
+	}
+	if rw := v.Registry.ToolWindows(Right); len(rw) > 0 {
+		t := rw[0]
+		slots.Right = func(gtx layout.Context) layout.Dimensions { return t.Layout(gtx, th) }
+	}
+	switch {
+	case v.settingsOpen:
+		slots.Overlay, slots.OverlayCentered = func(gtx layout.Context) layout.Dimensions { return v.settings.Layout(gtx, th) }, true
+	case v.chooseMode != chooseNone:
+		slots.Overlay = func(gtx layout.Context) layout.Dimensions { return v.chooser.Layout(gtx, th) }
+	}
+	return v.bench.Layout(gtx, th, slots)
+}
+
+// expandHome replaces a leading ~ with the home directory.
+func expandHome(p string) string {
+	p = strings.TrimSpace(p)
+	if strings.HasPrefix(p, "~") {
+		if h := homeDir(); h != "" {
+			return h + p[1:]
+		}
+	}
+	return p
+}
+
+// ---- workbench, tree, tabs, status ------------------------------------------
+
+func (v *View) toggleTool(id string) {
+	if v.bench.ToolOpen && v.bench.ActiveTool == id {
+		v.bench.ToolOpen = false
+		return
+	}
+	v.bench.ActiveTool, v.bench.ToolOpen = id, true
+	if t, ok := v.Registry.ToolWindow(id); ok && t.OnOpen != nil {
+		t.OnOpen()
+	}
+}
+
+func (v *View) handleWorkbench(gtx layout.Context) {
+	for _, e := range v.bench.Update(gtx) {
+		switch e := e.(type) {
+		case templates.ToolEvent:
+			v.toggleTool(e.ID)
+		case templates.DismissEvent:
+			v.closeOverlay()
+		}
+	}
+}
+
+func (v *View) handleTree(gtx layout.Context) {
+	ct := v.ctl.Tree
+	if ct == nil {
+		v.tree.Root = nil
+		return
+	}
+	if seen := [2]uint64{ct.Version, v.ctl.GitVersion}; seen != v.treeSeen || v.tree.Root == nil {
+		v.treeSeen = seen
+		v.tree.Root = v.convertNode(ct.Root)
+	}
+	for _, e := range v.tree.Update(gtx) {
+		switch e := e.(type) {
+		case filetree.ExpandEvent:
+			if e.Expanded && !e.Loaded {
+				v.ctl.LoadDir(e.Path)
+			}
+		case filetree.OpenEvent:
+			v.ctl.OpenFile(e.Path, nil)
+		}
+	}
+}
+
+func (v *View) convertNode(n *controller.Node) *filetree.Node {
+	fn := &filetree.Node{Name: n.Name, Path: n.Path, Dir: n.Dir, Loaded: n.Loaded, Library: n.Library, Ignored: n.Ignored,
+		Status: filetree.StatusFromGit(v.ctl.GitState(n.Path))}
+	for _, ch := range n.Children {
+		fn.Children = append(fn.Children, v.convertNode(ch))
+	}
+	return fn
+}
+
+func (v *View) handleTabs(gtx layout.Context) {
+	v.tabBar.Items = v.tabBar.Items[:0]
+	for _, t := range v.ctl.Tabs {
+		v.tabBar.Items = append(v.tabBar.Items, tabs.Item{ID: t.File, Title: t.Title(), Tooltip: t.Path, Modified: t.Modified, Glyph: filetree.Glyph(&filetree.Node{Name: t.Title()})})
+	}
+	v.tabBar.Active = ""
+	if t := v.ctl.ActiveTab(); t != nil {
+		v.tabBar.Active = t.File
+	}
+	if v.tabBar.Active != v.lastActive {
+		v.lastActive = v.tabBar.Active
+		v.tabBar.ScrollToActive()
+		if t := v.ctl.ActiveTab(); t != nil {
+			v.tree.Select(t.Path)
+		}
+	}
+	for _, e := range v.tabBar.Update(gtx) {
+		switch e := e.(type) {
+		case tabs.SelectEvent:
+			for i, t := range v.ctl.Tabs {
+				if t.File == e.ID {
+					v.ctl.Activate(i)
+				}
+			}
+		case tabs.CloseEvent:
+			for i, t := range v.ctl.Tabs {
+				if t.File == e.ID {
+					v.ctl.CloseTab(i)
+					break
+				}
+			}
+		}
+	}
+}
+
+func (v *View) layoutTabs(gtx layout.Context) layout.Dimensions {
+	if len(v.tabBar.Items) == 0 {
+		return layout.Dimensions{}
+	}
+	return v.tabBar.Layout(gtx, v.th)
+}
+
+// Status bar item IDs.
+const (
+	statusCaret = "caret"
+	statusEOL   = "eol"
+	statusLang  = "lang"
+	statusLSP   = "lsp"
+	statusGit   = "git"
+	statusMsg   = "notice"
+)
+
+func (v *View) handleStatus(gtx layout.Context) {
+	st := v.ctl.Status
+	v.php.Version, v.php.Source, v.php.Interpreter = st.PHP.Short, st.PHP.Source, st.Interpreter
+	if st.PHP.Detail != "" {
+		v.php.Source = st.PHP.Source + ": " + st.PHP.Detail
+	}
+	v.php.Override = st.PHP.Source == "override"
+	for _, e := range v.php.Update(gtx) {
+		if _, ok := e.(rtui.OverrideEvent); ok {
+			v.openPHPChooser()
+		}
+	}
+	left := []statusbar.Item{}
+	if st.Notice != "" {
+		left = append(left, statusbar.Item{ID: statusMsg, Text: firstLine(st.Notice), Tooltip: st.Notice + " (click to dismiss)", Tone: statusbar.ToneMuted, Clickable: true})
+	}
+	var right []statusbar.Item
+	if s := v.activeSession(); s != nil {
+		right = append(right,
+			statusbar.Item{ID: statusCaret, Text: s.caretText, Tooltip: "Go to line", Clickable: true},
+			statusbar.Item{ID: statusEOL, Text: "UTF-8 · " + strings.ToUpper(orDefault(s.tab.EOL, "lf"))},
+			statusbar.Item{ID: statusLang, Text: languageName(s.tab.Language)},
+		)
+	}
+	right = append(right, statusbar.Item{ID: "php", Widget: &v.php})
+	if st.LSP != "" {
+		tone := statusbar.ToneMuted
+		g := atoms.GlyphInfo
+		if !st.LSPRunning {
+			tone, g = statusbar.ToneWarning, atoms.GlyphWarning
+		}
+		right = append(right, statusbar.Item{ID: statusLSP, Text: st.LSP, Tooltip: st.LSPHint, Glyph: g, Tone: tone, Clickable: true})
+	}
+	if st.Branch != "" {
+		right = append(right, statusbar.Item{ID: statusGit, Text: st.Branch, Glyph: atoms.GlyphBranch, Tooltip: "Git branch"})
+	}
+	for _, p := range v.Registry.status {
+		right = append(right, p()...)
+	}
+	v.status.Left, v.status.Right = left, right
+	for _, e := range v.status.Update(gtx) {
+		switch e.(statusbar.ClickEvent).ID {
+		case statusCaret:
+			v.openGotoLine()
+		case statusLSP:
+			if !st.LSPRunning {
+				v.ctl.RestartLSP()
+			}
+		case statusMsg:
+			v.ctl.Status.Notice = ""
+		}
+	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 120 {
+		s = s[:117] + "…"
+	}
+	return s
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
+func languageName(l string) string {
+	switch l {
+	case "php":
+		return "PHP"
+	case "json", "xml", "yaml":
+		return strings.ToUpper(l)
+	case "dotenv", "env":
+		return ".env"
+	case "":
+		return "Text"
+	}
+	return strings.ToUpper(l[:1]) + l[1:]
+}
+
+func (v *View) handleProblems(gtx layout.Context) {
+	if v.probSeen != v.ctl.DiagVersion || v.probData == nil {
+		v.probSeen = v.ctl.DiagVersion
+		v.probData = v.ctl.Problems()
+		if v.probData == nil {
+			v.probData = []controller.Diagnostic{}
+		}
+		v.probs.Items = v.probs.Items[:0]
+		for _, d := range v.probData {
+			v.probs.Items = append(v.probs.Items, problems.Problem{Path: d.Path, Line: d.Line, Col: d.Col, Severity: problems.Severity(d.Severity), Message: d.Message, Source: d.Source})
+		}
+	}
+	for _, e := range v.probs.Update(gtx) {
+		if o, ok := e.(problems.OpenEvent); ok && o.Index < len(v.probData) {
+			d := v.probData[o.Index]
+			v.ctl.GoTo(v.currentLocation(), controller.At(d.File, d.Start))
+			v.focusEditor = true
+		}
+	}
+}
+
+func (v *View) layoutProblems(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	return v.probs.Layout(gtx, th)
+}
+
+// ---- overlays: chooser and settings -------------------------------------------
+
+func (v *View) closeOverlay() {
+	v.chooseMode = chooseNone
+	v.ctl.Locations = nil
+	if v.settingsOpen {
+		v.settingsOpen = false
+	}
+	v.focusEditor = true
+}
+
+func (v *View) openQuickOpen() {
+	if !v.ctl.Project.Open {
+		return
+	}
+	v.settingsOpen = false
+	v.chooseMode = chooseFiles
+	v.chooser.Open("Go to File", "File name (fuzzy)", "")
+	v.ctl.LoadFileIndex()
+	v.filterFiles("")
+}
+
+func (v *View) openRecent() {
+	if !v.ctl.Project.Open {
+		return
+	}
+	v.settingsOpen = false
+	v.chooseMode = chooseRecent
+	v.chooser.Open("Recent Files", "Filter", "")
+	v.filterFiles("")
+	// The current file is first; preselect the previous one.
+	if len(v.chooser.Items) > 1 && v.ctl.ActiveTab() != nil {
+		v.chooser.Selected = 1
+	}
+}
+
+func (v *View) openGotoLine() {
+	s := v.activeSession()
+	if s == nil {
+		return
+	}
+	v.settingsOpen = false
+	v.chooseMode = chooseLine
+	v.chooser.Open("Go to Line", "line[:column]", "")
+	v.chooser.NoList = true
+	v.chooser.Items = nil
+}
+
+func (v *View) openPHPChooser() {
+	v.settingsOpen = false
+	v.chooseMode = choosePHP
+	v.chooser.Open("PHP Version", "Filter", "")
+	v.chooser.Items = v.chooser.Items[:0]
+	v.chooser.Items = append(v.chooser.Items, palette.Item{Label: "Detect automatically", Detail: "interpreter, then composer.json", Glyph: atoms.GlyphRefresh})
+	for _, ver := range controller.PHPVersions {
+		v.chooser.Items = append(v.chooser.Items, palette.Item{Label: "PHP " + ver, Glyph: atoms.GlyphTag})
+	}
+}
+
+func (v *View) openSettings() {
+	v.chooseMode = chooseNone
+	v.settingsOpen = true
+	v.ctl.LoadSettingsData()
+	v.mappings = nil
+}
+
+func (v *View) filterFiles(q string) {
+	var cands []string
+	switch v.chooseMode {
+	case chooseFiles:
+		cands = v.ctl.Files
+	case chooseRecent:
+		for _, f := range v.ctl.RecentFiles {
+			cands = append(cands, v.ctl.Rel(f))
+		}
+	}
+	v.chooseFiles = cands
+	v.chooseIdx = v.chooseIdx[:0]
+	v.chooser.Items = v.chooser.Items[:0]
+	for _, m := range controller.FilterFuzzy(q, cands, 200) {
+		p := cands[m.Index]
+		dir := path.Dir(p)
+		if dir == "." {
+			dir = ""
+		}
+		v.chooseIdx = append(v.chooseIdx, m.Index)
+		v.chooser.Items = append(v.chooser.Items, palette.Item{Label: path.Base(p), Detail: dir, Glyph: filetree.Glyph(&filetree.Node{Name: path.Base(p)})})
+	}
+	if v.chooseMode == chooseFiles && len(v.ctl.Files) == 0 {
+		v.chooser.Message = "Indexing project files…"
+	} else {
+		v.chooser.Message = ""
+	}
+}
+
+func (v *View) handleOverlay(gtx layout.Context) {
+	if v.ctl.Locations != nil && v.chooseMode != chooseLocations {
+		v.chooseMode = chooseLocations
+		v.chooser.Open(v.ctl.LocationsTitle, "Filter", "")
+		v.chooser.Items = v.chooser.Items[:0]
+		for _, l := range v.ctl.Locations {
+			v.chooser.Items = append(v.chooser.Items, palette.Item{Label: fmt.Sprintf("%s:%d", path.Base(l.Path), l.Range.Start.Line), Detail: l.Path, Glyph: atoms.GlyphFileCode})
+		}
+	}
+	if v.settingsOpen {
+		v.handleSettings(gtx)
+		return
+	}
+	if v.chooseMode == chooseNone {
+		return
+	}
+	// The file index may arrive after the chooser opened.
+	if v.chooseMode == chooseFiles && len(v.chooseFiles) != len(v.ctl.Files) {
+		v.filterFiles(v.chooser.Query())
+	}
+	for _, e := range v.chooser.Update(gtx) {
+		switch e := e.(type) {
+		case palette.CancelEvent:
+			v.closeOverlay()
+		case palette.QueryEvent:
+			if v.chooseMode == chooseFiles || v.chooseMode == chooseRecent {
+				v.filterFiles(e.Query)
+			}
+		case palette.ChooseEvent:
+			v.choose(e)
+		}
+	}
+}
+
+func (v *View) choose(e palette.ChooseEvent) {
+	mode := v.chooseMode
+	v.chooseMode = chooseNone
+	v.focusEditor = true
+	switch mode {
+	case chooseFiles, chooseRecent:
+		if e.Index >= 0 && e.Index < len(v.chooseIdx) {
+			v.ctl.OpenFile(v.chooseFiles[v.chooseIdx[e.Index]], nil)
+		}
+	case chooseLocations:
+		v.ctl.ChooseLocation(e.Index)
+	case chooseLine:
+		if line, col, ok := controller.ParseLineCol(e.Query); ok {
+			v.gotoLine(line, col)
+		}
+	case choosePHP:
+		switch {
+		case e.Index == 0:
+			v.ctl.SetPHPOverride("")
+		case e.Index > 0:
+			v.ctl.SetPHPOverride(controller.PHPVersions[e.Index-1])
+		}
+	}
+}
+
+func (v *View) handleSettings(gtx layout.Context) {
+	p := &v.settings
+	c := v.ctl
+	p.NoProject = !c.Project.Open
+	p.Modules = p.Modules[:0]
+	for _, m := range c.Modules {
+		p.Modules = append(p.Modules, settingsui.Module{ID: m.ID, DependsOn: m.DependsOn, Dependents: c.Dependents(m.ID), Enabled: m.Enabled, Running: m.Running, Error: m.Error})
+	}
+	p.TabWidth, p.Theme, p.IdleSeconds, p.UpdateCheck = c.Prefs.TabWidth, c.Prefs.Theme, c.Prefs.IdleSeconds, c.Prefs.UpdateCheck
+	p.UpdateStatus = ""
+	if strings.Contains(c.Status.Notice, "pdate") {
+		p.UpdateStatus = c.Status.Notice
+	}
+	p.Interpreter.Items = p.Interpreter.Items[:0]
+	p.Interpreter.Selected = ""
+	for _, i := range c.Interpreters {
+		p.Interpreter.Items = append(p.Interpreter.Items, rtui.Interpreter{ID: i.ID, Label: i.Label, Kind: rtui.Kind(i.Kind), Version: i.Version, Detail: orDefault(i.Path, i.Service), Score: i.Score})
+		if i.Selected {
+			p.Interpreter.Selected = i.ID
+		}
+	}
+	if v.mappings == nil {
+		v.mappings = append([]controller.Mapping{}, c.Mappings.Mappings...)
+	}
+	p.Mappings.Items = p.Mappings.Items[:0]
+	for _, m := range v.mappings {
+		p.Mappings.Items = append(p.Mappings.Items, rtui.Mapping{Host: m.Host, Remote: m.Remote})
+	}
+	p.Hints.Items = p.Hints.Items[:0]
+	for _, h := range c.Diagnosis.Hints {
+		sev := rtui.SeverityInfo
+		switch h.Severity {
+		case "warning":
+			sev = rtui.SeverityWarning
+		case "error":
+			sev = rtui.SeverityError
+		}
+		p.Hints.Items = append(p.Hints.Items, rtui.Hint{Severity: sev, Code: h.Code, Message: h.Message})
+	}
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			v.closeOverlay()
+			return
+		}
+	}
+	for _, e := range p.Update(gtx) {
+		switch e := e.(type) {
+		case settingsui.CloseEvent:
+			v.closeOverlay()
+		case settingsui.ModuleEvent:
+			c.SetModuleEnabled(e.ID, e.Enable)
+		case settingsui.TabWidthEvent:
+			c.SetTabWidth(e.Width)
+		case settingsui.ThemeEvent:
+			c.SetTheme(e.Theme)
+		case settingsui.IdleEvent:
+			c.SetIdleSeconds(e.Seconds)
+		case settingsui.UpdateCheckEvent:
+			c.SetUpdateCheck(e.On)
+		case settingsui.CheckNowEvent:
+			c.CheckUpdate()
+		case settingsui.RuntimeEvent:
+			v.handleRuntimeEvent(e.Event)
+		}
+	}
+}
+
+func (v *View) handleRuntimeEvent(e rtui.Event) {
+	switch e := e.(type) {
+	case rtui.SelectInterpreterEvent:
+		v.ctl.SelectInterpreter(e.ID)
+		v.mappings = nil
+	case rtui.MappingAddEvent:
+		v.mappings = append(v.mappings, controller.Mapping{})
+	case rtui.MappingChangeEvent:
+		if e.Index < len(v.mappings) {
+			v.mappings[e.Index] = controller.Mapping{Host: e.Host, Remote: e.Remote}
+			v.saveMappings()
+		}
+	case rtui.MappingRemoveEvent:
+		if e.Index < len(v.mappings) {
+			v.mappings = append(v.mappings[:e.Index], v.mappings[e.Index+1:]...)
+			v.saveMappings()
+		}
+	}
+}
+
+// saveMappings stores the complete, valid mappings.
+func (v *View) saveMappings() {
+	var ms []controller.Mapping
+	for _, m := range v.mappings {
+		if m.Host != "" && m.Remote != "" && rtui.RemoteValid(m.Remote) {
+			ms = append(ms, m)
+		}
+	}
+	v.ctl.SetMappings(ms, len(v.mappings) == 0)
+}

@@ -142,6 +142,7 @@ func New(opts Options) (*App, error) {
 	a.registerSearch()
 	a.registerModules()
 	a.registerVersion()
+	a.registerSettings()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)

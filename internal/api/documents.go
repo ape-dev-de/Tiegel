@@ -82,6 +82,8 @@ func (a *App) onEdit(d *Doc, e buffer.Edit) {
 	}
 	a.bus.Publish(TopicDocEdited, ev)
 	a.bus.Publish(TopicDocChanged, a.stateLocked(d))
+	// Every edit counts as activity for the autosave idle timer.
+	a.saver.Activity()
 }
 
 func utf16Len(s string) int {
