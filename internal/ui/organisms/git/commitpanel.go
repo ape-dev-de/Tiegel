@@ -199,6 +199,15 @@ func (p *CommitPanel) SetAmendMessage(msg string) {
 	}
 }
 
+// SelectedPath returns the path of the selected file ("" if none), e.g.
+// for "Show Diff".
+func (p *CommitPanel) SelectedPath() string {
+	if p.selected < 0 || p.selected >= len(p.files) {
+		return ""
+	}
+	return p.files[p.selected].change.Status.Path
+}
+
 // SetBusy disables the commit buttons while the host commits or pushes.
 func (p *CommitPanel) SetBusy(b bool) { p.busy = b }
 

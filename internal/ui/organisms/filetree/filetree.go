@@ -13,7 +13,10 @@ import (
 	"path"
 	"strings"
 
+	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/layout"
+	"gioui.org/op/clip"
 
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
@@ -53,9 +56,29 @@ type OpenEvent struct{ Path string }
 // SelectEvent: a row was selected.
 type SelectEvent struct{ Path string }
 
-func (ExpandEvent) isTreeEvent() {}
-func (OpenEvent) isTreeEvent()   {}
-func (SelectEvent) isTreeEvent() {}
+// ContextEvent: a row (or, with Path "" and Background set, the empty
+// area below the rows) was context clicked; the row is selected.
+type ContextEvent struct {
+	Path       string
+	Dir        bool
+	Background bool
+}
+
+// KeyEvent: a command key was pressed while the tree had the focus
+// (Shift+F6, Delete, Backspace, Shortcut+C/X/V, F4); Path is the
+// selected row.
+type KeyEvent struct {
+	Path      string
+	Dir       bool
+	Name      key.Name
+	Modifiers key.Modifiers
+}
+
+func (ExpandEvent) isTreeEvent()  {}
+func (OpenEvent) isTreeEvent()    {}
+func (SelectEvent) isTreeEvent()  {}
+func (ContextEvent) isTreeEvent() {}
+func (KeyEvent) isTreeEvent()     {}
 
 // Tree is the file tree organism. A click selects a row, a double click on
 // a file opens it, a double click on a directory or its arrow toggles it.
@@ -65,12 +88,25 @@ type Tree struct {
 	// Empty is shown without Root.
 	Empty string
 
+	// GOOS enables Ctrl+click context clicks on "darwin".
+	GOOS string
+
 	expanded map[string]bool
 	selected string
 	rows     []*molecules.FileRow
+	areas    []molecules.ContextArea
+	bg       molecules.ContextArea
 	flat     []flatRow
 	list     molecules.ScrollList
+	focus    int
+	focused  bool
 }
+
+// Focused reports whether the tree has the keyboard focus.
+func (t *Tree) Focused() bool { return t.focused }
+
+// Focus requests the keyboard focus for the tree.
+func (t *Tree) Focus(gtx layout.Context) { gtx.Execute(key.FocusCmd{Tag: &t.focus}) }
 
 type flatRow struct {
 	node  *Node
@@ -121,18 +157,38 @@ func (t *Tree) flatten() {
 	for len(t.rows) < len(t.flat) {
 		t.rows = append(t.rows, &molecules.FileRow{})
 	}
+	for len(t.areas) < len(t.flat) {
+		t.areas = append(t.areas, molecules.ContextArea{})
+	}
 }
 
-// Update processes clicks and returns the resulting events.
+// Update processes clicks and keys and returns the resulting events.
 func (t *Tree) Update(gtx layout.Context) []Event {
 	t.flatten()
 	var out []Event
+	for i, fr := range t.flat {
+		t.areas[i].GOOS = t.GOOS
+		if _, ok := t.areas[i].Update(gtx); ok {
+			if t.selected != fr.node.Path {
+				t.selected = fr.node.Path
+				out = append(out, SelectEvent{Path: fr.node.Path})
+			}
+			out = append(out, ContextEvent{Path: fr.node.Path, Dir: fr.node.Dir})
+			t.Focus(gtx)
+		}
+	}
+	t.bg.GOOS = t.GOOS
+	if _, ok := t.bg.Update(gtx); ok && t.Root != nil && len(out) == 0 {
+		out = append(out, ContextEvent{Path: t.Root.Path, Dir: true, Background: true})
+	}
+	out = append(out, t.keys(gtx)...)
 	for i, fr := range t.flat {
 		clicked, toggled := t.rows[i].Update(gtx)
 		n := fr.node
 		if !clicked && !toggled {
 			continue
 		}
+		t.Focus(gtx)
 		if t.selected != n.Path {
 			t.selected = n.Path
 			out = append(out, SelectEvent{Path: n.Path})
@@ -162,6 +218,19 @@ func (t *Tree) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 		layout.UniformInset(th.Space.M).Layout(gtx, atoms.Muted(text).Fn(th))
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
+	size := gtx.Constraints.Max
+	area := clip.Rect{Max: size}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &t.focus)
+	area.Pop()
+	return t.bg.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min = size
+		d := t.layoutRows(gtx, th)
+		d.Size = size
+		return d
+	})
+}
+
+func (t *Tree) layoutRows(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	return t.list.Layout(gtx, th, len(t.flat), func(gtx layout.Context, i int) layout.Dimensions {
 		fr := t.flat[i]
 		n := fr.node
@@ -181,8 +250,104 @@ func (t *Tree) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 		if n.Library && fr.depth == 1 {
 			r.Detail = "library"
 		}
-		return r.Layout(gtx, th)
+		return t.areas[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions { return r.Layout(gtx, th) })
 	})
+}
+
+// treeKeys are the keys the focused tree handles.
+var treeKeys = []key.Filter{
+	{Name: key.NameUpArrow}, {Name: key.NameDownArrow}, {Name: key.NameLeftArrow}, {Name: key.NameRightArrow},
+	{Name: key.NameReturn}, {Name: key.NameEnter}, {Name: key.NameF4},
+	{Name: key.NameF6, Required: key.ModShift},
+	{Name: key.NameDeleteForward},
+	{Name: key.NameDeleteBackward, Optional: key.ModShortcut},
+	{Name: "C", Required: key.ModShortcut}, {Name: "X", Required: key.ModShortcut}, {Name: "V", Required: key.ModShortcut},
+}
+
+// keys handles the keyboard while the tree is focused.
+func (t *Tree) keys(gtx layout.Context) []Event {
+	var out []Event
+	filters := make([]event.Filter, 0, len(treeKeys)+1)
+	filters = append(filters, key.FocusFilter{Target: &t.focus})
+	for _, f := range treeKeys {
+		f.Focus = &t.focus
+		filters = append(filters, f)
+	}
+	for {
+		ev, ok := gtx.Event(filters...)
+		if !ok {
+			return out
+		}
+		switch e := ev.(type) {
+		case key.FocusEvent:
+			t.focused = e.Focus
+		case key.Event:
+			if e.State != key.Press {
+				continue
+			}
+			out = append(out, t.key(e)...)
+		}
+	}
+}
+
+// key handles one key press.
+func (t *Tree) key(e key.Event) []Event {
+	cur := -1
+	for i, fr := range t.flat {
+		if fr.node.Path == t.selected {
+			cur = i
+		}
+	}
+	sel := func(i int) []Event {
+		if i < 0 || i >= len(t.flat) || i == cur {
+			return nil
+		}
+		t.selected = t.flat[i].node.Path
+		return []Event{SelectEvent{Path: t.selected}}
+	}
+	var n *Node
+	if cur >= 0 {
+		n = t.flat[cur].node
+	}
+	switch e.Name {
+	case key.NameUpArrow:
+		return sel(max(cur-1, 0))
+	case key.NameDownArrow:
+		return sel(min(cur+1, len(t.flat)-1))
+	case key.NameLeftArrow, key.NameRightArrow:
+		if n == nil {
+			return nil
+		}
+		on := e.Name == key.NameRightArrow
+		if n.Dir && t.expanded[n.Path] != on {
+			t.expanded[n.Path] = on
+			return []Event{ExpandEvent{Path: n.Path, Expanded: on, Loaded: n.Loaded}}
+		}
+		if !on && cur > 0 {
+			// Left on a collapsed entry selects its parent.
+			parent := path.Dir(n.Path)
+			for i := cur - 1; i >= 0; i-- {
+				if p := t.flat[i].node.Path; p == parent || (parent == "." && i == 0) {
+					return sel(i)
+				}
+			}
+		}
+		return nil
+	case key.NameReturn, key.NameEnter:
+		if n == nil {
+			return nil
+		}
+		if n.Dir {
+			on := !t.expanded[n.Path]
+			t.expanded[n.Path] = on
+			return []Event{ExpandEvent{Path: n.Path, Expanded: on, Loaded: n.Loaded}}
+		}
+		return []Event{OpenEvent{Path: n.Path}}
+	}
+	if n == nil {
+		return nil
+	}
+	return []Event{KeyEvent{Path: n.Path, Dir: n.Dir, Name: e.Name, Modifiers: e.Modifiers}}
 }
 
 // Glyph returns the icon of a node by kind and file extension.

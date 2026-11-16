@@ -54,7 +54,10 @@ func (v *View) handleRecovery(gtx layout.Context) {
 	r, c := v.recovery, v.ctl
 	if len(c.Recovery) > 0 {
 		if r.show.Clicked(gtx) {
-			c.ShowRecovery(c.Recovery[0])
+			// The Local History view of the file, with the recovery
+			// revision selected (Revert restores it).
+			pt := c.Recovery[0]
+			c.Work.OpenLocalHistory(pt.Path, pt.Revision)
 		}
 		if r.dismiss.Clicked(gtx) {
 			c.DismissRecovery()

@@ -56,8 +56,8 @@ type gitDock struct {
 		logLen                                    int
 	}
 
-	tab          int // 0 log, 1 branches
-	tabBtns      [2]atoms.Button
+	tab          int // 0 log, 1 branches, 2 stashes
+	tabBtns      [3]atoms.Button
 	log          *gitui.LogView
 	branches     *gitui.BranchList
 	logSplit     molecules.Split
@@ -83,7 +83,7 @@ func installGit(v *View) *gitDock {
 	d.detailSplit = molecules.Split{Vertical: true, Ratio: 0.3, MinPane: 40}
 	d.commitDiff.Placeholder = "Select a commit to see its changes"
 	d.blockDiff.HideToolbar = true
-	d.tabBtns[0].Text, d.tabBtns[1].Text = "Log", "Branches"
+	d.tabBtns[0].Text, d.tabBtns[1].Text, d.tabBtns[2].Text = "Log", "Branches", "Stashes"
 	r := v.Registry
 	r.AddFrameHandler(d.frame)
 	r.AddGutterProvider(d.markers)
@@ -291,7 +291,8 @@ func (d *gitDock) handlePanel(gtx layout.Context) {
 		case gitui.RefreshRequested:
 			g.LoadChanges()
 		case gitui.FileOpenRequested:
-			d.v.ctl.OpenFile(e.Path, nil)
+			// Double click: the diff against HEAD (editable work tree).
+			d.v.work.compareWithHead(e.Path)
 		}
 	}
 }
@@ -349,6 +350,9 @@ func (d *gitDock) handleGit(gtx layout.Context) {
 	for i := range d.tabBtns {
 		if d.tabBtns[i].Clicked(gtx) {
 			d.tab = i
+			if i == gitTabStashes {
+				d.v.ctl.Work.LoadStashes()
+			}
 		}
 	}
 	for _, e := range d.log.Update(gtx) {
@@ -398,6 +402,9 @@ func (d *gitDock) layoutGit(gtx layout.Context, th *tokens.Theme) layout.Dimensi
 			if d.tab == 1 {
 				return d.branches.Layout(gtx, th)
 			}
+			if d.tab == gitTabStashes {
+				return d.v.work.layoutStashes(gtx, th)
+			}
 			return d.logSplit.Layout(gtx, th,
 				func(gtx layout.Context) layout.Dimensions { return d.log.Layout(gtx, th) },
 				func(gtx layout.Context) layout.Dimensions { return d.layoutCommitDetail(gtx, th) })
@@ -427,6 +434,7 @@ func (d *gitDock) layoutGitHeader(gtx layout.Context, th *tokens.Theme) layout.D
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, 0)}
 			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions { return d.v.work.layoutGitHeaderButtons(gtx, th) }),
 			layout.Rigid(atoms.Small(branchText(branch, info.Ahead, info.Behind)).Fn(th)),
 		)
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
@@ -466,6 +474,9 @@ func (d *gitDock) layoutCommitDetail(gtx layout.Context, th *tokens.Theme) layou
 	for i := range d.fileRows {
 		if cl, _ := d.fileRows[i].Update(gtx); cl {
 			d.selectCommitFile(i)
+			if d.fileRows[i].DoubleClicked() {
+				d.v.work.openCommitFileDiff(i)
+			}
 		}
 	}
 	files := func(gtx layout.Context) layout.Dimensions {
