@@ -394,3 +394,55 @@ func TestSendFailure(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestLineFraming(t *testing.T) {
+	in := "\n{\"a\":1}\r\n  \n{\"b\":2}"
+	r := bufio.NewReaderSize(strings.NewReader(in), 16)
+	b, err := LineFraming.ReadMessage(r)
+	if err != nil || string(b) != `{"a":1}` {
+		t.Fatalf("first: %q %v", b, err)
+	}
+	b, err = LineFraming.ReadMessage(r)
+	if err != nil || string(b) != `{"b":2}` {
+		t.Fatalf("second: %q %v", b, err)
+	}
+	if _, err := LineFraming.ReadMessage(r); err != io.EOF {
+		t.Fatalf("eof: %v", err)
+	}
+	long := strings.Repeat("x", 100)
+	b, err = LineFraming.ReadMessage(bufio.NewReaderSize(strings.NewReader(long+"\n"), 16))
+	if err != nil || string(b) != long {
+		t.Fatalf("long line: %d %v", len(b), err)
+	}
+	var buf bytes.Buffer
+	if err := LineFraming.WriteMessage(&buf, []byte(`{}`)); err != nil || buf.String() != "{}\n" {
+		t.Fatalf("write %q %v", buf.String(), err)
+	}
+	buf.Reset()
+	if err := HeaderFraming.WriteMessage(&buf, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := HeaderFraming.ReadMessage(bufio.NewReader(&buf)); err != nil || string(b) != "{}" {
+		t.Fatalf("header roundtrip %q %v", b, err)
+	}
+}
+
+func TestLineFramingConn(t *testing.T) {
+	a, b := net.Pipe()
+	c := NewConnFraming(a, LineFraming)
+	defer c.Close()
+	defer b.Close()
+	c.Handle("echo", func(_ context.Context, req *Request) (any, error) { return string(req.Params), nil })
+	c.Start()
+	go func() { _, _ = b.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"echo","params":[1]}` + "\n")) }()
+	line, err := bufio.NewReader(b).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(line, `"result":"[1]"`) {
+		t.Fatalf("got %q", line)
+	}
+	if NewConnFraming(a, nil).framing != HeaderFraming {
+		t.Fatal("nil framing should default to header framing")
+	}
+}

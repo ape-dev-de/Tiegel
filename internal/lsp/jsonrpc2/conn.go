@@ -29,8 +29,9 @@ type Handler func(ctx context.Context, req *Request) (any, error)
 
 // Conn is a bidirectional JSON-RPC 2.0 connection.
 type Conn struct {
-	rwc io.ReadWriteCloser
-	r   *bufio.Reader
+	rwc     io.ReadWriteCloser
+	r       *bufio.Reader
+	framing Framing
 
 	wmu sync.Mutex // serializes writes
 
@@ -54,10 +55,21 @@ type Conn struct {
 	closeOnce  sync.Once
 }
 
-// NewConn wraps rwc. Handlers should be registered before calling Start.
+// NewConn wraps rwc using HeaderFraming. Handlers should be registered before
+// calling Start.
 func NewConn(rwc io.ReadWriteCloser) *Conn {
+	return NewConnFraming(rwc, HeaderFraming)
+}
+
+// NewConnFraming wraps rwc using the given framing (nil means
+// HeaderFraming). Handlers should be registered before calling Start.
+func NewConnFraming(rwc io.ReadWriteCloser, f Framing) *Conn {
+	if f == nil {
+		f = HeaderFraming
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Conn{
+		framing:    f,
 		rwc:        rwc,
 		r:          bufio.NewReaderSize(rwc, 64<<10),
 		pending:    make(map[int64]chan *wireMessage),
@@ -255,12 +267,12 @@ func (c *Conn) send(msg *wireMessage) error {
 	}
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
-	return writeMessage(c.rwc, body)
+	return c.framing.WriteMessage(c.rwc, body)
 }
 
 func (c *Conn) readLoop() {
 	for {
-		body, err := readMessage(c.r)
+		body, err := c.framing.ReadMessage(c.r)
 		if err != nil {
 			_ = c.shutdown(err)
 			return

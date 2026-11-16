@@ -64,3 +64,65 @@ func writeMessage(w io.Writer, body []byte) error {
 	_, err := w.Write(buf)
 	return err
 }
+
+// Framing splits a byte stream into JSON-RPC message bodies. Conn uses
+// HeaderFraming (LSP style) unless NewConnFraming is given another one.
+// ReadMessage is only called from the connection's read goroutine;
+// WriteMessage calls are serialised by the connection.
+type Framing interface {
+	// ReadMessage returns the next message body. At the end of the stream
+	// it returns io.EOF.
+	ReadMessage(r *bufio.Reader) ([]byte, error)
+	// WriteMessage writes one message body including its framing.
+	WriteMessage(w io.Writer, body []byte) error
+}
+
+// HeaderFraming is the Content-Length header framing of the Language Server
+// Protocol.
+var HeaderFraming Framing = headerFraming{}
+
+// LineFraming frames every message as one line of JSON terminated by "\n"
+// (newline-delimited JSON, NDJSON). JSON encoders never emit raw newlines
+// inside a value, so a message always fits on one line. Empty lines are
+// skipped when reading.
+var LineFraming Framing = lineFraming{}
+
+type headerFraming struct{}
+
+func (headerFraming) ReadMessage(r *bufio.Reader) ([]byte, error) { return readMessage(r) }
+func (headerFraming) WriteMessage(w io.Writer, body []byte) error { return writeMessage(w, body) }
+
+type lineFraming struct{}
+
+func (lineFraming) ReadMessage(r *bufio.Reader) ([]byte, error) {
+	var buf []byte
+	for {
+		chunk, isPrefix, err := r.ReadLine()
+		if err != nil {
+			if err == io.EOF && len(buf) > 0 {
+				return buf, nil
+			}
+			return nil, err
+		}
+		buf = append(buf, chunk...)
+		if len(buf) > MaxMessageSize {
+			return nil, fmt.Errorf("jsonrpc2: message exceeds %d bytes", MaxMessageSize)
+		}
+		if isPrefix {
+			continue
+		}
+		if len(strings.TrimSpace(string(buf))) == 0 {
+			buf = buf[:0]
+			continue
+		}
+		return buf, nil
+	}
+}
+
+func (lineFraming) WriteMessage(w io.Writer, body []byte) error {
+	buf := make([]byte, 0, len(body)+1)
+	buf = append(buf, body...)
+	buf = append(buf, '\n')
+	_, err := w.Write(buf)
+	return err
+}

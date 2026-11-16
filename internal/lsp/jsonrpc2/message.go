@@ -1,5 +1,6 @@
 // Package jsonrpc2 implements a JSON-RPC 2.0 connection with the
-// Content-Length based framing used by the Language Server Protocol.
+// Content-Length based framing used by the Language Server Protocol
+// (HeaderFraming) or, alternatively, newline-delimited JSON (LineFraming).
 //
 // A Conn is symmetric: it can issue requests and notifications to the peer
 // and dispatch requests and notifications received from the peer to
