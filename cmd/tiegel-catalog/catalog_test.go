@@ -45,6 +45,9 @@ func TestSelectPageAndFilter(t *testing.T) {
 	if !c.selectPage("checkbox") || c.pages[c.selected].Name != "Checkbox" {
 		t.Fatal("selectPage")
 	}
+	if !c.selectPage("Editor") || c.pages[c.selected].Level != "Organisms" {
+		t.Fatal("editor page (go run ./cmd/tiegel-catalog -page=Editor)")
+	}
 	if c.selectPage("nope") {
 		t.Fatal("unknown page selected")
 	}

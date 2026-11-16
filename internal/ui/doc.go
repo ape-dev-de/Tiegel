@@ -9,6 +9,8 @@
 //     Badge, Tooltip/TooltipBubble, Divider.
 //   - molecules: SearchField, FileRow, Tab, BreakpointRow, DiffBlock.
 //   - organisms: (M2.5+) file tree, commit dialog, debug panel, …
+//   - editorview: the code editor widget (virtual rendering, gutter,
+//     keymap-driven input, IME); see that package.
 //
 // Modules and plugins build their UI only from these packages and never
 // paint directly or hard-code colors (see CLAUDE.md).

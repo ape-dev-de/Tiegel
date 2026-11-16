@@ -24,6 +24,8 @@ type page struct {
 	Variants func(th *tokens.Theme) []variant
 
 	nav molecules.FileRow
+	// editor is the state of the Editor page (nil elsewhere).
+	editor *editorDemo
 }
 
 // variant is one labelled preview on a page.
