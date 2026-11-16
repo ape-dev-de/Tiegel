@@ -23,9 +23,10 @@ import (
 
 // metricsKey identifies the font setup the metrics were measured for.
 type metricsKey struct {
-	shaper *text.Shaper
-	font   font.Font
-	ppem   fixed.Int26_6
+	shaper     *text.Shaper
+	font       font.Font
+	ppem       fixed.Int26_6
+	lineHeight float32
 }
 
 // metrics are the monospace cell measurements of the editor font.
@@ -40,11 +41,23 @@ type metrics struct {
 	digits  [10]text.Glyph
 }
 
-// lineSpacing is the row height relative to the font's ascent+descent.
-const lineSpacing = 1.4
+// defaultLineHeight is the row height relative to the font's
+// ascent+descent when the theme leaves Text.CodeLineHeight at zero.
+const defaultLineHeight = 1.4
 
+// lineHeightOf returns the editor line height multiplier of th.
+func lineHeightOf(th *tokens.Theme) float32 {
+	if lh := th.Text.CodeLineHeight; lh > 0 {
+		return lh
+	}
+	return defaultLineHeight
+}
+
+// updateMetrics measures the editor font. The cell width is the advance
+// of '0' in the first family of the editor font chain; glyphs of fallback
+// fonts (CJK, emoji, …) are placed on this grid by paintGlyphs.
 func (e *Editor) updateMetrics(gtx layout.Context, th *tokens.Theme) {
-	key := metricsKey{shaper: th.Shaper, font: th.Font.Mono, ppem: fixed.I(gtx.Sp(th.Text.Code))}
+	key := metricsKey{shaper: th.Shaper, font: th.Font.Mono, ppem: fixed.I(gtx.Sp(th.Text.Code)), lineHeight: lineHeightOf(th)}
 	if e.met.valid && e.met.key == key {
 		return
 	}
@@ -65,7 +78,7 @@ func (e *Editor) updateMetrics(gtx layout.Context, th *tokens.Theme) {
 		m.ascent, m.descent = key.ppem*8/10, key.ppem*2/10
 	}
 	h := (m.ascent + m.descent).Ceil()
-	m.lineH = max(1, int(math.Ceil(float64(h)*lineSpacing)))
+	m.lineH = max(1, int(math.Ceil(float64(h)*float64(key.lineHeight))))
 	m.base = (m.lineH-h)/2 + m.ascent.Ceil()
 	e.met = m
 }
@@ -298,8 +311,16 @@ func (e *Editor) paintGlyphs(ops *op.Ops, th *tokens.Theme, seg []byte, from, co
 			firstX, lastCI = g.X, ci
 		}
 		cl := clusters[ci]
+		// Every cluster starts at its grid column, whatever font the
+		// shaper picked for it; only offsets within a cluster (combining
+		// marks) come from the shaped advances. A glyph from a fallback
+		// font with a different advance therefore never shifts the
+		// columns after it.
 		g.X = fixed.Int26_6(cl.col)*e.met.cellW + (g.X - firstX)
 		g.Y = 0
+		if e.shp.trace != nil {
+			e.shp.trace(g, from+cl.b)
+		}
 		if g.Flags&text.FlagClusterBreak != 0 {
 			runeIdx += int(g.Runes)
 		}
@@ -344,6 +365,9 @@ type shapeScratch struct {
 	runes    []int32
 	text     []byte
 	glyphs   []text.Glyph
+	// trace, if set (tests only), receives every placed glyph with the
+	// line byte offset of its cluster.
+	trace func(g text.Glyph, off int)
 }
 
 // paintNumber paints the decimal number n right-aligned at x = right with

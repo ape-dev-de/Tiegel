@@ -43,6 +43,14 @@ type Prefs struct {
 	IdleSeconds int
 	// UpdateCheck enables the update check at start (opt-in).
 	UpdateCheck bool
+	// EditorFont is the editor font family ("" = default chain),
+	// EditorFontSize its size in sp (0 = default), LineHeight the editor
+	// line height factor (0 = default) and UIFontSize the UI text size in
+	// sp (0 = default).
+	EditorFont     string
+	EditorFontSize float32
+	LineHeight     float32
+	UIFontSize     float32
 }
 
 // Setting keys of the GUI (namespaces ui.*, editor.*, update.*).
@@ -52,7 +60,15 @@ const (
 	KeyRecentFiles    = "ui.recentFiles"
 	KeyTabWidth       = "editor.tabWidth"
 	KeyUpdateCheck    = "update.checkOnStart"
+	KeyEditorFont     = "editor.fontFamily"
+	KeyEditorFontSize = "editor.fontSize"
+	KeyLineHeight     = "editor.lineHeight"
+	KeyUIFontSize     = "ui.fontSize"
 )
+
+// DefaultOpenTool is the tool window shown on the first start of a
+// project (the project tree).
+const DefaultOpenTool = "project"
 
 // maxRecent bounds the recent project and file lists.
 const maxRecent = 20
@@ -89,10 +105,26 @@ type Controller struct {
 	// GitVersion changes whenever Git changes.
 	GitVersion uint64
 
-	// Tabs are the open editors in tab order; Active indexes Tabs (-1:
-	// none).
+	// Tabs are the open editors of the active editor group in tab order;
+	// Active indexes Tabs (-1: none). See groups.go for splits.
 	Tabs   []*Tab
 	Active int
+	// Root is the editor split tree; SplitVersion changes with it and
+	// with the active group.
+	Root         *SplitNode
+	SplitVersion uint64
+	groups       []*EditorGroup
+	activeGroup  int
+
+	// Tools is the tool window layout of the project (persisted per
+	// project, see PersistToolLayout).
+	Tools       *ToolLayout
+	toolsSaved  uint64
+	toolsReady  bool
+	toolsSaving bool
+
+	// MonoFonts lists the installed monospace font families (settings).
+	MonoFonts []string
 	// RecentFiles are absolute paths of recently opened files.
 	RecentFiles []string
 	// Nav is the back/forward navigation history.
@@ -154,7 +186,9 @@ func New(be Backend) *Controller {
 		be: be, ctx: ctx, cancel: cancel, Active: -1,
 		diags: map[string]*fileDiags{}, Git: map[string]GitFile{},
 		Prefs: Prefs{Theme: "dark", TabWidth: 4}, Now: time.Now,
+		Tools: NewToolLayout(),
 	}
+	c.resetGroups()
 	c.Vcs = newGit(c)
 	c.Debug = newDebug(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
@@ -266,6 +300,10 @@ func (c *Controller) Start(projectPath string) {
 		p.Theme = getSetting(ctx, c.be, KeyTheme, "global", "dark")
 		p.TabWidth = getSetting(ctx, c.be, KeyTabWidth, "global", 4)
 		p.UpdateCheck = getSetting(ctx, c.be, KeyUpdateCheck, "global", false)
+		p.EditorFont = getSetting(ctx, c.be, KeyEditorFont, "global", "")
+		p.EditorFontSize = getSetting[float32](ctx, c.be, KeyEditorFontSize, "global", 0)
+		p.LineHeight = getSetting[float32](ctx, c.be, KeyLineHeight, "global", 0)
+		p.UIFontSize = getSetting[float32](ctx, c.be, KeyUIFontSize, "global", 0)
 		var cfg struct {
 			IdleSeconds *int `json:"idleSeconds"`
 		}
@@ -332,6 +370,40 @@ func (c *Controller) SetTabWidth(n int) {
 	c.SetSetting(KeyTabWidth, "global", n)
 }
 
+// SetEditorFont changes and stores the editor font family ("" =
+// default).
+func (c *Controller) SetEditorFont(family string) {
+	c.Prefs.EditorFont = family
+	c.SetSetting(KeyEditorFont, "global", family)
+}
+
+// SetEditorFontSize changes and stores the editor font size (sp).
+func (c *Controller) SetEditorFontSize(sp float32) {
+	if sp < 6 || sp > 48 {
+		return
+	}
+	c.Prefs.EditorFontSize = sp
+	c.SetSetting(KeyEditorFontSize, "global", sp)
+}
+
+// SetLineHeight changes and stores the editor line height factor.
+func (c *Controller) SetLineHeight(f float32) {
+	if f < 1 || f > 2.5 {
+		return
+	}
+	c.Prefs.LineHeight = f
+	c.SetSetting(KeyLineHeight, "global", f)
+}
+
+// SetUIFontSize changes and stores the UI text size (sp).
+func (c *Controller) SetUIFontSize(sp float32) {
+	if sp < 9 || sp > 24 {
+		return
+	}
+	c.Prefs.UIFontSize = sp
+	c.SetSetting(KeyUIFontSize, "global", sp)
+}
+
 // SetUpdateCheck enables or disables the update check at start.
 func (c *Controller) SetUpdateCheck(on bool) {
 	c.Prefs.UpdateCheck = on
@@ -365,13 +437,23 @@ func (c *Controller) CheckUpdate() {
 	})
 }
 
-// OpenProject opens dir as the project (closing open tabs).
+// OpenProject opens dir as the project of this window. An open project
+// is closed first (documents saved, see CloseProject).
 func (c *Controller) OpenProject(dir string) {
+	wasOpen := c.Project.Open
 	c.Go(func(ctx context.Context) func() {
+		if wasOpen {
+			if err := c.closeBackendProject(ctx); err != nil {
+				return func() { c.notice(err) }
+			}
+		}
 		var info ProjectInfo
 		err := c.call(ctx, "project.open", map[string]string{"path": dir}, &info)
 		return func() {
 			if err != nil {
+				if wasOpen {
+					c.projectClosed()
+				}
 				c.Status.Notice = err.Error()
 				return
 			}
@@ -383,7 +465,7 @@ func (c *Controller) OpenProject(dir string) {
 // projectOpened resets the project state and starts the background loads.
 func (c *Controller) projectOpened(info ProjectInfo) {
 	c.Project = info
-	c.Tabs, c.Active = nil, -1
+	c.resetGroups()
 	c.diags = map[string]*fileDiags{}
 	c.DiagVersion++
 	c.Git = map[string]GitFile{}
@@ -391,8 +473,8 @@ func (c *Controller) projectOpened(info ProjectInfo) {
 	c.Nav = Navigation{}
 	c.Files = nil
 	c.Tree = NewTree(info.Name)
-	c.RecentProjects = addRecent(c.RecentProjects, info.Root)
-	c.SetSetting(KeyRecentProjects, "global", c.RecentProjects)
+	c.addRecentProject(info.Root)
+	c.loadToolLayout()
 	c.LoadDir("")
 	c.refreshGit()
 	c.refreshRuntime()
@@ -478,9 +560,12 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 	case "doc.changed":
 		var st DocState
 		if json.Unmarshal(payload, &st) == nil {
-			if t := c.Tab(c.Abs(st.Path)); t != nil {
-				t.Modified = st.Modified
-				t.EOL = st.EOL
+			abs := c.Abs(st.Path)
+			for _, t := range c.allTabs() {
+				if t.File == abs {
+					t.Modified = st.Modified
+					t.EOL = st.EOL
+				}
 			}
 		}
 	case "modules.changed":

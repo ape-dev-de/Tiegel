@@ -138,15 +138,19 @@ func TestSyntaxColorCoversAllRoles(t *testing.T) {
 	}
 }
 
-func TestFontsAreBundled(t *testing.T) {
+func TestFontChainsIncludeBundledFonts(t *testing.T) {
 	want := map[string]bool{}
 	for _, f := range gofont.Collection() {
 		want[string(f.Font.Typeface)] = true
 	}
 	th := themes()[0]
 	for _, tf := range []string{string(th.Font.UI.Typeface), string(th.Font.Mono.Typeface)} {
-		if !want[tf] {
-			t.Errorf("typeface %q not in bundled Go fonts %v", tf, want)
+		found := false
+		for _, f := range splitChain(tf) {
+			found = found || want[f]
+		}
+		if !found {
+			t.Errorf("typeface chain %q has no bundled Go font %v", tf, want)
 		}
 	}
 }

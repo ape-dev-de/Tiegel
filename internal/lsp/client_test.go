@@ -309,6 +309,22 @@ func testDocumentSync(t *testing.T, sync protocol.TextDocumentSyncKind) {
 func TestDocumentSyncIncremental(t *testing.T) { testDocumentSync(t, protocol.SyncIncremental) }
 func TestDocumentSyncFull(t *testing.T)        { testDocumentSync(t, protocol.SyncFull) }
 
+func TestDidRenameFiles(t *testing.T) {
+	c, srv := connectFake(t, fakeserver.Options{}, Config{})
+	ctx := timeout(t, 5*time.Second)
+	files := []protocol.FileRename{{OldURI: "file:///p/a.php", NewURI: "file:///p/b.php"}}
+	if sent, err := c.DidRenameFiles(ctx, files); !sent || err != nil {
+		t.Fatalf("sent %v err %v", sent, err)
+	}
+	eventually(t, "rename", func() bool { return len(srv.Snapshot().Renamed) == 1 })
+	if got := srv.Snapshot().Renamed[0]; got != files[0] {
+		t.Fatalf("renamed %+v", got)
+	}
+	if sent, _ := c.DidRenameFiles(ctx, nil); sent {
+		t.Fatal("empty rename sent")
+	}
+}
+
 func TestDocumentNotOpen(t *testing.T) {
 	c, _ := connectFake(t, fakeserver.Options{}, Config{})
 	ctx := timeout(t, 5*time.Second)

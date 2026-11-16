@@ -1,6 +1,6 @@
 // Package settings provides the settings dialog: modules on/off with their
 // dependencies, the PHP interpreter (picker, path mappings, Xdebug hints),
-// editor options (tab width, theme), autosave and the opt-in update check.
+// editor options (tab width, theme, fonts), autosave and the opt-in update check.
 // Everything is stored in Tiegel's internal settings by the host; there is
 // no file for the user to edit.
 package settings
@@ -45,6 +45,19 @@ type TabWidthEvent struct{ Width int }
 // ThemeEvent: "dark", "light" or "system" was chosen.
 type ThemeEvent struct{ Theme string }
 
+// FontFamilyEvent: an editor font family was chosen ("" = the default
+// fallback chain).
+type FontFamilyEvent struct{ Family string }
+
+// FontSizeEvent: an editor font size (sp) was chosen.
+type FontSizeEvent struct{ Size float32 }
+
+// LineHeightEvent: an editor line height multiplier was chosen.
+type LineHeightEvent struct{ Value float32 }
+
+// UIFontSizeEvent: a UI font size (sp) was chosen.
+type UIFontSizeEvent struct{ Size float32 }
+
 // IdleEvent: the autosave idle delay was chosen (0 = off).
 type IdleEvent struct{ Seconds int }
 
@@ -63,6 +76,10 @@ type CloseEvent struct{}
 func (ModuleEvent) isSettingsEvent()      {}
 func (TabWidthEvent) isSettingsEvent()    {}
 func (ThemeEvent) isSettingsEvent()       {}
+func (FontFamilyEvent) isSettingsEvent()  {}
+func (FontSizeEvent) isSettingsEvent()    {}
+func (LineHeightEvent) isSettingsEvent()  {}
+func (UIFontSizeEvent) isSettingsEvent()  {}
 func (IdleEvent) isSettingsEvent()        {}
 func (UpdateCheckEvent) isSettingsEvent() {}
 func (CheckNowEvent) isSettingsEvent()    {}
@@ -72,22 +89,45 @@ func (CloseEvent) isSettingsEvent()       {}
 // Sections of the dialog.
 var Sections = []string{"Modules", "PHP Interpreter", "Editor", "Autosave", "Updates"}
 
-// TabWidths, Themes and IdleChoices are the offered values.
+// TabWidths, Themes, FontSizes, LineHeights, UIFontSizes and IdleChoices
+// are the offered values.
 var (
 	TabWidths   = []int{2, 4, 8}
 	Themes      = []string{"dark", "light", "system"}
+	FontSizes   = []float32{10, 11, 12, 13, 14, 15, 16, 18, 20, 24}
+	LineHeights = []float32{1.0, 1.2, 1.4, 1.6, 1.8, 2.0}
+	UIFontSizes = []float32{11, 12, 13, 14, 15, 16}
 	IdleChoices = []int{0, 5, 15, 30, 60, 300}
 )
+
+// FontPreview is the sample line shown in the editor font: Latin with
+// accents, PHP syntax, CJK and a symbol from the fallback fonts.
+const FontPreview = "<?php $café = fn(int $x) => $x * 2; // 漢字 ✓"
+
+// DefaultFontLabel names the default editor font chain in the family list.
+const DefaultFontLabel = "System default"
 
 // Panel is the settings organism.
 type Panel struct {
 	Section int
 
-	Modules     []Module
-	TabWidth    int
-	Theme       string
-	IdleSeconds int
-	UpdateCheck bool
+	Modules  []Module
+	TabWidth int
+	Theme    string
+	// EditorFont is the chosen editor font family ("" = default chain).
+	EditorFont string
+	// EditorFonts lists the installed monospace families offered in the
+	// family dropdown (the host fills it, e.g. from
+	// tokens.MonospaceFamilies in the background). An empty list offers
+	// only the default and the current family.
+	EditorFonts []string
+	// EditorFontSize and UIFontSize are font sizes in sp, LineHeight the
+	// editor row height multiplier; zero values show the defaults.
+	EditorFontSize float32
+	LineHeight     float32
+	UIFontSize     float32
+	IdleSeconds    int
+	UpdateCheck    bool
 	// UpdateStatus is shown next to "Check now".
 	UpdateStatus string
 	// NoProject disables the interpreter section.
@@ -103,12 +143,20 @@ type Panel struct {
 	modBoxes  map[string]*atoms.Checkbox
 	tabSel    *molecules.Dropdown
 	themeSel  *molecules.Dropdown
+	fontSel   *molecules.Dropdown
+	sizeSel   *molecules.Dropdown
+	lineSel   *molecules.Dropdown
+	uiSizeSel *molecules.Dropdown
 	idleSel   *molecules.Dropdown
-	updateBox atoms.Checkbox
-	checkNow  atoms.Button
-	closeBtn  atoms.IconButton
-	scroll    molecules.ScrollList
-	inited    bool
+	// fontValues maps fontSel options to families; fontKey is the state
+	// (current family and list) they were built from.
+	fontValues []string
+	fontKey    string
+	updateBox  atoms.Checkbox
+	checkNow   atoms.Button
+	closeBtn   atoms.IconButton
+	scroll     molecules.ScrollList
+	inited     bool
 }
 
 func (p *Panel) init() {
@@ -130,10 +178,73 @@ func (p *Panel) init() {
 	}
 	p.tabSel = molecules.NewSelect("Tab width", tabs...)
 	p.themeSel = molecules.NewSelect("Theme", themes...)
+	p.fontSel = molecules.NewSelect("Font")
+	p.sizeSel = molecules.NewSelect("Size", numberOptions(FontSizes, "%g")...)
+	p.lineSel = molecules.NewSelect("Line height", numberOptions(LineHeights, "%.1f")...)
+	p.uiSizeSel = molecules.NewSelect("UI font size", numberOptions(UIFontSizes, "%g")...)
 	p.idleSel = molecules.NewSelect("Idle autosave", idles...)
 	p.updateBox.Label = "Check for updates when Tiegel starts (contacts the release server)"
 	p.checkNow = atoms.Button{Text: "Check now", Kind: atoms.Secondary, Glyph: atoms.GlyphRefresh}
 	p.closeBtn = atoms.IconButton{Glyph: atoms.GlyphClose, Description: "Close (Escape)"}
+}
+
+func numberOptions(vals []float32, format string) []molecules.DropdownOption {
+	out := make([]molecules.DropdownOption, len(vals))
+	for i, v := range vals {
+		out[i] = molecules.DropdownOption{Label: fmt.Sprintf(format, v)}
+	}
+	return out
+}
+
+// syncFonts rebuilds the family options when EditorFont or EditorFonts
+// changed: the default chain first, then the installed families (plus the
+// current one if it is not installed).
+func (p *Panel) syncFonts() {
+	key := p.EditorFont + "\x00" + strings.Join(p.EditorFonts, "\x00")
+	if key == p.fontKey && p.fontValues != nil {
+		return
+	}
+	p.fontKey = key
+	p.fontValues = append(p.fontValues[:0], "")
+	opts := []molecules.DropdownOption{{Label: DefaultFontLabel, Detail: "Best installed monospace font"}}
+	cur := strings.TrimSpace(p.EditorFont)
+	found := cur == ""
+	for _, f := range p.EditorFonts {
+		if f == "" || indexOf(p.fontValues, f) >= 0 {
+			continue
+		}
+		found = found || strings.EqualFold(f, cur)
+		p.fontValues = append(p.fontValues, f)
+		opts = append(opts, molecules.DropdownOption{Label: f})
+	}
+	if !found {
+		p.fontValues = append(p.fontValues, cur)
+		opts = append(opts, molecules.DropdownOption{Label: cur, Detail: "Not installed"})
+	}
+	p.fontSel.Options = opts
+}
+
+// fontIndex returns the option index of the current family.
+func (p *Panel) fontIndex() int {
+	cur := strings.TrimSpace(p.EditorFont)
+	for i, f := range p.fontValues {
+		if strings.EqualFold(f, cur) {
+			return i
+		}
+	}
+	return 0
+}
+
+// selectNumber selects v in d (or shows it as the placeholder if it is not
+// one of vals); zero selects def.
+func selectNumber(d *molecules.Dropdown, vals []float32, v, def float32, format string) {
+	if v == 0 {
+		v = def
+	}
+	d.Selected = indexOf(vals, v)
+	if d.Selected < 0 {
+		d.Placeholder = fmt.Sprintf(format, v)
+	}
 }
 
 // IdleLabel describes an idle delay.
@@ -186,6 +297,19 @@ func (p *Panel) Update(gtx layout.Context) []Event {
 	}
 	if i, ok := p.themeSel.Update(gtx); ok {
 		out = append(out, ThemeEvent{Theme: Themes[i]})
+	}
+	p.syncFonts()
+	if i, ok := p.fontSel.Update(gtx); ok && i < len(p.fontValues) {
+		out = append(out, FontFamilyEvent{Family: p.fontValues[i]})
+	}
+	if i, ok := p.sizeSel.Update(gtx); ok {
+		out = append(out, FontSizeEvent{Size: FontSizes[i]})
+	}
+	if i, ok := p.lineSel.Update(gtx); ok {
+		out = append(out, LineHeightEvent{Value: LineHeights[i]})
+	}
+	if i, ok := p.uiSizeSel.Update(gtx); ok {
+		out = append(out, UIFontSizeEvent{Size: UIFontSizes[i]})
 	}
 	if i, ok := p.idleSel.Update(gtx); ok {
 		out = append(out, IdleEvent{Seconds: IdleChoices[i]})
@@ -326,8 +450,20 @@ func (p *Panel) layoutSection(gtx layout.Context, th *tokens.Theme) layout.Dimen
 		title("Editor", "")
 		p.tabSel.Selected = indexOf(TabWidths, p.TabWidth)
 		p.themeSel.Selected = indexOf(Themes, p.Theme)
+		p.syncFonts()
+		p.fontSel.Selected = p.fontIndex()
+		selectNumber(p.sizeSel, FontSizes, p.EditorFontSize, 13, "%g")
+		selectNumber(p.lineSel, LineHeights, p.LineHeight, 1.4, "%.1f")
+		selectNumber(p.uiSizeSel, UIFontSizes, p.UIFontSize, 13, "%g")
 		field("Tab width", func(gtx layout.Context) layout.Dimensions { return p.tabSel.Layout(gtx, th) })
 		field("Theme", func(gtx layout.Context) layout.Dimensions { return p.themeSel.Layout(gtx, th) })
+		rows = append(rows, layout.Spacer{Height: th.Space.S}.Layout, molecules.SectionHeader{Title: "Fonts"}.Fn(th),
+			layout.Spacer{Height: th.Space.S}.Layout)
+		field("Editor font", func(gtx layout.Context) layout.Dimensions { return p.fontSel.Layout(gtx, th) })
+		field("Editor font size", func(gtx layout.Context) layout.Dimensions { return p.sizeSel.Layout(gtx, th) })
+		field("Line height", func(gtx layout.Context) layout.Dimensions { return p.lineSel.Layout(gtx, th) })
+		rows = append(rows, p.fontPreview(th), layout.Spacer{Height: th.Space.M}.Layout)
+		field("UI font size", func(gtx layout.Context) layout.Dimensions { return p.uiSizeSel.Layout(gtx, th) })
 	case "Autosave":
 		title("Autosave", "Tiegel saves when the window, the editor or the tab loses focus, and before run, debug and commit. Every save is kept in the Local History.")
 		p.idleSel.Selected = indexOf(IdleChoices, p.IdleSeconds)
@@ -345,6 +481,18 @@ func (p *Panel) layoutSection(gtx layout.Context, th *tokens.Theme) layout.Dimen
 			})
 	}
 	return p.scroll.Layout(gtx, th, len(rows), func(gtx layout.Context, i int) layout.Dimensions { return rows[i](gtx) })
+}
+
+// fontPreview shows FontPreview in the editor font of th (the host applies
+// the chosen font preferences to the theme).
+func (p *Panel) fontPreview(th *tokens.Theme) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(440))
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return atoms.Surface{Kind: atoms.SurfaceEditor, Border: true, Rounded: true}.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
+			return layout.UniformInset(th.Space.S).Layout(gtx, atoms.Code(FontPreview).SingleLine().Fn(th))
+		})
+	}
 }
 
 func (p *Panel) moduleRow(th *tokens.Theme, m Module) layout.Widget {

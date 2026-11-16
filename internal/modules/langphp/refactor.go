@@ -285,9 +285,9 @@ type ApplyCodeActionParams struct {
 
 // EditResult reports an applied workspace edit.
 type EditResult struct {
-	Label   string             `json:"label,omitempty"`
-	Applied bool               `json:"applied"`
-	Files   []api.FileOpResult `json:"files"`
+	Label   string               `json:"label,omitempty"`
+	Applied bool                 `json:"applied"`
+	Files   []api.EditStepResult `json:"files"`
 	// Command is the executed server command (code actions).
 	Command       string          `json:"command,omitempty"`
 	CommandResult json.RawMessage `json:"commandResult,omitempty"`
@@ -323,7 +323,7 @@ func (m *Module) lspApplyCodeAction(ctx context.Context, p ApplyCodeActionParams
 		}
 		a = resolved
 	}
-	res := EditResult{Label: a.Title, Applied: true, Files: []api.FileOpResult{}}
+	res := EditResult{Label: a.Title, Applied: true, Files: []api.EditStepResult{}}
 	if !a.Edit.IsEmpty() {
 		r, err := m.applyWorkspaceEdit(ctx, a.Title, a.Edit)
 		if err != nil {
@@ -362,7 +362,7 @@ func (m *Module) lspExecuteCommand(ctx context.Context, p ExecuteCommandParams) 
 	if err != nil {
 		return EditResult{}, lspErr("command "+p.Command, err)
 	}
-	res := EditResult{Applied: true, Files: []api.FileOpResult{}, Command: p.Command}
+	res := EditResult{Applied: true, Files: []api.EditStepResult{}, Command: p.Command}
 	if len(raw) > 0 && string(raw) != "null" {
 		res.CommandResult = raw
 	}
@@ -471,7 +471,7 @@ func fileOps(we *protocol.WorkspaceEdit) ([]api.FileOp, error) {
 // resource operations in order. It stops at the first failure (failure
 // handling "abort"); the steps before it stay applied.
 func (m *Module) applyWorkspaceEdit(ctx context.Context, label string, we *protocol.WorkspaceEdit) (EditResult, error) {
-	res := EditResult{Label: label, Files: []api.FileOpResult{}}
+	res := EditResult{Label: label, Files: []api.EditStepResult{}}
 	ops, err := fileOps(we)
 	if err != nil {
 		return res, err
@@ -712,10 +712,10 @@ func (m *Module) lspRename(ctx context.Context, p RenameParams) (RenameResult, e
 		return RenameResult{}, lspErr("rename", err)
 	}
 	if we.IsEmpty() {
-		return RenameResult{EditResult: EditResult{Label: "rename", Files: []api.FileOpResult{}}}, nil
+		return RenameResult{EditResult: EditResult{Label: "rename", Files: []api.EditStepResult{}}}, nil
 	}
 	if p.Preview {
-		return RenameResult{EditResult: EditResult{Label: "rename", Files: []api.FileOpResult{}}, Preview: m.describe(m.newTextCache(&r), we)}, nil
+		return RenameResult{EditResult: EditResult{Label: "rename", Files: []api.EditStepResult{}}, Preview: m.describe(m.newTextCache(&r), we)}, nil
 	}
 	res, err := m.applyWorkspaceEdit(ctx, "rename "+pr.Placeholder+" to "+p.NewName, we)
 	return RenameResult{EditResult: res}, err

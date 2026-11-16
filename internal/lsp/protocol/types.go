@@ -32,6 +32,7 @@ const (
 	MethodShowMessageRequest     = "window/showMessageRequest"
 	MethodLogMessage             = "window/logMessage"
 	MethodProgress               = "$/progress"
+	MethodDidRenameFiles         = "workspace/didRenameFiles"
 )
 
 // isNull reports whether data is empty or the JSON literal null.
@@ -648,15 +649,16 @@ type ServerCapabilities struct {
 	ImplementationProvider *Provider                `json:"implementationProvider,omitempty"`
 	SemanticTokensProvider *SemanticTokensOptions   `json:"semanticTokensProvider,omitempty"`
 
-	ReferencesProvider              *Provider              `json:"referencesProvider,omitempty"`
-	DocumentHighlightProvider       *Provider              `json:"documentHighlightProvider,omitempty"`
-	CodeActionProvider              *Provider              `json:"codeActionProvider,omitempty"`
-	DocumentFormattingProvider      *Provider              `json:"documentFormattingProvider,omitempty"`
-	DocumentRangeFormattingProvider *Provider              `json:"documentRangeFormattingProvider,omitempty"`
-	RenameProvider                  *Provider              `json:"renameProvider,omitempty"`
-	DocumentSymbolProvider          *Provider              `json:"documentSymbolProvider,omitempty"`
-	WorkspaceSymbolProvider         *Provider              `json:"workspaceSymbolProvider,omitempty"`
-	ExecuteCommandProvider          *ExecuteCommandOptions `json:"executeCommandProvider,omitempty"`
+	ReferencesProvider              *Provider                    `json:"referencesProvider,omitempty"`
+	DocumentHighlightProvider       *Provider                    `json:"documentHighlightProvider,omitempty"`
+	CodeActionProvider              *Provider                    `json:"codeActionProvider,omitempty"`
+	DocumentFormattingProvider      *Provider                    `json:"documentFormattingProvider,omitempty"`
+	DocumentRangeFormattingProvider *Provider                    `json:"documentRangeFormattingProvider,omitempty"`
+	RenameProvider                  *Provider                    `json:"renameProvider,omitempty"`
+	DocumentSymbolProvider          *Provider                    `json:"documentSymbolProvider,omitempty"`
+	WorkspaceSymbolProvider         *Provider                    `json:"workspaceSymbolProvider,omitempty"`
+	ExecuteCommandProvider          *ExecuteCommandOptions       `json:"executeCommandProvider,omitempty"`
+	Workspace                       *WorkspaceServerCapabilities `json:"workspace,omitempty"`
 }
 
 // IsEnabled reports whether an optional provider capability is set.
@@ -701,6 +703,41 @@ type WorkspaceClientCapabilities struct {
 	WorkspaceEdit    *WorkspaceEditClientCapabilities   `json:"workspaceEdit,omitempty"`
 	Symbol           *WorkspaceSymbolClientCapabilities `json:"symbol,omitempty"`
 	ExecuteCommand   *EmptyClientCapabilities           `json:"executeCommand,omitempty"`
+	FileOperations   *FileOperationClientCapabilities   `json:"fileOperations,omitempty"`
+}
+
+// FileOperationClientCapabilities announce the workspace/did* file
+// notifications the client sends.
+type FileOperationClientCapabilities struct {
+	DidRename bool `json:"didRename,omitempty"`
+}
+
+// WorkspaceServerCapabilities are the workspace capabilities of a server.
+type WorkspaceServerCapabilities struct {
+	FileOperations *FileOperationsServerCapabilities `json:"fileOperations,omitempty"`
+}
+
+// FileOperationsServerCapabilities lists the file operations a server
+// wants to hear about.
+type FileOperationsServerCapabilities struct {
+	DidRename *FileOperationRegistrationOptions `json:"didRename,omitempty"`
+}
+
+// FileOperationRegistrationOptions carry the filters of a file operation
+// registration (kept raw; Tiegel sends all renames).
+type FileOperationRegistrationOptions struct {
+	Filters []json.RawMessage `json:"filters,omitempty"`
+}
+
+// FileRename is one renamed file or folder.
+type FileRename struct {
+	OldURI DocumentURI `json:"oldUri"`
+	NewURI DocumentURI `json:"newUri"`
+}
+
+// RenameFilesParams are the params of workspace/didRenameFiles.
+type RenameFilesParams struct {
+	Files []FileRename `json:"files"`
 }
 
 // WindowClientCapabilities are window client capabilities.

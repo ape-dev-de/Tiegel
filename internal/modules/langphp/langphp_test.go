@@ -195,6 +195,16 @@ func TestLifecycleSyncAndFeatures(t *testing.T) {
 	if len(locs) != 1 || locs[0].Range.Start.Line != 2 || locs[0].Range.Start.Col != 2 {
 		t.Fatalf("implementation %+v", locs)
 	}
+	// The nav.lsp hook (used by php-index) answers with the same data.
+	for _, kind := range []string{"definition", "implementation", "other"} {
+		q, err := api.HookNavLSP.Apply(context.Background(), a.Hooks(), api.NavLSPQuery{Kind: kind, Path: filepath.Join(dir, "a.php"), At: api.Pos{Line: 1}})
+		if err != nil || q.Answered != (kind != "other") || kind != "other" && len(q.Locations) != 1 {
+			t.Fatalf("nav.lsp %s: %+v %v", kind, q, err)
+		}
+	}
+	if q, _ := api.HookNavLSP.Apply(context.Background(), a.Hooks(), api.NavLSPQuery{Kind: "definition", Path: filepath.Join(dir, "b.txt"), At: api.Pos{Line: 1}}); q.Answered || q.Err == "" {
+		t.Fatalf("nav.lsp error %+v", q)
+	}
 	var toks []SemanticToken
 	modtest.Call(t, a, "lsp.semanticTokens", api.PathParams{Path: "a.php"}, &toks)
 	if len(toks) != 3 || toks[0].Type != "class" || toks[0].Modifiers[0] != "declaration" || toks[0].Range.Start.Line != 2 {
@@ -204,12 +214,31 @@ func TestLifecycleSyncAndFeatures(t *testing.T) {
 	modtest.WantCode(t, a, "lsp.hover", PosParams{Path: "other.php", At: api.Pos{Line: 1}}, api.CodeNotFound)
 	modtest.WantCode(t, a, "lsp.hover", PosParams{Path: "a.php", At: api.Pos{Line: 99}}, api.CodeInvalidParams)
 
+	// Rename → workspace/didRenameFiles, didClose of the old and didOpen
+	// of the new URI; back again.
+	oldURI := protocol.URIFromPath(filepath.Join(dir, "a.php"))
+	newURI := protocol.URIFromPath(filepath.Join(dir, "moved.php"))
+	modtest.Call(t, a, "files.rename", api.RenameParams{Path: "a.php", NewName: "moved.php"}, nil)
+	modtest.Eventually(t, "didRenameFiles", func() bool {
+		r := f.last().Snapshot().Renamed
+		return len(r) == 1 && r[0].OldURI == oldURI && r[0].NewURI == newURI
+	})
+	modtest.Eventually(t, "reopened", func() bool {
+		st := f.last().Snapshot()
+		_, open := st.Docs[newURI]
+		_, stale := st.Docs[oldURI]
+		return open && !stale
+	})
+	modtest.Call(t, a, "files.rename", api.RenameParams{Path: "moved.php", NewName: "a.php"}, nil)
+	waitSynced(t, a, f, dir, "a.php")
+	modtest.Eventually(t, "renamed back", func() bool { return len(f.last().Snapshot().Closed) == 2 })
+
 	// Close → didClose, diagnostics forgotten.
 	modtest.Call(t, a, "doc.close", api.PathParams{Path: "a.php"}, nil)
 	uri := protocol.URIFromPath(filepath.Join(dir, "a.php"))
 	modtest.Eventually(t, "didClose", func() bool {
 		cl := f.last().Snapshot().Closed
-		return len(cl) == 1 && cl[0] == uri
+		return len(cl) == 3 && cl[2] == uri
 	})
 	modtest.Eventually(t, "diagnostics dropped", func() bool {
 		var l []Diagnostics

@@ -156,6 +156,21 @@ var Glyphs = []*Glyph{
 	GlyphDropDown, GlyphList, GlyphSwap,
 }
 
+// GlyphNamed returns the built-in glyph with the given name (see
+// Glyph.Name, e.g. "delete"), or nil. Gio-free models such as
+// internal/actions refer to icons by name.
+func GlyphNamed(name string) *Glyph {
+	if name == "" {
+		return nil
+	}
+	for _, g := range Glyphs {
+		if g.name == name {
+			return g
+		}
+	}
+	return nil
+}
+
 // Icon draws a glyph in a square box. It is a value component.
 type Icon struct {
 	Glyph *Glyph

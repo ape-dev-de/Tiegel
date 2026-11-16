@@ -73,11 +73,11 @@ func TestLSPRefactorCommands(t *testing.T) {
 		t.Fatalf("format again %d %q", code, out)
 	}
 
-	code, out, errs = run(t, "", append([]string{"rename", "a.php", "2:11", "bar", "--preview"}, lsp...)...)
+	code, out, errs = run(t, "", append([]string{"rename-symbol", "a.php", "2:11", "bar", "--preview"}, lsp...)...)
 	if code != ExitOK || out != "a.php:2:10: -> bar\na.php:3:1: -> bar\n" {
 		t.Fatalf("rename preview %d %q %q", code, out, errs)
 	}
-	code, out, errs = run(t, "", append([]string{"rename", "a.php", "2:11", "bar"}, lsp...)...)
+	code, out, errs = run(t, "", append([]string{"rename-symbol", "a.php", "2:11", "bar"}, lsp...)...)
 	if code != ExitOK || !strings.Contains(out, "a.php (2 edits)") || !strings.Contains(read(), "function bar()") {
 		t.Fatalf("rename %d %q %q", code, out, errs)
 	}

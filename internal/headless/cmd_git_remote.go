@@ -46,13 +46,6 @@ func runGitFetch(c *cli) error {
 	})
 }
 
-func shortHash(h string) string {
-	if len(h) > 10 {
-		return h[:10]
-	}
-	return h
-}
-
 func runGitPull(c *cli) error {
 	var res gitmod.PullResult
 	p := gitmod.PullParams{Remote: c.p.value("remote"), Branch: c.p.value("branch"), Strategy: c.p.value("strategy"), Autostash: c.p.has("autostash"), Prune: c.p.has("prune")}

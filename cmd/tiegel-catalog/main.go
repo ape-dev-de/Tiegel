@@ -11,6 +11,8 @@ import (
 	"gioui.org/app"
 	"gioui.org/op"
 	"gioui.org/unit"
+
+	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
 
 func main() {
@@ -34,6 +36,9 @@ func run(w *app.Window, light bool, page string) error {
 	inv := w.Invalidate
 	redraw.Store(&inv)
 	c := newCatalog(light)
+	// The catalog window shows the system fonts like the app; tests keep
+	// the deterministic bundled shaper of newCatalog.
+	c.th = tokens.New(c.th.Mode, tokens.NewShaper())
 	if page != "" && !c.selectPage(page) {
 		return fmt.Errorf("unknown page %q", page)
 	}

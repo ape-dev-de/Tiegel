@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ape-dev-de/tiegel/internal/core/gitignore"
 	"github.com/ape-dev-de/tiegel/internal/editor/search"
 )
 
@@ -401,12 +402,12 @@ func (s *scanner) produce(ctx context.Context, out chan<- searchCandidate) error
 			return Errorf(CodeInvalidParams, "dir must be inside the project")
 		}
 	}
-	var ign ignoreSet
-	ign.load(root, "")
+	var ign gitignore.Set
+	ign.Load(root, "")
 	if relDir != "" {
 		parts := strings.Split(relDir, "/")
 		for i := range parts[:len(parts)-1] {
-			ign.load(root, strings.Join(parts[:i+1], "/"))
+			ign.Load(root, strings.Join(parts[:i+1], "/"))
 		}
 	}
 	start := filepath.Join(root, filepath.FromSlash(relDir))
@@ -431,21 +432,21 @@ func (s *scanner) produce(ctx context.Context, out chan<- searchCandidate) error
 		if d.IsDir() {
 			if p == start {
 				if rel != "." {
-					ign.load(root, rel)
+					ign.Load(root, rel)
 				}
 				return nil
 			}
 			name := d.Name()
-			if alwaysSkipped[name] || (libraryDirs[name] && !s.p.Libraries) || (!s.p.Ignored && ign.match(rel, true)) {
+			if alwaysSkipped[name] || (libraryDirs[name] && !s.p.Libraries) || (!s.p.Ignored && ign.Match(rel, true)) {
 				return filepath.SkipDir
 			}
-			ign.load(root, rel)
+			ign.Load(root, rel)
 			return nil
 		}
 		if !d.Type().IsRegular() && d.Type()&fs.ModeSymlink == 0 {
 			return nil
 		}
-		if (!s.p.Ignored && ign.match(rel, false)) || !s.mask.match(rel) {
+		if (!s.p.Ignored && ign.Match(rel, false)) || !s.mask.match(rel) {
 			return nil
 		}
 		visited[p] = true

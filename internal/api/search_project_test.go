@@ -332,11 +332,11 @@ func TestApplyFileOps(t *testing.T) {
 	if !exists(filepath.Join(root, "new/c.txt")) || exists(filepath.Join(root, "e")) || !res[2].Skipped || !res[5].Skipped || !res[6].Skipped {
 		t.Fatalf("ops %+v", res)
 	}
-	if data, _ := os.ReadFile(filepath.Join(root, "d2/b.txt")); string(data) != "modified b\n" || !res[3].Open {
+	if data, _ := os.ReadFile(filepath.Join(root, "d2/b.txt")); string(data) != "b\n" || !res[3].Open {
 		t.Fatalf("renamed %q %+v", data, res[3])
 	}
 	if docText(t, a, "d2/b.txt") != "modified b\n" {
-		t.Fatal("renamed document not reopened")
+		t.Fatal("renamed document lost its buffer")
 	}
 	wantCode(t, a, "doc.text", DocTextParams{Path: "d/b.txt"}, CodeNotFound)
 

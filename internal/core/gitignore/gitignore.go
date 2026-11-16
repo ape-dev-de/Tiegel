@@ -1,4 +1,7 @@
-package api
+// Package gitignore is a rough .gitignore matcher shared by the file tree
+// (files.list) and the PHP symbol index. Git stays the authority for VCS
+// operations.
+package gitignore
 
 import (
 	"bufio"
@@ -17,18 +20,18 @@ type ignoreRule struct {
 	anchored bool // pattern contains a slash: match against the path relative to base
 }
 
-// ignoreSet is a rough .gitignore implementation: it supports comments,
+// Set is a rough .gitignore implementation: it supports comments,
 // negation, trailing "/" (directories only), leading "/" and inner slashes
 // (anchored), "*", "?", "[...]" and "**/" prefixes and "/**" suffixes. Nested
 // .gitignore files are honoured for their subtree. It is good enough for a
 // project tree; Git itself stays the authority for VCS operations.
-type ignoreSet struct {
+type Set struct {
 	rules []ignoreRule
 }
 
-// load reads dir/.gitignore (dir relative to root, slash separated) and adds
+// Load reads dir/.gitignore (dir relative to root, slash separated) and adds
 // its rules.
-func (s *ignoreSet) load(root, rel string) {
+func (s *Set) Load(root, rel string) {
 	f, err := os.Open(filepath.Join(root, filepath.FromSlash(rel), ".gitignore"))
 	if err != nil {
 		return
@@ -36,11 +39,13 @@ func (s *ignoreSet) load(root, rel string) {
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		s.add(rel, sc.Text())
+		s.Add(rel, sc.Text())
 	}
 }
 
-func (s *ignoreSet) add(base, line string) {
+// Add adds one .gitignore line of the file in directory base (relative to
+// the root, slash separated; "" for the root).
+func (s *Set) Add(base, line string) {
 	line = strings.TrimRight(line, " \t\r")
 	if line == "" || strings.HasPrefix(line, "#") {
 		return
@@ -67,9 +72,9 @@ func (s *ignoreSet) add(base, line string) {
 	s.rules = append(s.rules, r)
 }
 
-// match reports whether rel (slash separated, relative to the root) is
+// Match reports whether rel (slash separated, relative to the root) is
 // ignored. The last matching rule wins.
-func (s *ignoreSet) match(rel string, isDir bool) bool {
+func (s *Set) Match(rel string, isDir bool) bool {
 	ignored := false
 	for _, r := range s.rules {
 		if r.dirOnly && !isDir {

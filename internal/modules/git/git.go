@@ -52,6 +52,7 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "git.commit", "Commit the index (commit.before guard saves documents; optionally stages paths)", m.gitCommit)
 	m.registerOps(p)
 	m.registerRemote(p)
+	m.registerHistory(p)
 	return p.Err()
 }
 

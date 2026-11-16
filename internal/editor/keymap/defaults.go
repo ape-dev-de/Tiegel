@@ -58,7 +58,7 @@ var macPairs = [][2]string{
 	{"Cmd+F", string(Find)}, {"Cmd+R", string(Replace)},
 	{"Cmd+G", string(FindNext)}, {"Cmd+Shift+G", string(FindPrevious)},
 	{"Cmd+L", string(GotoLine)}, {"Cmd+S", string(Save)},
-	{"Cmd+-", string(FoldCollapse)}, {"Cmd+=", string(FoldExpand)},
+	{"Cmd+Alt+-", string(FoldCollapse)}, {"Cmd+Alt+=", string(FoldExpand)},
 	{"Cmd+Shift+-", string(FoldCollapseAll)}, {"Cmd+Shift+=", string(FoldExpandAll)},
 }
 
@@ -87,7 +87,7 @@ var pcPairs = [][2]string{
 	{"Ctrl+F", string(Find)}, {"Ctrl+R", string(Replace)},
 	{"F3", string(FindNext)}, {"Shift+F3", string(FindPrevious)},
 	{"Ctrl+G", string(GotoLine)}, {"Ctrl+S", string(Save)},
-	{"Ctrl+-", string(FoldCollapse)}, {"Ctrl+=", string(FoldExpand)},
+	{"Ctrl+Alt+-", string(FoldCollapse)}, {"Ctrl+Alt+=", string(FoldExpand)},
 	{"Ctrl+Shift+-", string(FoldCollapseAll)}, {"Ctrl+Shift+=", string(FoldExpandAll)},
 }
 

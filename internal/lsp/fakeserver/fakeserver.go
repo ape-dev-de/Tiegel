@@ -60,6 +60,7 @@ type State struct {
 	Cancelled     int                             `json:"cancelled"`
 	Saved         []string                        `json:"saved"`
 	Closed        []protocol.DocumentURI          `json:"closed"`
+	Renamed       []protocol.FileRename           `json:"renamed"`
 	ShutdownCalls int                             `json:"shutdownCalls"`
 	// Executed lists executed commands; Applied the answers of the
 	// client to workspace/applyEdit.
@@ -123,6 +124,7 @@ func (s *Server) Snapshot() State {
 	st.Closed = append([]protocol.DocumentURI(nil), s.state.Closed...)
 	st.Executed = append([]string(nil), s.state.Executed...)
 	st.Applied = append([]bool(nil), s.state.Applied...)
+	st.Renamed = append([]protocol.FileRename(nil), s.state.Renamed...)
 	return st
 }
 
@@ -138,6 +140,7 @@ func (s *Server) register() {
 		protocol.MethodDidChange:          s.didChange,
 		protocol.MethodDidSave:            s.didSave,
 		protocol.MethodDidClose:           s.didClose,
+		protocol.MethodDidRenameFiles:     s.didRenameFiles,
 		protocol.MethodCompletion:         s.completion,
 		protocol.MethodHover:              s.hover,
 		protocol.MethodSignatureHelp:      s.signatureHelp,
@@ -182,6 +185,9 @@ func (s *Server) initialize(_ context.Context, req *jsonrpc2.Request) (any, erro
 		"definitionProvider":     map[string]any{"workDoneProgress": true},
 		"implementationProvider": true,
 		"semanticTokensProvider": map[string]any{"legend": Legend, "full": true},
+		"workspace": map[string]any{"fileOperations": map[string]any{
+			"didRename": map[string]any{"filters": []any{map[string]any{"pattern": map[string]any{"glob": "**/*.php"}}}},
+		}},
 	}
 	for k, v := range featureCapabilities() {
 		caps[k] = v
@@ -276,6 +282,17 @@ func (s *Server) didSave(_ context.Context, req *jsonrpc2.Request) (any, error) 
 	if p.Text != nil {
 		s.state.Saved = append(s.state.Saved, *p.Text)
 	}
+	s.mu.Unlock()
+	return nil, nil
+}
+
+func (s *Server) didRenameFiles(_ context.Context, req *jsonrpc2.Request) (any, error) {
+	var p protocol.RenameFilesParams
+	if err := req.UnmarshalParams(&p); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.state.Renamed = append(s.state.Renamed, p.Files...)
 	s.mu.Unlock()
 	return nil, nil
 }

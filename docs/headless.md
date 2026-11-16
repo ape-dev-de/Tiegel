@@ -23,7 +23,7 @@ Flags dürfen vor oder nach dem Befehl stehen (`--name wert` oder `--name=wert`)
 | Flag | Bedeutung |
 |---|---|
 | `--json` | maschinenlesbare Ausgabe (eingerücktes JSON auf stdout) |
-| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`) nehmen ohne Angabe das Arbeitsverzeichnis. |
+| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`) nehmen ohne Angabe das Arbeitsverzeichnis. |
 | `--config-dir DIR` | Einstellungsverzeichnis statt `<UserConfigDir>/Tiegel`; alternativ Umgebungsvariable `TIEGEL_CONFIG_DIR` (Tests, CI, portable Nutzung) |
 | `--help`, `-h` | Hilfe |
 | `--version` | Version (auch `tiegel --version` ohne `--headless`) |
@@ -49,6 +49,12 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `files [SUBDIR] [--tree] [--depth N] [--ignored] [--libraries]` | Projektdateien; `.gitignore` wird (grob) beachtet, `vendor/` und `node_modules/` werden markiert und nicht aufgeklappt | `files.list` |
 | `read FILE` | Dateiinhalt ausgeben (binär unverändert) | `files.read` |
 | `lang FILE...` | Sprache erkennen (php, json, yaml, xml, dotenv, plaintext) | `files.detectLanguage` |
+| `new-file DATEI [--content TEXT]` | Datei im Projekt anlegen (Elternordner nach Bedarf; Fehler, wenn sie existiert) | `files.createFile` |
+| `new-dir ORDNER` | Ordner anlegen | `files.createDir` |
+| `rename PFAD NEUER-NAME\|NEUER-PFAD [--overwrite]` | umbenennen bzw. verschieben (enthält das Ziel `/`, ist es ein Pfad); offene Dokumente (auch ungespeicherte) und Local History ziehen mit | `files.rename` |
+| `move PFAD... ORDNER [--overwrite]` / `copy PFAD... ORDNER\|NEUER-PFAD [--overwrite]` | verschieben/kopieren (Ordner rekursiv, Symlinks als Links) | `files.move`, `files.copy` |
+| `delete PFAD... [--permanent]` | in den Papierkorb (macOS: Finder-Papierkorb mit „Zurücklegen“, Linux: freedesktop-Papierkorb); ohne Papierkorb (Windows, anderes Dateisystem) Fehler – dann nur mit `--permanent`. Offene Dokumente mit ungespeicherten Änderungen → Fehler, nichts wird gelöscht | `files.delete` |
+| `new-class ORDNER NAME [--kind class\|abstract\|interface\|trait\|enum] [--namespace NS]` | PHP-Datei `NAME.php` mit `declare(strict_types=1)` und dem PSR-4-Namespace aus `composer.json` (`autoload`/`autoload-dev`, längstes passendes Verzeichnis); `--namespace ""` = ohne Namespace | `files.createPhpClass` |
 | `search FILE PATTERN [--regex] [--case] [--word] [--limit N]` | Treffer als `datei:zeile:spalte: zeile` | `search.inDoc` |
 | `find PATTERN [--regex] [--case] [--word] [--mask GLOBS] [--dir DIR \| --open] [--libraries] [--ignored] [--limit N] [--max-size BYTES]` | Find in Files im Projekt: Treffer als `pfad:zeile:spalte: zeile`; `--mask "*.php,!*Test.php"`, `--dir` Verzeichnis, `--open` nur offene Dokumente; `vendor/`, `node_modules/` und `.gitignore`-Dateien nur mit `--libraries`/`--ignored`; Exit 1 ohne Treffer | `search.inProject` |
 | `replace PATTERN ERSETZUNG [--preview] [find-Flags] [DATEI...]` | Replace in Path: ohne `--preview` werden die Dateien geschrieben (Local History „before replace in path“/„replace in path“), mit DATEIEN nur diese; Regex-Ersetzung mit `$1`/`${name}`; Exit 1 ohne Treffer oder bei Fehlern | `search.replaceInProject` |
@@ -76,13 +82,24 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `usages DATEI ZEILE:SPALTE [--no-declaration] [--server ID] [--command PATH]` | Find Usages über den Language Server: `pfad:zeile:spalte: zeile`; Exit 1 ohne Treffer | `lsp.start`, `lsp.references` |
 | `code-actions DATEI ZEILE:SPALTE [--apply N\|ID\|TITEL] [--timeout DUR] [--server ID] [--command PATH]` | Code Actions (Quick Fixes mit den Diagnosen an der Stelle, Refactorings, Organize Imports) auflisten; `--apply` wendet eine an und speichert die geänderten Dokumente | `lsp.codeActions`, `lsp.applyCodeAction` |
 | `format DATEI... [--preview] [--tab-size N] [--server ID] [--command PATH]` | Reformat über den Language Server und speichern (`--preview`: nur die Änderungen) | `lsp.formatting` |
-| `rename DATEI ZEILE:SPALTE NEUER-NAME [--preview] [--server ID] [--command PATH]` | Symbol in allen Dateien umbenennen (prepareRename + rename) und speichern | `lsp.rename` |
+| `rename-symbol DATEI ZEILE:SPALTE NEUER-NAME [--preview] [--server ID] [--command PATH]` | Symbol in allen Dateien umbenennen (prepareRename + rename) und speichern | `lsp.rename` |
+| `git-file-diff DATEI [--base V] [--target V] [--base-path PFAD] [--ignore-whitespace]` | Änderungsblöcke einer Datei zwischen zwei Versionen (`V` = `HEAD`, `index`, `working`, `empty` oder Revision; Standard `HEAD` ↔ Arbeitsbaum) als `@@ art left … right … @@` mit `-`/`+`-Zeilen; `--json` mit Volltexten und Wort-Bereichen | `git.fileDiff` |
+| `git-history DATEI [--skip N] [--max N] [--rev R] [--no-follow]` | Commits, die DATEI geändert haben (folgt Umbenennungen): `hash datum autor status pfad betreff` | `git.fileHistory` |
+| `git-blame DATEI [--rev R] [--ignore-whitespace]` | jede Zeile mit Commit, Autor, Datum (`00000000 (Not committed …)` für ungespeicherte/uncommittete Zeilen) | `git.blame` |
+| `git-compare BASIS [ZIEL]` | geänderte Dateien zwischen zwei Revisionen (ohne ZIEL: Arbeitsbaum) als `status pfad` | `git.compareRevisions` |
 | `runtime-diagnose [INTERPRETER-ID]` | Xdebug-Einrichtung des (gewählten) Interpreters: INI-Werte `xdebug.mode/client_host/client_port`, Exec-Modus, Pfad-Mappings, Hinweise; Exit 1 bei Warnungen | `runtime.diagnose` |
 | `mappings [set HOST=REMOTE... \| reset] [--exec-mode auto\|exec\|run]` | Pfad-Mappings anzeigen oder dauerhaft korrigieren (`reset`: wieder aus Compose); Exec-Modus für Compose-Interpreter | `runtime.mappings.*`, `runtime.execMode` |
 | `php-override [VERSION \| clear]` | dauerhaften PHP-Versions-Override setzen/entfernen, danach Version und Quelle | `php.setVersionOverride`, `php.version` |
 | `highlights DATEI [--lines VON:BIS] [--language L]` | Syntax-Highlighting als `start ende rolle "text"` (Byte-Offsets, ohne `plain`-Bereiche) | `syntax.highlights` |
 | `folds DATEI [--language L]` | Faltbereiche als `von-bis` (Zeilen, 1-basiert) | `syntax.folds` |
 | `outline DATEI [--language L]` | Struktur (Namespaces, Klassen, Member, Funktionen) eingerückt als `zeile:spalte modifier art name signatur` | `syntax.outline` |
+| `symbols QUERY [--kind K]... [--limit N] [--no-libraries]` | Fuzzy-Suche im PHP-Symbol-Index (Klassen, Member, Funktionen, Konstanten) als `art<TAB>fqn<TAB>pfad:zeile:spalte`; `--kind type` = alle Klassenarten (Go to Class); `Klasse::member` sucht Member, ein `\` im FQN; Exit 1 ohne Treffer | `nav.symbols` |
+| `definition DATEI ZEILE[:SPALTE] [--source auto\|index\|lsp]` | Deklarationen des Symbols an der Position als `pfad:zeile:spalte: art fqn [quelle]` | `nav.definition` |
+| `implementations DATEI ZEILE[:SPALTE] [--source …]` | implementierende Klassen (transitiv), Unterklassen, Trait-Nutzer, überschreibende/implementierende Methoden | `nav.implementations` |
+| `super DATEI ZEILE[:SPALTE]` | Obertypen einer Klasse bzw. überschriebene/implementierte Methoden | `nav.super` |
+| `hierarchy FQN \| hierarchy DATEI ZEILE[:SPALTE]` | Typ-Hierarchie: Obertypen (rekursiv, nicht indizierte wie `Countable` mit `?`) und Untertypen eingerückt | `nav.typeHierarchy` |
+| `gutter DATEI` | Gutter-Marken: `zeile<TAB>art fqn<TAB>up N<TAB>down M` | `nav.gutter` |
+| `index-status [--rebuild [--full]]` | baut den Index (bzw. aktualisiert ihn aus dem Cache) und zeigt Zustand und Zahlen; `--full` verwirft Index und Cache | `index.status`, `index.rebuild` |
 | `serve [--framing ndjson\|lsp] [--concurrent] [--listen ADDR [--token-file F] [--token T] [--allow-remote]]` | JSON-RPC 2.0 über stdin/stdout, mit `--listen unix:PFAD` oder `tcp:127.0.0.1:PORT` über einen Socket (Token-Authentisierung, siehe unten) | alle |
 | `call METHOD [JSON \| -]` | beliebige API-Methode aufrufen; `-` liest die Parameter von stdin; Ausgabe immer JSON | alle |
 | `help [BEFEHL]` | Hilfe | – |
@@ -209,7 +226,9 @@ Alles, was auf dem Event-Bus veröffentlicht wird, kann ein Client abonnieren:
 
 Muster: exakte Topics, `präfix.*` oder `*`. Zustellung als Notification `event` mit `{"topic": …, "payload": …}`. Jedes Event kommt pro Verbindung höchstens einmal (auch wenn mehrere Muster passen) und alle Events einer Verbindung in Veröffentlichungsreihenfolge; zwischen Antworten und Events gibt es keine feste Reihenfolge (Events laufen asynchron).
 
-Vom Kern veröffentlichte Topics: `project.opened`/`project.closed` (`{root, name}`), `file.opened` (`{path, file, language, version, size}`), `file.saved` (`{path, file, trigger, size}` – auch bei Autosave), `doc.opened`, `doc.changed`, `doc.edited`, `doc.saved`, `doc.closed`, `modules.changed`, `settings.changed`, `search.results` (gestreamte Projektsuche: `{id, files, done, summary, error}`).
+Vom Kern veröffentlichte Topics: `project.opened`/`project.closed` (`{root, name}`), `file.opened` (`{path, file, language, version, size}`), `file.saved` (`{path, file, trigger, size}` – auch bei Autosave), `doc.opened`, `doc.changed`, `doc.edited`, `doc.saved`, `doc.closed`, `doc.renamed`, `files.changed`, `modules.changed`, `settings.changed`, `search.results` (gestreamte Projektsuche: `{id, files, done, summary, error}`).
+
+`files.changed` meldet die Dateioperationen eines API-Aufrufs (`files.*`) für Dateibaum und Indizes: `{changes: [{op: created|renamed|deleted, path, file, from?, fromFile?, dir?, trashed?}]}`; bei `renamed` sind `path`/`file` der neue Ort. Folgt ein offenes Dokument einem Umbenennen/Verschieben, kommen `doc.renamed` (`{from, to, fromFile, file, generation, language}`), dann `doc.closed` für den alten Pfad mit `renamedTo` und `doc.opened` für den neuen – Abonnenten, die nur Öffnen/Schließen kennen (Language Server, Syntax), folgen so automatisch; Dokument, Puffer, Undo und Generation bleiben erhalten. Der Language Server bekommt zusätzlich `workspace/didRenameFiles`, wenn er sich dafür registriert hat.
 
 `doc.edited` beschreibt **jede** Pufferänderung – egal ob über `doc.*`, Undo, Autosave-Filter oder direkt in der GUI – im Format `{path, file, language, version, start, oldEnd, newEnd, startPoint, oldEndPoint, newEndPoint, range: {start: {line, character}, end: …}, text, oldText}`: Byte-Offsets und Zeile/Byte-Spalte (Tree-sitter) sowie der ersetzte Bereich in LSP-Koordinaten (0-basiert, UTF-16). `version` steigt pro Änderung um 1.
 
@@ -221,6 +240,7 @@ Von den Modulen veröffentlichte Topics:
 | php-features | `php.diagnostics` (`{path, file, version, phpVersion, source, diagnostics}`), `php.versionChanged` (`{override}`) |
 | lang-php | `lsp.status` (gestartet/gestoppt/abgestürzt), `lsp.diagnostics` (`{path, file, version, diagnostics}`), `lsp.editApplied` (`{label, applied, files}` nach jeder angewendeten Workspace-Änderung: Code Action, Rename, `workspace/applyEdit` des Servers) |
 | git | `git.changed` (`{op, paths}` nach jeder Änderung über die API; `op` u.a. `fetch`, `pull`, `update`, `stash`, `stashApply`, `stashPop`, `stashDrop`), `git.committed` |
+| php-index | `index.progress` (`{phase: scanning\|indexing\|ready, done, total}`, höchstens alle 100 ms), `index.updated` (`{files, truncated, generation, reason: sync\|file\|doc\|cache}`) |
 | debug-xdebug | `debug.listening`, `debug.stopped`, `debug.sessionStarted`, `debug.sessionEnded`, `debug.break` (gemappte Host-Datei/Zeile), `debug.breakpointHit`, `debug.breakpoints.changed`, `debug.status`, `debug.output`, `debug.notification`, `debug.breakpoint.resolved` |
 
 ## Module
@@ -231,9 +251,10 @@ Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`,
 |---|---|---|---|
 | `php-runtime` | – | `interp.*`, `compose.*`, `php.version`, `runtime.*` | stellt `php.resolveVersion` und `runtime.pathMappings` (Filter) bereit |
 | `php-features` | `php-runtime` | `php.check`, `php.diagnostics`, `php.setVersionOverride` | nutzt `php.resolveVersion` |
-| `lang-php` | (`php-runtime` optional) | `lsp.*` | nutzt `php.resolveVersion` |
+| `lang-php` | (`php-runtime` optional) | `lsp.*` | nutzt `php.resolveVersion`, stellt `nav.lsp` (Filter) bereit |
 | `git` | – | `git.*` | ruft Guard `commit.before` (Kern: Autosave) und Filter `commit.message` |
 | `syntax` | – | `syntax.*` | – (folgt `doc.edited`) |
+| `php-index` | – | `index.*`, `nav.*` | ruft Filter `nav.lsp` (Anbieter: lang-php) |
 | `debug-xdebug` | `php-runtime` | `debug.*` | ruft Guard `debug.before` (Kern: Autosave), nutzt `runtime.pathMappings` |
 
 `modules.enable`/`modules.disable` wirken sofort (und dauerhaft): ein abgeschaltetes Modul räumt Hooks und Abos ab, seine Methoden antworten mit `-32006 module disabled`. `app.methods` zeigt zu jeder Methode `module` und `disabled`.
@@ -255,11 +276,20 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `update.check` | `source?`, `prereleases?` | `current`, `available`, `latest`, `url`, `notes` |
 | `events.subscribe` / `events.unsubscribe` | `topics: [..]` | aktive Muster |
 | `events.publish` | `topic`, `payload?` | – |
-| `project.open` | `path` | Projektinfo |
+| `project.open` | `path` | Projektinfo (ein anderes offenes Projekt wird vorher wie mit `project.close` geschlossen) |
 | `project.info` / `project.close` | – | Projektinfo |
 | `files.list` | `path?`, `depth?`, `ignored?`, `libraries?`, `limit?` | Baum `{name, path, dir, size, ignored, library, collapsed, children}` + Zähler |
 | `files.read` | `path`, `maxBytes?` | `content`, `encoding` (`utf-8`/`base64`), `language`, `size`, `truncated` |
 | `files.detectLanguage` | `path`, `content?` | `language` |
+| `files.createFile` | `path`, `content?`, `open?` | `{path, file, doc?}`; `CodeConflict`, wenn vorhanden |
+| `files.createDir` | `path` | `{path, file, dir}` |
+| `files.rename` | `path`, `newName` **oder** `to`, `overwrite?` | `{path, file, from, dir, docs}` – `docs`: offene Dokumente unter neuem Pfad |
+| `files.move` / `files.copy` | `path` oder `paths`, `to` (Ordner; bei einem Pfad auch Zielpfad), `overwrite?` | `{results: [{path, from, …}]}`; Ordner werden nie überschrieben |
+| `files.delete` | `path` oder `paths`, `permanent?` | `{deleted, trashed, closed}`; `CodeConflict` bei ungespeicherten Dokumenten, `CodeUnavailable` ohne Papierkorb |
+| `files.reveal` | `path` | im Dateimanager zeigen (`open -R`, `explorer /select,`, `xdg-open ORDNER`) – nur auf Nutzeraktion aufrufen |
+| `files.copyPath` | `path` oder `paths` | `{paths: [{absolute, relative, name, uri}], text, relativeText}` – die GUI kopiert in die Zwischenablage |
+| `files.createPhpClass` | `dir?`, `name`, `kind?` (`class` = `final class`, `abstract`, `interface`, `trait`, `enum`), `namespace?`, `open?` | Datei + `namespace`, `class` (FQCN) |
+| `files.phpNamespace` | `path?` (Ordner) | `{dir, namespace, found, mapping}` aus `composer.json` PSR-4 |
 | `doc.open` | `path`, `create?`, `text?` | Dokumentzustand (+ `text`, `alreadyOpen`); jeder Dokumentzustand enthält `generation` (eindeutig pro geöffneter Instanz, neu nach Schließen + Öffnen) |
 | `doc.close` | `path`, `generation?`, `discard?` | `path`, `generation`, `discarded`; mit ungespeicherten Änderungen nur mit `discard: true` (sonst -32004, `data` = Dokumentzustand); mit `generation` nur, wenn sie zur offenen Instanz passt (sonst -32004 – ein verspätetes Close trifft kein neu geöffnetes Dokument) |
 | `doc.list` | – | Dokumentzustände |
@@ -336,7 +366,7 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `lsp.documentSymbols` | `path` | Baum `[{name, detail, kind, range, selectionRange, children}]` |
 | `lsp.workspaceSymbols` | `query`, `limit?` (500) | `[{name, kind, container, path, file, range?}]` |
 
-Workspace-Änderungen des Servers (Code Actions, Rename, `workspace/applyEdit`) laufen über `App.ApplyFileOps`: Text-Edits offener Dokumente als ein Undo-Schritt je Datei (Versionsprüfung bei versionierten `documentChanges`), geschlossene Dateien atomar unter der Speicher-Sperre mit Local History, Ressourcen-Operationen `create`/`rename`/`delete` in Reihenfolge (ein offenes Dokument wird vor dem Umbenennen gespeichert, geschlossen und unter dem neuen Pfad wieder geöffnet; Gelöschtes bleibt in der Local History). Beim ersten Fehler wird abgebrochen (`failureHandling: abort`), bereits angewendete Schritte bleiben.
+Workspace-Änderungen des Servers (Code Actions, Rename, `workspace/applyEdit`) laufen über `App.ApplyFileOps`: Text-Edits offener Dokumente als ein Undo-Schritt je Datei (Versionsprüfung bei versionierten `documentChanges`), geschlossene Dateien atomar unter der Speicher-Sperre mit Local History, Ressourcen-Operationen `create`/`rename`/`delete` in Reihenfolge (Umbenennen wie `files.rename`: offene Dokumente folgen mit Puffer und Undo, `doc.renamed`; Gelöschtes bleibt in der Local History; `files.changed` wird veröffentlicht). Beim ersten Fehler wird abgebrochen (`failureHandling: abort`), bereits angewendete Schritte bleiben.
 
 **git** – Hunk-Indizes beziehen sich auf `git.diff` mit denselben Optionen. Jeder Hunk in `git.diff` hat `header` und `hash` (Inhalts-Hash); eine Auswahl `{hunk, header?, hash?}` mit diesen Werten wird abgelehnt (-32004 mit `data: {reason: "staleSelection", path, hunk}`), wenn sich der Diff inzwischen geändert hat (z.B. durch Formatierung beim Speichern) – statt still einen anderen Hunk zu nehmen; der Client lädt dann den Diff neu. Ohne `header`/`hash` gilt nur der Index (rückwärtskompatibel). Clients sollten beide mitschicken.
 
@@ -367,6 +397,10 @@ Workspace-Änderungen des Servers (Code Actions, Rename, `workspace/applyEdit`) 
 | `git.stashApply` / `git.stashPop` | `index?` (0), `hash?` (Prüfung gegen verschobenen Stash: -32004 `{reason: "staleStash"}`), `restoreIndex?` | `{conflicts, dropped}` (Pop behält den Eintrag bei Konflikten) |
 | `git.stashDrop` | `index?`, `hash?` | verbleibende Einträge |
 | `git.resolve` | `path`, `content?` oder `resolutions: [{block, resolution: ours\|theirs\|oursFirst\|theirsFirst\|base\|custom, custom?}]` | `content`, `reloaded` |
+| `git.fileDiff` | `path`, `base?` (`HEAD`), `target?` (`working`), `basePath?` (Pfad auf der Basisseite nach Umbenennung), `ignoreWhitespace?`, `noInline?`; Versionen: `working` (offenes Dokument bzw. Datei), `index`, `empty`, Revision | `left`/`right`: `{version, hash?, label, path, exists, binary?, text, open?}` (Volltexte, mit Arbeitsbaum-Filtern), `blocks[{kind: added\|deleted\|modified, leftStart, leftEnd, rightStart, rightEnd, leftInline?, rightInline?: [{line, ranges[{start, end}]}]}]` (1-basiert, Ende exklusiv; Wort-/Zeichenbereiche als Byte-Spalten der Zeile), `identical` |
+| `git.fileHistory` | `path`, `skip?`, `max?` (100), `rev?`, `noFollow?` | `commits[{hash, parents, author, authorEmail, date, subject, refs?, path, oldPath?, status}]` (Pfad der Datei im Commit, `oldPath` im Elterncommit nach Umbenennung), `more` |
+| `git.blame` | `path`, `rev?` (ohne: aktueller Inhalt, offenes Dokument inkl. ungespeicherter Änderungen), `ignoreWhitespace?` | `lines[{line, hash, origLine}]`, `commits[{hash, author, authorEmail, date, summary, path, previous?, prevPath?, boundary?, uncommitted?}]` (neueste zuerst; nicht committete Zeilen: Hash aus 40 Nullen) |
+| `git.compareRevisions` | `base?` (`HEAD`), `target?` (leer/`working` = Arbeitsbaum) | `files[{path, oldPath?, status: A\|M\|D\|R\|C\|T\|U, similarity?}]` |
 
 **debug-xdebug**
 
@@ -394,6 +428,20 @@ Workspace-Änderungen des Servers (Code Actions, Rename, `workspace/applyEdit`) 
 | `syntax.highlights` | `path?`, `text?`, `language?`, Bereich `start?`/`end?` (Byte-Offsets) oder `startLine?`/`endLine?` (1-basiert, inklusiv), `plain?` (auch ungefärbte Bereiche) | `start`, `end`, `spans[{start, end, role}]` – Rollen: `keyword`, `string`, `number`, `comment`, `variable`, `function`, `type`, `constant`, `operator`, `punctuation`, `tag`, `attribute`, `property` (`plain`) |
 | `syntax.folds` | `path?`, `text?`, `language?` | `folds[{startLine, endLine}]` (1-basiert, inklusiv) |
 | `syntax.outline` | `path?`, `text?`, `language?` | `symbols[{kind, name, detail, modifiers, start, end, nameStart, children}]` mit Positionen `{offset, line, col}` (1-basiert, Spalte in Zeichen); `kind`: `namespace`, `class`, `interface`, `trait`, `enum`, `enum case`, `method`, `function`, `property`, `constant` (nur PHP) |
+
+**php-index** – projektweiter PHP-Symbol-Index auf Tree-sitter (D111): rein strukturelle Navigation ohne Typinferenz, unabhängig vom Language Server. Der Index entsteht beim Öffnen des Projekts im Hintergrund (Cache unter `projects/<hash>/index/`, danach werden nur geänderte Dateien geparst) und folgt Dokumentänderungen, Speichern, `files.changed`, `git.changed` (D112). `vendor/` wird standardmäßig mitindiziert (`library: true`, in der Suche nachrangig), `.gitignore` grob beachtet. Einzelbefehle der CLI indizieren erst beim ersten `index.*`/`nav.*`-Aufruf. Positionen wie bei `doc.*`; Quelle ist das offene Dokument, sonst die Datei. `wait: true` wartet auf die erste Indizierung, sonst ist `complete` während des Aufbaus `false`. Ergebnisse `Location`: `{path, file, range (Name), declRange, kind, name, fqn, container, detail, library, source}` mit `kind` aus `class`, `interface`, `trait`, `enum`, `method`, `property`, `classConstant`, `enumCase`, `function`, `constant` und `source` `index`, `lsp` oder `index+lsp`. Ohne cgo: `-32005`.
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `index.status` | `wait?` | `state` (`idle`, `loading`, `indexing`, `ready`, `error`), `progress`, `files`, `libraryFiles`, `classes`, `members`, `functions`, `constants`, `generation`, `fromCache`, `lastSync`, `durationMs`, `libraries`, `error` |
+| `index.config` | `libraries?`, `includeIgnored?`, `exclude?: [muster]` | aktuelle Einstellung (Projekt-Settings `index.*`); Änderungen starten den Index neu |
+| `index.rebuild` | `full?` (Index und Cache verwerfen), `wait?` | Status |
+| `nav.definition` | `path`, `at`, `source?` (`auto` = Index + laufender Language Server, `index`, `lsp`), `wait?` | `locations`, `complete`, `lsp`, `lspError` |
+| `nav.implementations` | wie `nav.definition` | Interface → implementierende Klassen/Enums (transitiv, auch über Elternklassen), Klasse → Unterklassen, Trait → Nutzer, Methode → überschreibende/implementierende Methoden |
+| `nav.super` | `path`, `at`, `wait?` | Klasse → direkte Obertypen; Methode → nächste Deklaration in der Elternkette + alle Interface-Deklarationen |
+| `nav.typeHierarchy` | `fqn` oder `path`+`at`, `wait?` | `class`, `supertypes`/`subtypes` als Bäume (`children`), `truncated` (über 5 000 Untertypen) |
+| `nav.symbols` | `query`, `kinds?` (Arten oder `type`), `limit?` (100), `libraries?` (true), `wait?` | `symbols[{…Location, score}]`, `complete` |
+| `nav.gutter` | `path`, `wait?` | `marks[{line, kind, fqn, range, up, down, upTotal, downTotal}]` – pro Klasse/Methode: `up` = implementiert/überschreibt, `down` = wird implementiert/überschrieben (Listen auf 100 gekürzt) |
 
 `session` bei `debug.*` darf fehlen, wenn genau eine Sitzung aktiv ist.
 

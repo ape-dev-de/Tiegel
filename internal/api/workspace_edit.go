@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/ape-dev-de/tiegel/internal/core/autosave"
 	"github.com/ape-dev-de/tiegel/internal/editor/buffer"
@@ -54,8 +55,8 @@ type FileOp struct {
 	Overwrite, IgnoreIfExists, IgnoreIfNotExists, Recursive bool
 }
 
-// FileOpResult reports one applied FileOp.
-type FileOpResult struct {
+// EditStepResult reports one applied FileOp.
+type EditStepResult struct {
 	Kind    string `json:"kind"`
 	Path    string `json:"path"`
 	File    string `json:"file"`
@@ -81,13 +82,13 @@ type FileOpResult struct {
 // closed files ("<label>" for the new content, "before <label>" for the
 // old one). Closed files are written under the save lock (Exclusive), so
 // they cannot race with a save of a document opened in the meantime.
-func (a *App) ApplyFileOps(ctx context.Context, label string, ops []FileOp) ([]FileOpResult, error) {
-	out := make([]FileOpResult, 0, len(ops))
+func (a *App) ApplyFileOps(ctx context.Context, label string, ops []FileOp) ([]EditStepResult, error) {
+	out := make([]EditStepResult, 0, len(ops))
 	for i, op := range ops {
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
-		var res FileOpResult
+		var res EditStepResult
 		var err error
 		switch op.Kind {
 		case "", FileOpEdit:
@@ -195,15 +196,15 @@ func (a *App) openDoc(abs string) *Doc {
 	return a.docs[abs]
 }
 
-func (a *App) applyEditOp(op FileOp, label string) (FileOpResult, error) {
+func (a *App) applyEditOp(op FileOp, label string) (EditStepResult, error) {
 	abs, err := a.resolvePath(op.Path)
 	if err != nil {
-		return FileOpResult{}, err
+		return EditStepResult{}, err
 	}
 	if op.Changes == nil {
-		return FileOpResult{}, Errorf(CodeInvalidParams, "no changes")
+		return EditStepResult{}, Errorf(CodeInvalidParams, "no changes")
 	}
-	res := FileOpResult{Kind: FileOpEdit, Path: a.displayPath(abs), File: abs}
+	res := EditStepResult{Kind: FileOpEdit, Path: a.displayPath(abs), File: abs}
 	size := 0
 	err = a.saver.Exclusive(func() error {
 		if d := a.openDoc(abs); d != nil {
@@ -273,12 +274,13 @@ func (a *App) writeWithHistory(abs string, old, updated []byte, label string) (u
 	return rev.ID, nil
 }
 
-func (a *App) applyCreateOp(op FileOp) (FileOpResult, error) {
+func (a *App) applyCreateOp(op FileOp) (EditStepResult, error) {
 	abs, err := a.resolvePath(op.Path)
 	if err != nil {
-		return FileOpResult{}, err
+		return EditStepResult{}, err
 	}
-	res := FileOpResult{Kind: FileOpCreate, Path: a.displayPath(abs), File: abs}
+	res := EditStepResult{Kind: FileOpCreate, Path: a.displayPath(abs), File: abs}
+	var changes []FileChange
 	err = a.saver.Exclusive(func() error {
 		if _, err := os.Stat(abs); err == nil {
 			switch {
@@ -299,6 +301,7 @@ func (a *App) applyCreateOp(op FileOp) (FileOpResult, error) {
 			d.mu.Unlock()
 			return err
 		}
+		parents := missingParents(filepath.Dir(abs))
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 			return Errorf(CodeFailed, "create %s: %w", res.Path, err)
 		}
@@ -306,79 +309,73 @@ func (a *App) applyCreateOp(op FileOp) (FileOpResult, error) {
 		if data, err := os.ReadFile(abs); err == nil {
 			old = data
 		}
-		_, err := a.writeWithHistory(abs, old, nil, "create")
-		return err
+		if _, err := a.writeWithHistory(abs, old, nil, "create"); err != nil {
+			return err
+		}
+		for _, d := range parents {
+			changes = append(changes, a.created(d, true))
+		}
+		if old == nil {
+			changes = append(changes, a.created(abs, false))
+		}
+		return nil
 	})
+	a.publishChanges(changes)
 	return res, err
 }
 
-// applyRenameOp renames a file. An open document is saved (if modified),
-// closed and reopened under the new path; its undo history is lost.
-func (a *App) applyRenameOp(ctx context.Context, op FileOp) (FileOpResult, error) {
+// applyRenameOp renames a file or directory with the move of the file
+// operations API (files.rename): open documents, also modified ones, follow
+// the rename (doc.renamed, their undo history stays), Local History moves
+// along and files.changed is published.
+func (a *App) applyRenameOp(_ context.Context, op FileOp) (EditStepResult, error) {
 	from, err := a.resolvePath(op.Path)
 	if err != nil {
-		return FileOpResult{}, err
+		return EditStepResult{}, err
 	}
 	to, err := a.resolvePath(op.NewPath)
 	if err != nil {
-		return FileOpResult{}, err
+		return EditStepResult{}, err
 	}
-	res := FileOpResult{Kind: FileOpRename, Path: a.displayPath(from), File: from, NewPath: a.displayPath(to)}
-	if _, err := os.Stat(to); err == nil && !op.Overwrite {
+	res := EditStepResult{Kind: FileOpRename, Path: a.displayPath(from), File: from, NewPath: a.displayPath(to)}
+	if _, err := os.Stat(to); err == nil && !op.Overwrite && !strings.EqualFold(from, to) {
 		if op.IgnoreIfExists {
 			res.Skipped = true
 			return res, nil
 		}
 		return res, Errorf(CodeConflict, "%s already exists", res.NewPath)
 	}
-	if a.openDoc(to) != nil {
-		return res, Errorf(CodeConflict, "%s is open as a document", res.NewPath)
-	}
-	reopen := false
-	if d := a.openDoc(from); d != nil {
-		if d.Snapshot().Modified {
-			if _, err := a.docSave(ctx, PathParams{Path: from}); err != nil {
-				return res, err
+	if a.ProjectRoot() == "" {
+		err = a.saver.Exclusive(func() error {
+			if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+				return Errorf(CodeFailed, "rename: %w", err)
 			}
-		}
-		if _, err := a.docClose(ctx, DocCloseParams{Path: from}); err != nil {
-			return res, err
-		}
-		reopen = true
-	}
-	err = a.saver.Exclusive(func() error {
-		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
-			return Errorf(CodeFailed, "rename: %w", err)
-		}
-		if err := os.Rename(from, to); err != nil {
-			return notFoundOr(err, "rename %s", res.Path)
-		}
-		return nil
-	})
-	if err != nil {
-		if reopen {
-			_, _ = a.docOpen(ctx, DocOpenParams{Path: from})
-		}
+			if err := os.Rename(from, to); err != nil {
+				return notFoundOr(err, "rename %s", res.Path)
+			}
+			res.Open = len(a.rehome(from, to)) > 0
+			return nil
+		})
 		return res, err
 	}
-	if reopen {
-		if _, err := a.docOpen(ctx, DocOpenParams{Path: to}); err != nil {
-			return res, err
-		}
-		res.Open = true
+	mr, changes, err := a.move(from, to, op.Overwrite)
+	a.publishChanges(changes)
+	if err != nil {
+		return res, err
 	}
+	res.Open = len(mr.Docs) > 0
 	return res, nil
 }
 
 // applyDeleteOp deletes a file or directory. The content of a file is kept
 // in Local History; an open document is closed (its unsaved changes are
 // kept in Local History too).
-func (a *App) applyDeleteOp(ctx context.Context, op FileOp, label string) (FileOpResult, error) {
+func (a *App) applyDeleteOp(ctx context.Context, op FileOp, label string) (EditStepResult, error) {
 	abs, err := a.resolvePath(op.Path)
 	if err != nil {
-		return FileOpResult{}, err
+		return EditStepResult{}, err
 	}
-	res := FileOpResult{Kind: FileOpDelete, Path: a.displayPath(abs), File: abs}
+	res := EditStepResult{Kind: FileOpDelete, Path: a.displayPath(abs), File: abs}
 	st, err := os.Stat(abs)
 	if errors.Is(err, fs.ErrNotExist) && op.IgnoreIfNotExists {
 		res.Skipped = true
@@ -418,6 +415,9 @@ func (a *App) applyDeleteOp(ctx context.Context, op FileOp, label string) (FileO
 		}
 		return wrapFS(os.Remove(abs), "delete "+res.Path)
 	})
+	if err == nil {
+		a.publishChanges([]FileChange{{Op: "deleted", Path: res.Path, File: abs, Dir: st.IsDir()}})
+	}
 	return res, err
 }
 

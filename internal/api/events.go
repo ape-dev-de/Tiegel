@@ -233,5 +233,11 @@ const (
 	TopicDocChanged    = "doc.changed"
 	TopicDocSaved      = "doc.saved"
 	TopicDocClosed     = "doc.closed"
+	// TopicDocRenamed: an open document follows its renamed or moved file
+	// (DocRenamedEvent); doc.closed (old path) and doc.opened follow.
+	TopicDocRenamed = "doc.renamed"
+	// TopicFilesChanged: files were created, renamed/moved or deleted
+	// through the API (FilesChangedEvent).
+	TopicFilesChanged  = "files.changed"
 	TopicModuleChanged = "modules.changed"
 )

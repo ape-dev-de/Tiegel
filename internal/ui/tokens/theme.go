@@ -8,12 +8,15 @@ package tokens
 
 import (
 	"image/color"
+	"runtime"
 
 	"gioui.org/font"
-	"gioui.org/font/gofont"
 	"gioui.org/text"
 	"gioui.org/unit"
 )
+
+// goos selects the default font chains; tests may override it.
+var goos = runtime.GOOS
 
 // Mode identifies the brightness variant of a theme.
 type Mode int
@@ -182,11 +185,14 @@ type GitPalette struct {
 	FileConflict  color.NRGBA
 }
 
-// Fonts selects the typefaces. Both are Go fonts bundled with Gio, so no
-// system fonts are required.
+// Fonts selects the typefaces. Both typefaces are comma-separated fallback
+// chains of family names (see DefaultFamilies): the shaper picks the first
+// installed family, resolves runes it lacks (CJK, emoji, …) from other
+// installed fonts and ends with the bundled Go fonts, so text renders even
+// without system fonts.
 type Fonts struct {
-	UI   font.Font // proportional UI font
-	Mono font.Font // monospace editor font
+	UI   font.Font // proportional UI font chain
+	Mono font.Font // monospace editor font chain
 }
 
 // TextSizes holds the type scale.
@@ -197,6 +203,9 @@ type TextSizes struct {
 	Heading unit.Sp // section headings
 	Title   unit.Sp // dialog titles
 	Code    unit.Sp // editor text
+	// CodeLineHeight is the editor row height as a multiple of the code
+	// font's ascent+descent (0 means 1.4).
+	CodeLineHeight float32
 }
 
 // Spacing is the 4dp grid. Use the named steps instead of raw numbers.
@@ -250,21 +259,20 @@ type Theme struct {
 	Shaper *text.Shaper
 }
 
-// NewShaper returns a text shaper loaded with the bundled Go fonts only.
-// System fonts are not consulted, so rendering is identical everywhere.
-func NewShaper() *text.Shaper {
-	return text.NewShaper(text.NoSystemFonts(), text.WithCollection(gofont.Collection()))
-}
-
-// New returns the theme for mode. If shaper is nil a new one is created.
+// New returns the theme for mode with the default font chains of the
+// running OS (see DefaultFamilies) and default sizes; apply user font
+// preferences with WithFonts. If shaper is nil, a new bundled-fonts shaper
+// (NewBundledShaper) is created, which keeps tests deterministic; the
+// application passes a NewShaper to use system fonts.
 func New(mode Mode, shaper *text.Shaper) *Theme {
 	if shaper == nil {
-		shaper = NewShaper()
+		shaper = NewBundledShaper()
 	}
+	ui, mono := DefaultFamilies(goos)
 	th := &Theme{
 		Mode:   mode,
-		Font:   Fonts{UI: font.Font{Typeface: "Go"}, Mono: font.Font{Typeface: "Go Mono"}},
-		Text:   TextSizes{Small: 11, Body: 13, Large: 15, Heading: 17, Title: 21, Code: 13},
+		Font:   Fonts{UI: font.Font{Typeface: font.Typeface(ui)}, Mono: font.Font{Typeface: font.Typeface(mono)}},
+		Text:   scaledText(defaultUISize),
 		Space:  Spacing{XXS: 2, XS: 4, S: 8, M: 12, L: 16, XL: 24, XXL: 32},
 		Radius: Radii{S: 3, M: 5, L: 8, Pill: 999},
 		Size: Sizes{
@@ -287,10 +295,14 @@ func Dark(shaper *text.Shaper) *Theme { return New(ModeDark, shaper) }
 // Light returns the light theme.
 func Light(shaper *text.Shaper) *Theme { return New(ModeLight, shaper) }
 
-// Toggled returns the theme of the opposite mode, sharing the shaper.
+// Toggled returns the theme of the opposite mode, sharing the shaper and
+// keeping the fonts and text sizes.
 func (th *Theme) Toggled() *Theme {
+	mode := ModeLight
 	if th.Mode == ModeLight {
-		return New(ModeDark, th.Shaper)
+		mode = ModeDark
 	}
-	return New(ModeLight, th.Shaper)
+	out := New(mode, th.Shaper)
+	out.Font, out.Text = th.Font, th.Text
+	return out
 }

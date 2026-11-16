@@ -6,6 +6,7 @@
 //	git           git integration
 //	debug-xdebug  Xdebug debugger (→ php-runtime)
 //	syntax        highlighting, folds, outline over the API (D80)
+//	php-index     Tree-sitter symbol index, navigation (nav.*, index.*; D111)
 //
 // The modules never import each other; they share data through the bus and
 // the hook points declared in internal/api/contract.go. None of them imports
@@ -19,6 +20,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/modules/git"
 	"github.com/ape-dev-de/tiegel/internal/modules/langphp"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpfeatures"
+	"github.com/ape-dev-de/tiegel/internal/modules/phpindex"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpruntime"
 	"github.com/ape-dev-de/tiegel/internal/modules/syntaxmod"
 )
@@ -30,6 +32,7 @@ type Options struct {
 	LangPHP  langphp.Options
 	Git      git.Options
 	Debug    debugxdebug.Options
+	Index    phpindex.Options
 }
 
 // All returns new instances of all compiled-in modules in dependency order.
@@ -41,6 +44,7 @@ func All(opts Options) []module.Module {
 		git.New(opts.Git),
 		debugxdebug.New(opts.Debug),
 		syntaxmod.New(),
+		phpindex.New(opts.Index),
 	}
 }
 

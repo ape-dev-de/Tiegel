@@ -99,7 +99,9 @@ type Store struct {
 	dir     string
 	scope   Scope
 	project string
-	bus     *bus.Bus
+
+	busMu sync.Mutex
+	buses []*bus.Bus
 
 	mu        sync.RWMutex
 	values    map[string]json.RawMessage
@@ -139,7 +141,10 @@ func OpenProject(baseDir, projectPath string, b *bus.Bus) (*Store, error) {
 }
 
 func open(dir string, scope Scope, project string, b *bus.Bus) (*Store, error) {
-	s := &Store{dir: dir, scope: scope, project: project, bus: b, values: map[string]json.RawMessage{}}
+	s := &Store{dir: dir, scope: scope, project: project, values: map[string]json.RawMessage{}}
+	if b != nil {
+		s.buses = []*bus.Bus{b}
+	}
 	data, err := os.ReadFile(s.Path())
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -240,10 +245,32 @@ func (s *Store) setRaw(key string, value json.RawMessage) error {
 	if err != nil {
 		return err
 	}
-	if s.bus != nil {
-		Changed.Publish(s.bus, Change{Scope: s.scope, Project: s.project, Key: key, Deleted: value == nil})
+	s.busMu.Lock()
+	buses := append([]*bus.Bus(nil), s.buses...)
+	s.busMu.Unlock()
+	for _, b := range buses {
+		Changed.Publish(b, Change{Scope: s.scope, Project: s.project, Key: key, Deleted: value == nil})
 	}
 	return nil
+}
+
+// AttachBus additionally publishes change events on b (one global store
+// shared by several App instances of one process, e.g. one per project
+// window). The returned function detaches b again.
+func (s *Store) AttachBus(b *bus.Bus) (detach func()) {
+	s.busMu.Lock()
+	s.buses = append(s.buses, b)
+	s.busMu.Unlock()
+	return func() {
+		s.busMu.Lock()
+		defer s.busMu.Unlock()
+		for i, x := range s.buses {
+			if x == b {
+				s.buses = append(s.buses[:i], s.buses[i+1:]...)
+				return
+			}
+		}
+	}
 }
 
 func (s *Store) persistLocked() error {

@@ -35,11 +35,12 @@ const HoverDelay = 600 * time.Millisecond
 // shared buffer directly; every access happens with the document locked
 // (see api.Doc), and the controller is never asked to lock.
 type editorSession struct {
-	tab  *controller.Tab
-	file string
-	doc  controller.DocHandle
-	ed   *editorview.Editor
-	hl   *tshighlight.Highlighter
+	tab   *controller.Tab
+	group *controller.EditorGroup
+	file  string
+	doc   controller.DocHandle
+	ed    *editorview.Editor
+	hl    *tshighlight.Highlighter
 
 	diagSeen  uint64
 	caretText string
@@ -56,14 +57,26 @@ type editorSession struct {
 	ignoreEdt bool
 }
 
-// session returns the editor of tab t, creating it on first use.
-func (v *View) session(t *controller.Tab) *editorSession {
-	if t == nil || t.Doc == nil {
+// sessionKey identifies an editor widget: one per group and file, so a
+// file open in two groups has two carets and scroll positions on the
+// same shared buffer.
+type sessionKey struct {
+	group *controller.EditorGroup
+	file  string
+}
+
+// session returns the editor of tab t in group g, creating it on first
+// use.
+func (v *View) session(g *controller.EditorGroup, t *controller.Tab) *editorSession {
+	if t == nil || t.Doc == nil || g == nil {
 		return nil
 	}
-	if s := v.editors[t.File]; s != nil && s.doc == t.Doc {
+	k := sessionKey{g, t.File}
+	if s := v.editors[k]; s != nil && s.doc == t.Doc {
 		s.tab = t
 		return s
+	} else if s != nil {
+		v.closeSession(k, s)
 	}
 	t.Doc.Lock()
 	buf := t.Doc.Buffer()
@@ -75,32 +88,55 @@ func (v *View) session(t *controller.Tab) *editorSession {
 	ed.Highlighter = hl
 	ed.SetFoldRanges(highlight.BraceFolds(buf.Snapshot()))
 	t.Doc.Unlock()
-	s := &editorSession{tab: t, file: t.File, doc: t.Doc, ed: ed, hl: hl}
-	v.editors[t.File] = s
+	s := &editorSession{tab: t, file: t.File, doc: t.Doc, ed: ed, hl: hl, group: g}
+	v.editors[k] = s
 	return s
 }
 
-// activeSession returns the editor of the active tab.
-func (v *View) activeSession() *editorSession { return v.session(v.ctl.ActiveTab()) }
+// activeSession returns the editor of the active tab of the active
+// group.
+func (v *View) activeSession() *editorSession {
+	return v.session(v.ctl.ActiveGroup(), v.ctl.ActiveTab())
+}
 
-// closeStaleEditors releases editors whose tabs were closed.
+// closeStaleEditors releases editors whose tabs were closed (in their
+// group) or whose group went away.
 func (v *View) closeStaleEditors() {
-	for file, s := range v.editors {
-		if t := v.ctl.Tab(file); t != nil && t.Doc == s.doc {
+	live := map[sessionKey]controller.DocHandle{}
+	for _, g := range v.ctl.Groups() {
+		tabs, _ := v.ctl.GroupTabs(g)
+		for _, t := range tabs {
+			if t.Doc != nil {
+				live[sessionKey{g, t.File}] = t.Doc
+			}
+		}
+	}
+	for k, s := range v.editors {
+		if d, ok := live[k]; ok && d == s.doc {
 			continue
 		}
-		s.doc.Lock()
-		s.ed.Close()
-		s.hl.Close()
-		s.doc.Unlock()
-		delete(v.editors, file)
+		v.closeSession(k, s)
 	}
+	for g := range v.tabBars {
+		if v.ctl.GroupIndex(g) < 0 {
+			delete(v.tabBars, g)
+		}
+	}
+}
+
+func (v *View) closeSession(k sessionKey, s *editorSession) {
+	s.doc.Lock()
+	s.ed.Close()
+	s.hl.Close()
+	s.doc.Unlock()
+	delete(v.editors, k)
 }
 
 // Close releases all editors.
 func (v *View) Close() {
-	v.ctl.Tabs = nil
-	v.closeStaleEditors()
+	for k, s := range v.editors {
+		v.closeSession(k, s)
+	}
 }
 
 // currentLocation returns the caret location of the active editor.
@@ -121,18 +157,18 @@ func (s *editorSession) location() controller.Location {
 
 // ---- editor layout ------------------------------------------------------------
 
-func (v *View) layoutEditor(gtx layout.Context) layout.Dimensions {
-	s := v.activeSession()
-	if s == nil {
-		return v.layoutNoEditor(gtx)
-	}
+// layoutEditor draws the editor s of a group; only the active group's
+// editor gets reveals, editor shortcuts, popups and the keyboard focus.
+func (v *View) layoutEditor(gtx layout.Context, s *editorSession, active bool) layout.Dimensions {
 	c := v.ctl
-	v.editorKeys.build(v.Registry, v.goos, ScopeEditor, s.ed)
+	if active {
+		v.editorKeys.build(v.Registry, v.goos, ScopeEditor, s.ed)
+	}
 	s.doc.Lock()
 	defer s.doc.Unlock()
 	buf := s.doc.Buffer()
 
-	if r := c.Reveal; r != nil && r.File == s.file {
+	if r := c.Reveal; active && r != nil && r.File == s.file {
 		c.Reveal = nil
 		off := r.Range.Start.Offset
 		if off < 0 { // by line (controller.AtLine)
@@ -153,18 +189,27 @@ func (v *View) layoutEditor(gtx layout.Context) layout.Dimensions {
 
 	// The window handles popup navigation and editor shortcuts before the
 	// widget sees the keys.
-	v.popupKeys(gtx, s)
-	v.editorKeys.process(gtx, v)
-	v.hoverInput(gtx, s)
-	if v.focusEditor && v.chooseMode == chooseNone && !v.settingsOpen {
-		v.focusEditor = false
-		s.ed.Focus(gtx)
+	if active {
+		v.popupKeys(gtx, s)
+		v.editorKeys.process(gtx, v)
+		v.hoverInput(gtx, s)
+		if v.focusEditor && v.chooseMode == chooseNone && !v.settingsOpen && v.popup == nil {
+			v.focusEditor = false
+			s.ed.Focus(gtx)
+		}
+		if a := v.pendingEdit; a != "" {
+			v.pendingEdit = ""
+			s.ed.Do(gtx, a)
+		}
 	}
 
 	dims := s.ed.Layout(gtx, v.th)
-	v.editorEvents(gtx, s)
+	v.editorEvents(gtx, s, active)
 	s.tab.Modified = buf.Modified()
 	s.caretText = caretText(buf, s.ed.Cursor().Primary())
+	if !active {
+		return dims
+	}
 	if v.findOpen {
 		v.updateFindCount(s)
 	}
@@ -230,7 +275,7 @@ func caretText(b *buffer.Buffer, sel cursor.Selection) string {
 }
 
 // editorEvents handles the widget's events (document locked).
-func (v *View) editorEvents(gtx layout.Context, s *editorSession) {
+func (v *View) editorEvents(gtx layout.Context, s *editorSession, active bool) {
 	c := v.ctl
 	typed := ""
 	changed := false
@@ -246,8 +291,16 @@ func (v *View) editorEvents(gtx layout.Context, s *editorSession) {
 		case editorview.FocusEvent:
 			if !ev.Focused {
 				c.Autosave("focusLost")
+			} else if !active {
+				// Clicked into another group's editor: it becomes active
+				// (next frame; groups are being laid out).
+				g := s.group
+				v.Post(func() { v.focusGroup(g) })
 			}
 		case editorview.ActionEvent:
+			if !active {
+				continue
+			}
 			v.editorAction(s, ev.Action)
 		case editorview.GutterClickEvent:
 			for _, h := range v.Registry.gutterClicks {
@@ -256,6 +309,9 @@ func (v *View) editorEvents(gtx layout.Context, s *editorSession) {
 				}
 			}
 		}
+	}
+	if !active {
+		return
 	}
 	ignore := s.ignoreEdt
 	s.ignoreEdt = false

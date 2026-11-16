@@ -20,24 +20,8 @@ func init() {
 		&command{name: "usages", usage: "usages FILE LINE:COL [--no-declaration] [--server ID] [--command PATH]", summary: "find usages of the symbol at a position (language server)", minArgs: 2, maxArgs: 2, cwdProject: true, run: runUsages},
 		&command{name: "format", usage: "format FILE... [--preview] [--tab-size N] [--server ID] [--command PATH]", summary: "reformat files with the language server and save them", minArgs: 1, maxArgs: -1, cwdProject: true, run: runFormat},
 		&command{name: "code-actions", usage: "code-actions FILE LINE:COL [--apply N|ID] [--timeout DUR] [--server ID] [--command PATH]", summary: "list (or apply) code actions at a position incl. quick fixes", minArgs: 2, maxArgs: 2, cwdProject: true, run: runCodeActions},
-		&command{name: "rename", usage: "rename FILE LINE:COL NEW-NAME [--preview] [--server ID] [--command PATH]", summary: "rename a symbol in all files (language server) and save", minArgs: 3, maxArgs: 3, cwdProject: true, run: runRename},
+		&command{name: "rename-symbol", usage: "rename-symbol FILE LINE:COL NEW-NAME [--preview] [--server ID] [--command PATH]", summary: "rename a symbol in all files (language server) and save", minArgs: 3, maxArgs: 3, cwdProject: true, run: runRenameSymbol},
 	)
-}
-
-// parseLineCol parses "LINE[:COL]" (1-based).
-func parseLineCol(s string) (api.Pos, error) {
-	l, c, hasCol := strings.Cut(s, ":")
-	line, err := strconv.Atoi(l)
-	if err != nil || line < 1 {
-		return api.Pos{}, usagef("position must be LINE:COL (1-based), got %q", s)
-	}
-	col := 1
-	if hasCol {
-		if col, err = strconv.Atoi(c); err != nil || col < 1 {
-			return api.Pos{}, usagef("position must be LINE:COL (1-based), got %q", s)
-		}
-	}
-	return api.Pos{Line: line, Col: col}, nil
 }
 
 // withLSP starts the language server, opens files and runs fn; the server
@@ -233,7 +217,7 @@ func printEdit(w io.Writer, res langphp.EditResult) {
 	}
 }
 
-func runRename(c *cli) error {
+func runRenameSymbol(c *cli) error {
 	at, err := parseLineCol(c.p.args[1])
 	if err != nil {
 		return err

@@ -4,7 +4,9 @@ import (
 	"image"
 	"testing"
 
+	"gioui.org/f32"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
@@ -30,6 +32,27 @@ func TestWelcome(t *testing.T) {
 	if len(evs) == 0 || evs[0] != (OpenEvent{Path: "/home/me/shop"}) {
 		t.Fatalf("recent click %v", evs)
 	}
+	// The remove button appears on hover at the right end of the row.
+	rowY := 0
+	for y := 150; y < 500; y += 8 {
+		evs = nil
+		h.Click(image.Pt(500, y))
+		h.Frame(w)
+		if len(evs) > 0 {
+			rowY = y
+			break
+		}
+	}
+	evs = nil
+	h.Router.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(805, float32(rowY))})
+	h.Frame(w)
+	h.Click(image.Pt(805, rowY))
+	h.Frame(w)
+	if len(evs) == 0 || evs[0] != (RemoveEvent{Path: "/home/me/shop"}) {
+		t.Fatalf("remove %v", evs)
+	}
+	v.Hints = []string{"Open…  Cmd+O"}
+	uitest.Smoke(t, "hints", image.Pt(1000, 700), w)
 	evs = nil
 	v.SetPath("/tmp/x")
 	h.Frame(w)
