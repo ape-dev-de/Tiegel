@@ -305,3 +305,40 @@ func TestRenderHeadless(t *testing.T) {
 		t.Errorf("only %d pixels drawn", n)
 	}
 }
+
+func TestTooltipPassesClicks(t *testing.T) {
+	h := uitest.NewHarness(area)
+	tip := &atoms.Tooltip{Text: "Run"}
+	b := atoms.NewIconButton(atoms.GlyphRun, "Run")
+	clicked := false
+	w := func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+		clicked = b.Clicked(gtx) || clicked
+		return tip.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions { return b.Layout(gtx, th) })
+	}
+	h.Frame(w)
+	h.Click(image.Pt(10, 10))
+	h.Frame(w)
+	if !clicked {
+		t.Fatal("tooltip swallowed the click")
+	}
+}
+
+func TestIconButtonActiveAndDisabled(t *testing.T) {
+	for _, active := range []bool{false, true} {
+		for _, disabled := range []bool{false, true} {
+			b := &atoms.IconButton{Glyph: atoms.GlyphListen, Active: active, Disabled: disabled, Description: "Listen"}
+			if d := uitest.Smoke(t, "iconbutton toggle", area, b.Layout); d.Size != image.Pt(28, 28) {
+				t.Errorf("size %v", d.Size)
+			}
+		}
+	}
+	th := tokens.Dark(nil)
+	b := &atoms.IconButton{Glyph: atoms.GlyphListen, Active: true}
+	img, err := uitest.Render(th, image.Pt(40, 40), b.Layout)
+	if err != nil {
+		t.Skipf("headless rendering unavailable: %v", err)
+	}
+	if px := img.RGBAAt(2, 14); px.R == th.Color.Background.R && px.G == th.Color.Background.G && px.B == th.Color.Background.B {
+		t.Error("active toggle has no tinted background")
+	}
+}

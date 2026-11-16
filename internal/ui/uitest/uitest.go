@@ -12,6 +12,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/gpu/headless"
+	"gioui.org/io/event"
 	"gioui.org/io/input"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -165,6 +166,25 @@ func (h *Harness) DoubleClick(p image.Point) {
 	h.queueClick(p)
 	h.clock += 50 * time.Millisecond
 	h.queueClick(p)
+}
+
+// Drag queues a primary-button drag from one point to another (press, a few
+// drag moves, release), delivered during the next Frame.
+func (h *Harness) Drag(from, to image.Point) {
+	h.clock += time.Second
+	pos := func(p image.Point) f32.Point { return f32.Pt(float32(p.X), float32(p.Y)) }
+	evs := []event.Event{
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pos(from), Time: h.clock},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos(from), Time: h.clock},
+	}
+	const steps = 4
+	for i := 1; i <= steps; i++ {
+		p := from.Add(to.Sub(from).Mul(i).Div(steps))
+		h.clock += 10 * time.Millisecond
+		evs = append(evs, pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos(p), Time: h.clock})
+	}
+	evs = append(evs, pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos(to), Time: h.clock})
+	h.Router.Queue(evs...)
 }
 
 func (h *Harness) queueClick(p image.Point) {

@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"image"
 	"strings"
+	"sync/atomic"
 
 	"gioui.org/layout"
 	"gioui.org/unit"
 
 	"github.com/ape-dev-de/tiegel/internal/editor/buffer"
 	"github.com/ape-dev-de/tiegel/internal/editor/highlight"
+	"github.com/ape-dev-de/tiegel/internal/editor/highlight/tshighlight"
 	"github.com/ape-dev-de/tiegel/internal/editor/search"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
@@ -20,10 +22,21 @@ import (
 //go:embed sample.php
 var samplePHP string
 
+// redraw requests a new frame; set by run once the window exists. The
+// Tree-sitter highlighters call it from their background goroutines.
+var redraw atomic.Pointer[func()]
+
+func requestRedraw() {
+	if f := redraw.Load(); f != nil {
+		(*f)()
+	}
+}
+
 // editorDemo is the state of the Editor catalog page.
 type editorDemo struct {
 	ed          *editorview.Editor
 	yaml        *editorview.Editor
+	hl, yamlHL  *tshighlight.Highlighter
 	breakpoints map[int]bool
 	status      string
 }
@@ -31,7 +44,10 @@ type editorDemo struct {
 func newEditorDemo() *editorDemo {
 	d := &editorDemo{breakpoints: map[int]bool{29: true}, status: "Click into the editor."}
 	ed := editorview.New(buffer.NewString(samplePHP))
-	ed.Highlighter = highlight.PHPDemo
+	// Tree-sitter highlighting; folds start with the brace scanner and are
+	// replaced by syntax folds once the first parse is done.
+	d.hl = tshighlight.New(ed.Buffer(), tshighlight.Options{Path: "Mailer.php", Invalidate: requestRedraw})
+	ed.Highlighter = d.hl
 	ed.SetFoldRanges(highlight.BraceFolds(ed.Buffer().Snapshot()))
 	ed.SetGutterMarkers(editorview.MarkerFunc(d.markers))
 	at := strings.Index(samplePHP, "SmtpTransport")
@@ -46,6 +62,8 @@ func newEditorDemo() *editorDemo {
 	y := editorview.New(buffer.NewString("services:\n  php:\n    image: php:8.3-fpm\n    # xdebug enabled\n    environment:\n      XDEBUG_MODE: debug\n"))
 	y.LineComment = editorview.LineComments["yaml"]
 	y.ReadOnly = true
+	d.yamlHL = tshighlight.New(y.Buffer(), tshighlight.Options{Path: "compose.yaml", Invalidate: requestRedraw})
+	y.Highlighter = d.yamlHL
 	d.yaml = y
 	return d
 }
@@ -70,6 +88,9 @@ func (d *editorDemo) markers(line int) []editorview.Marker {
 }
 
 func (d *editorDemo) update(gtx layout.Context) {
+	if rs, ok := d.hl.TakeFolds(); ok {
+		d.ed.SetFoldRanges(rs)
+	}
 	for {
 		ev, ok := d.ed.Update(gtx)
 		if !ok {
@@ -94,6 +115,19 @@ func (d *editorDemo) update(gtx layout.Context) {
 	}
 }
 
+// parseState describes the highlighter state for the variant label.
+func parseState(h *tshighlight.Highlighter) string {
+	switch {
+	case h.Err() != nil:
+		return "error: " + h.Err().Error()
+	case !h.Ready():
+		return "parsing…"
+	case !h.Idle():
+		return "re-parsing…"
+	}
+	return string(h.Language())
+}
+
 // sized gives w an exact size: full width, h dp high.
 func sized(h unit.Dp, w layout.Widget) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions {
@@ -107,14 +141,14 @@ func editorPage() *page {
 	return &page{
 		editor: d,
 		Level:  "Organisms", Name: "Editor", Glyph: atoms.GlyphFileCode,
-		Summary: "Code editor: virtual rendering, multi-cursor, folding, gutter markers, diagnostics, search and bracket highlights, IME.",
+		Summary: "Code editor: virtual rendering, multi-cursor, folding, gutter markers, diagnostics, search and bracket highlights, IME. Highlighting and folds via Tree-sitter (tshighlight), re-parsed in the background while typing.",
 		Variants: func(th *tokens.Theme) []variant {
 			return []variant{
-				{"PHP (demo highlighter) – " + d.status, sized(460, func(gtx layout.Context) layout.Dimensions {
+				{"PHP (Tree-sitter, " + parseState(d.hl) + ") – " + d.status, sized(460, func(gtx layout.Context) layout.Dimensions {
 					d.update(gtx)
 					return d.ed.Layout(gtx, th)
 				})},
-				{"Read-only YAML", sized(140, func(gtx layout.Context) layout.Dimensions {
+				{"Read-only YAML (Tree-sitter)", sized(140, func(gtx layout.Context) layout.Dimensions {
 					return d.yaml.Layout(gtx, th)
 				})},
 			}

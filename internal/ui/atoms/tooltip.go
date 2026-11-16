@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"gioui.org/gesture"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -63,9 +64,13 @@ func (t *Tooltip) Layout(gtx layout.Context, th *tokens.Theme, content layout.Wi
 	d := content(gtx)
 
 	hovered := t.hover.Update(gtx.Source)
+	// Pass events through so the wrapped content (e.g. a button) still
+	// receives clicks.
+	pass := pointer.PassOp{}.Push(gtx.Ops)
 	area := clip.Rect(image.Rectangle{Max: d.Size}).Push(gtx.Ops)
 	t.hover.Add(gtx.Ops)
 	area.Pop()
+	pass.Pop()
 
 	t.visible = false
 	switch {

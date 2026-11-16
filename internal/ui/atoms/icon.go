@@ -117,6 +117,21 @@ var (
 	GlyphThemeDark     = NewGlyph("theme-dark", icons.ImageBrightness2)
 	GlyphThemeLight    = NewGlyph("theme-light", icons.ImageWBSunny)
 	GlyphIndeterminate = NewGlyph("indeterminate", icons.ToggleIndeterminateCheckBox)
+	GlyphStop          = NewGlyph("stop", icons.AVStop)
+	GlyphPause         = NewGlyph("pause", icons.AVPause)
+	GlyphStepOver      = NewGlyph("step-over", icons.ContentRedo)
+	GlyphStepInto      = NewGlyph("step-into", icons.NavigationArrowDownward)
+	GlyphStepOut       = NewGlyph("step-out", icons.NavigationArrowUpward)
+	GlyphMute          = NewGlyph("mute", icons.ContentBlock)
+	GlyphListen        = NewGlyph("listen", icons.ActionSettingsInputAntenna)
+	GlyphCopy          = NewGlyph("copy", icons.ContentContentCopy)
+	GlyphEdit          = NewGlyph("edit", icons.EditorModeEdit)
+	GlyphComputer      = NewGlyph("computer", icons.HardwareComputer)
+	GlyphContainer     = NewGlyph("container", icons.ActionDNS)
+	GlyphMore          = NewGlyph("more", icons.NavigationMoreHoriz)
+	GlyphDropDown      = NewGlyph("drop-down", icons.NavigationArrowDropDown)
+	GlyphList          = NewGlyph("list", icons.ActionList)
+	GlyphSwap          = NewGlyph("swap", icons.ActionSwapHoriz)
 )
 
 // Glyphs lists all built-in glyphs (for the catalog and tests).
@@ -126,6 +141,9 @@ var Glyphs = []*Glyph{
 	GlyphAdd, GlyphRemove, GlyphSettings, GlyphRun, GlyphDebug, GlyphRefresh,
 	GlyphHistory, GlyphBranch, GlyphInfo, GlyphWarning, GlyphError, GlyphDone,
 	GlyphThemeDark, GlyphThemeLight, GlyphIndeterminate,
+	GlyphStop, GlyphPause, GlyphStepOver, GlyphStepInto, GlyphStepOut, GlyphMute,
+	GlyphListen, GlyphCopy, GlyphEdit, GlyphComputer, GlyphContainer, GlyphMore,
+	GlyphDropDown, GlyphList, GlyphSwap,
 }
 
 // Icon draws a glyph in a square box. It is a value component.
