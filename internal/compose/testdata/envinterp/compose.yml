@@ -1,0 +1,11 @@
+services:
+  fpm:
+    image: "php:${PHP_VERSION}-fpm"
+    volumes:
+      - "${APP_DIR}:/srv/app"
+      - "~/.composer:/root/.composer"
+  debug:
+    image: "webdevops/php-dev:${PHP_VERSION}"
+    profiles: ["debug"]
+    volumes:
+      - "${APP_DIR}:/srv/app"

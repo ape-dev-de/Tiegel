@@ -1,0 +1,22 @@
+services:
+  web:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./:/var/www/html
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+  app:
+    build:
+      context: ./docker/php
+    volumes:
+      - ./:/var/www/html
+      - ./src:/var/www/html/src:cached
+      - vendor:/var/www/html/vendor
+  mailpit:
+    image: axllent/mailpit
+    profiles: ["tools"]
+volumes:
+  vendor: {}
