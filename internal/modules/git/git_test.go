@@ -476,9 +476,14 @@ func TestHunkSelectionHashValidation(t *testing.T) {
 
 	// A formatter changes line 15: hunk 1 is now that change.
 	write(t, dir, "a.txt", edit(edit(edit(orig, 1), 15), 30))
-	modtest.WantCode(t, a, "git.commitSelection", CommitSelectionParams{
+	err := modtest.WantCode(t, a, "git.commitSelection", CommitSelectionParams{
 		Message: "line 30 only", Hunks: []FileHunks{{Path: "a.txt", Hunks: []HunkSel{sel}}},
 	}, api.CodeConflict)
+	// The error data tells clients to reload the diff.
+	var ae *api.Error
+	if !errors.As(err, &ae) || ae.Data != (StaleSelection{Reason: ReasonStaleSelection, Path: "a.txt", Hunk: 1}) {
+		t.Fatalf("stale selection data: %#v", err)
+	}
 	modtest.WantCode(t, a, "git.stage", StageParams{Path: "a.txt", Hunks: []HunkSel{{Hunk: 1, Hash: want.Hash}}}, api.CodeConflict)
 	modtest.WantCode(t, a, "git.discard", DiscardParams{Path: "a.txt", Hunks: []HunkSel{{Hunk: 7, Hash: want.Hash}}}, api.CodeConflict)
 	if got := strings.TrimSpace(modtest.Git(t, dir, "rev-list", "--count", "HEAD")); got != "2" {

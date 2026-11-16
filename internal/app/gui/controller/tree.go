@@ -110,6 +110,31 @@ func (c *Controller) LoadDir(rel string) {
 	})
 }
 
+// LoadAncestors loads the directories containing the project-relative
+// path p that the tree knows but has not listed yet (a file revealed in
+// the tree expands its parents, which must then be loaded). Deeper levels
+// appear once their parent is merged, so callers repeat it whenever
+// Tree.Version changes until everything is loaded.
+func (c *Controller) LoadAncestors(p string) {
+	if c.Tree == nil || p == "" {
+		return
+	}
+	var dirs []string
+	for d := path.Dir(p); d != "." && d != "/" && d != ""; d = path.Dir(d) {
+		dirs = append(dirs, d)
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		n := c.Tree.Node(dirs[i])
+		if n == nil {
+			return // its parent is still loading
+		}
+		if n.Dir && !n.Loaded {
+			c.LoadDir(dirs[i])
+			return
+		}
+	}
+}
+
 // GitState returns the git state of a project-relative path: the letter
 // state of a file, "M" for directories containing changes, "" if clean.
 func (c *Controller) GitState(rel string) string {

@@ -107,7 +107,15 @@ type PHPVersion struct {
 	Short   string `json:"short"`
 	Source  string `json:"source"`
 	Detail  string `json:"detail"`
+	// Hint explains a fallback, e.g. code HintContainerNotRunning when
+	// the selected compose service is stopped and the version came from
+	// composer.json (see DetectPHPStarting).
+	Hint *Hint `json:"hint"`
 }
+
+// HintContainerNotRunning is the php.version hint code of a stopped
+// compose service.
+const HintContainerNotRunning = "container-not-running"
 
 // Interpreter is an entry of interp.list.
 type Interpreter struct {

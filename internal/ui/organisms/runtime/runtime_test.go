@@ -187,6 +187,15 @@ func TestStatusbarVersion(t *testing.T) {
 		t.Error("override tooltip")
 	}
 	uitest.Smoke(t, "statusbar override", area, s.Layout)
+	wide := uitest.Smoke(t, "statusbar override", area, s.Layout).Size.X
+	s.Hint, s.HintBadge = "container not running: compose service \"php\" is stopped", "stopped"
+	if !strings.HasSuffix(s.Tooltip(), "click to change\n"+s.Hint) {
+		t.Errorf("hint tooltip %q", s.Tooltip())
+	}
+	if d := uitest.Smoke(t, "statusbar hint", area, s.Layout); d.Size.X <= wide {
+		t.Errorf("hint badge not drawn: %v <= %d", d.Size, wide)
+	}
+	s.Hint = ""
 	if (&StatusbarVersion{}).Text() != "PHP ?" || !strings.Contains((&StatusbarVersion{}).Tooltip(), "unknown") {
 		t.Error("empty widget")
 	}

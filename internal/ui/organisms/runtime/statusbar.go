@@ -27,6 +27,11 @@ type StatusbarVersion struct {
 	Source string
 	// Override marks a version set manually by the user.
 	Override bool
+	// Hint explains why the version is only an estimate (e.g. the compose
+	// container is stopped); it is shown in the tooltip and as a badge.
+	Hint string
+	// HintBadge is the short badge text of Hint (default "hint").
+	HintBadge string
 
 	click widget.Clickable
 	tip   atoms.Tooltip
@@ -56,6 +61,9 @@ func (s *StatusbarVersion) Tooltip() string {
 		b.WriteString(" (manual override)")
 	}
 	b.WriteString(" – click to change")
+	if s.Hint != "" {
+		b.WriteString("\n" + s.Hint)
+	}
 	return b.String()
 }
 
@@ -86,6 +94,16 @@ func (s *StatusbarVersion) Layout(gtx layout.Context, th *tokens.Theme) layout.D
 						return layout.Dimensions{}
 					}
 					return layout.Inset{Left: th.Space.XS}.Layout(gtx, atoms.Badge{Text: "override", Kind: atoms.BadgeAccent}.Fn(th))
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if s.Hint == "" {
+						return layout.Dimensions{}
+					}
+					text := s.HintBadge
+					if text == "" {
+						text = "hint"
+					}
+					return layout.Inset{Left: th.Space.XS}.Layout(gtx, atoms.Badge{Text: text, Kind: atoms.BadgeWarning}.Fn(th))
 				}),
 			)
 			call := m.Stop()

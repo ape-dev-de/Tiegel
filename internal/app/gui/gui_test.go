@@ -352,9 +352,11 @@ func TestScreenshots(t *testing.T) {
 	e.waitFor("tab", func() bool { return e.ctl.ActiveTab() != nil })
 	e.waitFor("php diagnostics", func() bool { return e.ctl.DiagVersion > 1 && len(e.ctl.Problems()) > 0 })
 	e.v.toggleTool(toolProblems)
-	e.ctl.LoadDir("src")
-	e.v.tree.SetExpanded("src", true)
 	e.settle()
+	// The opened file is revealed: its folder is expanded and loaded.
+	if n := e.ctl.Tree.Node("src"); n == nil || !n.Loaded || !e.v.tree.Expanded("src") {
+		t.Fatalf("src not revealed: %+v", n)
+	}
 	for _, mode := range []string{"dark", "light"} {
 		e.ctl.Prefs.Theme = mode
 		e.frame()

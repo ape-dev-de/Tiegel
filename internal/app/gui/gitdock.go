@@ -247,6 +247,9 @@ func problemOf(pr *controller.GitProblem) *gitui.Problem {
 	switch {
 	case pr == nil:
 		return nil
+	case pr.Stale:
+		return &gitui.Problem{Warning: true, Title: "The changes were modified after the diff was loaded (e.g. by a formatter); nothing was committed.",
+			Detail: "The diff has been reloaded. Check the selected changes and commit again."}
 	case pr.Push:
 		prefix := "Push failed. "
 		if pr.Committed {
