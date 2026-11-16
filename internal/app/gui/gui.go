@@ -210,6 +210,7 @@ func (win *window) loop(be controller.Backend, projectPath string) error {
 				m.focused = win
 				m.mu.Unlock()
 				ctl.ReloadRecentProjects()
+				ctl.Work.Refresh() // external changes while away (watch.refresh)
 			}
 		case app.FrameEvent:
 			if ctx.Err() != nil {

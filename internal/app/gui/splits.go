@@ -94,6 +94,7 @@ func (v *View) layoutGroup(gtx layout.Context, g *controller.EditorGroup, split 
 			}
 			return v.layoutFind(gtx)
 		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return v.editorBanner(gtx, cur) }),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			atoms.Surface{Kind: atoms.SurfaceEditor}.Paint(gtx, th)
 			switch {
@@ -144,6 +145,7 @@ func (v *View) groupTabs(gtx layout.Context, g *controller.EditorGroup, gv *grou
 				it.Glyph = tt.Glyph
 			}
 		}
+		v.Registry.decorateTab(t, &it)
 		b.Items = append(b.Items, it)
 	}
 	b.Active = ""

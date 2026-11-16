@@ -132,7 +132,14 @@ func (d *debugDock) actions() []Action {
 		return ""
 	}
 	step := func(id keymap.Action, title, cmd string) Action {
-		return Action{ID: id, Title: title, Mac: chord("darwin", id), PC: chord("linux", id), Menu: "Run", Section: "step", Run: func(*View) { d.dbg().Step(cmd) }}
+		return Action{ID: id, Title: title, Mac: chord("darwin", id), PC: chord("linux", id), Menu: "Run", Section: "step", Run: func(v *View) {
+			// F7 moves through an active diff tab unless a session is
+			// paused (diffKeyWins).
+			if id == debugui.ActionStepInto && v.routeDiffKey(true) {
+				return
+			}
+			d.dbg().Step(cmd)
+		}}
 	}
 	return []Action{
 		step(debugui.ActionResume, "Resume", "run"),

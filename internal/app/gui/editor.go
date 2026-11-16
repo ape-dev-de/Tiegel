@@ -186,6 +186,7 @@ func (v *View) layoutEditor(gtx layout.Context, s *editorSession, active bool) l
 	}
 	s.ed.TabWidth = c.Prefs.TabWidth
 	s.ed.SetGutterMarkers(v.Registry.markers(s.file))
+	s.ed.SetGutterColumn(v.Registry.gutterColumn(s.file))
 
 	// The window handles popup navigation and editor shortcuts before the
 	// widget sees the keys.

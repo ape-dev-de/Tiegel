@@ -83,6 +83,23 @@
 // tab and replaces Data. Virtual tabs take part in groups and splits, are
 // not added to recent files and never call doc.* methods.
 //
+// # Docking points: editor banners, gutter columns, tab decorators
+//
+// Registry.AddEditorBanner shows a widget above the editor of a file tab
+// (e.g. "File changed on disk"), AddGutterColumn adds an extra gutter
+// column (the git annotations) and AddTabDecorator adjusts a tab's
+// tooltip and icon.
+//
+// # The work dock (files, external changes, VCS, diffs)
+//
+// filesdock.go, externaldock.go, diffdock.go and vcsremote.go are the
+// view side of controller.Workspace: the project tree's context menu and
+// keys, the tab menu additions, the external change banners, the diff,
+// file history and Local History tabs (tab kinds "diff", "fileHistory",
+// "localHistory"), annotations and the remote git UI (D170–D174). Their
+// actions include vcs.annotate, vcs.fileHistory, vcs.compareWithHead and
+// vcs.rollback, which other menus (editor context menu) can reference.
+//
 // Further extension points (gutter markers and clicks, status items,
 // per-frame handlers) are in Registry; the git feature (gitdock.go) and
 // the debugger (debugdock.go) dock onto the shell only through them and

@@ -11,6 +11,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/statusbar"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/tabs"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
 
@@ -224,7 +225,65 @@ type Registry struct {
 	frames       []FrameHandler
 	contexts     map[ContextID][]ContextMenuProvider
 	tabTypes     map[string]TabType
+	banners      []EditorBannerProvider
+	gutterCols   []GutterColumnProvider
+	tabDecos     []TabDecorator
 	version      uint64
+}
+
+// EditorBannerProvider returns a banner shown above the editor of a file
+// tab, e.g. "File changed on disk" (nil: none).
+type EditorBannerProvider func(v *View, t *controller.Tab) layout.Widget
+
+// GutterColumnProvider returns an extra gutter column for an open file,
+// e.g. the git annotations (nil: none). The first non-nil column wins.
+type GutterColumnProvider func(file string) editorview.GutterColumn
+
+// TabDecorator adjusts the tab row entry of a tab (tooltip, glyph), e.g.
+// to mark files deleted on disk.
+type TabDecorator func(t *controller.Tab, it *tabs.Item)
+
+// AddEditorBanner registers a banner provider for file editors.
+func (r *Registry) AddEditorBanner(p EditorBannerProvider) { r.banners = append(r.banners, p) }
+
+// AddGutterColumn registers an extra gutter column provider.
+func (r *Registry) AddGutterColumn(p GutterColumnProvider) { r.gutterCols = append(r.gutterCols, p) }
+
+// AddTabDecorator registers a tab decorator.
+func (r *Registry) AddTabDecorator(d TabDecorator) { r.tabDecos = append(r.tabDecos, d) }
+
+// gutterColumn returns the extra gutter column of file (nil: none).
+func (r *Registry) gutterColumn(file string) editorview.GutterColumn {
+	for _, p := range r.gutterCols {
+		if c := p(file); c != nil {
+			return c
+		}
+	}
+	return nil
+}
+
+// decorateTab applies the tab decorators.
+func (r *Registry) decorateTab(t *controller.Tab, it *tabs.Item) {
+	for _, d := range r.tabDecos {
+		d(t, it)
+	}
+}
+
+// editorBanner draws the banners of tab t (nothing for virtual tabs).
+func (v *View) editorBanner(gtx layout.Context, t *controller.Tab) layout.Dimensions {
+	if t == nil || t.Virtual != "" || len(v.Registry.banners) == 0 {
+		return layout.Dimensions{}
+	}
+	var ws []layout.FlexChild
+	for _, p := range v.Registry.banners {
+		if w := p(v, t); w != nil {
+			ws = append(ws, layout.Rigid(w))
+		}
+	}
+	if len(ws) == 0 {
+		return layout.Dimensions{}
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, ws...)
 }
 
 // NewRegistry returns an empty registry.
