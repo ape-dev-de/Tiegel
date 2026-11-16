@@ -43,6 +43,9 @@ func TestFetch(t *testing.T) {
 	ot.commitAll("b")
 	ot.git("push", "-q", "origin", "main")
 	ot.git("push", "-q", "origin", "main:feature")
+	// A remote HEAD symref (created by clone, and by every fetch since git
+	// 2.48) follows main but is no update of its own.
+	tr.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 	res, err := tr.r.Fetch(ctx, FetchOptions{Prune: true, Tags: true})
 	if err != nil {
 		t.Fatal(err)

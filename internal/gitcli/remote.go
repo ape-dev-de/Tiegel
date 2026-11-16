@@ -113,15 +113,20 @@ type FetchResult struct {
 }
 
 // refSnapshot maps remote-tracking refs and tags to their object IDs.
+// Symbolic refs (refs/remotes/<remote>/HEAD) are skipped: they only point
+// at a branch that is listed itself, and git >= 2.48 creates or moves them
+// on every fetch (remote.<name>.followRemoteHEAD), which would otherwise
+// show up as a spurious update depending on the installed git version.
 func (r *Repo) refSnapshot(ctx context.Context) (map[string]string, error) {
-	out, err := r.run(ctx, runOpts{}, "for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes", "refs/tags")
+	out, err := r.run(ctx, runOpts{}, "for-each-ref", "--format=%(objectname) %(refname) %(symref)", "refs/remotes", "refs/tags")
 	if err != nil {
 		return nil, fmt.Errorf("gitcli: for-each-ref: %w", err)
 	}
 	m := map[string]string{}
 	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if oid, ref, ok := strings.Cut(l, " "); ok {
-			m[ref] = oid
+		f := strings.Fields(l)
+		if len(f) == 2 {
+			m[f[1]] = f[0]
 		}
 	}
 	return m, nil
