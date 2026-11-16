@@ -24,10 +24,12 @@ const (
 	SurfaceWindow
 	// SurfaceEditor is th.Editor.Background: code and diff areas.
 	SurfaceEditor
+	// SurfaceHover is th.Color.SurfaceHover: hovered rows and entries.
+	SurfaceHover
 )
 
 // SurfaceKinds lists all kinds (for the catalog and tests).
-var SurfaceKinds = []SurfaceKind{SurfacePanel, SurfaceAlt, SurfaceWindow, SurfaceEditor}
+var SurfaceKinds = []SurfaceKind{SurfacePanel, SurfaceAlt, SurfaceWindow, SurfaceEditor, SurfaceHover}
 
 // String returns the kind name.
 func (k SurfaceKind) String() string {
@@ -38,6 +40,8 @@ func (k SurfaceKind) String() string {
 		return "window"
 	case SurfaceEditor:
 		return "editor"
+	case SurfaceHover:
+		return "hover"
 	}
 	return "panel"
 }
@@ -51,6 +55,8 @@ func (k SurfaceKind) Color(th *tokens.Theme) color.NRGBA {
 		return th.Color.Background
 	case SurfaceEditor:
 		return th.Editor.Background
+	case SurfaceHover:
+		return th.Color.SurfaceHover
 	}
 	return th.Color.Surface
 }
@@ -84,6 +90,12 @@ func (s Surface) Layout(gtx layout.Context, th *tokens.Theme, content layout.Wid
 		draw.Border(gtx.Ops, r, rad, gtx.Dp(th.Size.BorderWidth), th.Color.Border)
 	}
 	return d
+}
+
+// Paint fills exactly gtx.Constraints.Min with the background (no
+// content), e.g. as the backdrop of a fixed-size area.
+func (s Surface) Paint(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	return s.Fill(gtx, th, func(layout.Context) layout.Dimensions { return layout.Dimensions{} })
 }
 
 // Fill is a convenience for Layout with content stretched to the minimum

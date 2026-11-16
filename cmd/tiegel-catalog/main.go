@@ -31,6 +31,8 @@ func main() {
 }
 
 func run(w *app.Window, light bool, page string) error {
+	inv := w.Invalidate
+	redraw.Store(&inv)
 	c := newCatalog(light)
 	if page != "" && !c.selectPage(page) {
 		return fmt.Errorf("unknown page %q", page)

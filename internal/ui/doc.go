@@ -5,12 +5,18 @@
 //   - tokens:    design tokens – colors (light/dark), fonts, text sizes,
 //     4dp spacing grid, radii, component sizes. The only source of colors
 //     and measurements.
-//   - atoms:     Label, Icon/Glyph, Button, IconButton, TextField, Checkbox,
-//     Badge, Tooltip/TooltipBubble, Divider, Surface.
+//   - atoms:     Label, Icon/Glyph, Button, IconButton (optionally an Active
+//     toggle), TextField, Checkbox, Badge, Tooltip/TooltipBubble, Divider,
+//     Surface.
 //   - molecules: SearchField, FileRow, Tab, BreakpointRow, DiffBlock,
-//     CodeLine, ListRow, Banner, ScrollList, Split, Dropdown.
+//     CodeLine, ListRow, TreeRow, Banner, ScrollList, Split, Dropdown
+//     (menu button or select field), Toolbar, SectionHeader, Table.
 //   - organisms: git (CommitPanel, DiffView, LogView, BranchList,
-//     MergeView); further ones (file tree, debug panel, …) follow.
+//     MergeView), debug (DebugToolbar, CallStackList, VariablesTree,
+//     WatchesList, BreakpointsList, SessionList and the DebugPanel
+//     template), runtime (InterpreterPicker, PathMappingEditor,
+//     XdebugHintsList, StatusbarVersion); further ones (file tree, …)
+//     follow.
 //   - editorview: the code editor widget (virtual rendering, gutter,
 //     keymap-driven input, IME); see that package.
 //
@@ -46,6 +52,13 @@
 // (or Clicked(gtx) for plain buttons) returning what happened since the
 // last frame. Layout calls Update itself so a component also works when the
 // caller ignores events; call Update *before* Layout when you need them.
+//
+// Organisms take their data through exported fields (plain view-model
+// types of the organism package) and report user intentions as a slice of
+// package-specific events: Update(gtx) []Event. They never call backend
+// services; the host applies the events to its data and feeds the result
+// back in the next frame. Purely visual state (selection, expanded nodes,
+// split ratios, inline editors) stays inside the organism.
 //
 // Wrapper components that decorate or arrange arbitrary content
 // (atoms.Tooltip, atoms.Surface, molecules.ListRow, molecules.Split,

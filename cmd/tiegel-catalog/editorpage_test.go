@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"image"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"gioui.org/io/key"
 	"gioui.org/layout"
@@ -43,5 +46,44 @@ func TestEditorPageIsInteractive(t *testing.T) {
 	}
 	if len(d.markers(29)) == 0 || len(d.markers(0)) != 0 {
 		t.Fatal("demo markers")
+	}
+}
+
+func TestEditorPageUsesTreeSitter(t *testing.T) {
+	d := newEditorDemo()
+	defer d.hl.Close()
+	defer d.yamlHL.Close()
+	var calls atomic.Int32
+	f := func() { calls.Add(1) }
+	redraw.Store(&f)
+	defer redraw.Store(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.hl.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.yamlHL.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s := d.ed.Buffer().Snapshot()
+	if len(d.hl.Spans(s, 0, s.Len())) == 0 {
+		t.Fatal("no Tree-sitter spans for the PHP sample")
+	}
+	ys := d.yaml.Buffer().Snapshot()
+	if len(d.yamlHL.Spans(ys, 0, ys.Len())) == 0 {
+		t.Fatal("no spans for YAML")
+	}
+	if parseState(d.hl) != "php" {
+		t.Fatalf("state %q", parseState(d.hl))
+	}
+	uitest.Smoke(t, "editor page", window, func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+		d.update(gtx)
+		return d.ed.Layout(gtx, th)
+	})
+	if _, ok := d.hl.TakeFolds(); ok {
+		t.Fatal("folds not taken by update")
+	}
+	if calls.Load() == 0 {
+		t.Fatal("redraw never requested")
 	}
 }

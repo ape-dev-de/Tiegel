@@ -200,10 +200,17 @@ func splitPage() *page {
 func dropdownPage() *page {
 	d := &molecules.Dropdown{Glyph: atoms.GlyphHistory, Description: "Recent messages",
 		Items: []string{"Add invoice aggregate and numbering", "Send welcome mail after registration\n\nAlso logs the envelope.", "Fix rounding of gross prices"}}
+	sel := molecules.NewSelect("Choose a PHP interpreter",
+		molecules.DropdownOption{Label: "php 8.3 (Homebrew)", Detail: "/opt/homebrew/bin/php", Glyph: atoms.GlyphComputer, Badge: "8.3.4", BadgeKind: atoms.BadgeInfo},
+		molecules.DropdownOption{Label: "compose:php", Detail: "php:8.3-fpm", Glyph: atoms.GlyphContainer, Badge: "score 115", BadgeKind: atoms.BadgeAccent},
+		molecules.DropdownOption{Label: "compose:worker", Detail: "shop/worker", Glyph: atoms.GlyphContainer, Badge: "score 40"},
+	)
+	disabled := molecules.NewSelect("Disabled")
+	disabled.Disabled = true
 	chosen := ""
 	return &page{
 		Level: "Molecules", Name: "Dropdown", Glyph: atoms.GlyphChevronDown,
-		Summary: "Icon button opening a popup list (e.g. commit message history); click outside to close.",
+		Summary: "Popup list drawn above everything else; click outside to close. Menu button (Items) or select field (Options, NewSelect).",
 		Variants: func(th *tokens.Theme) []variant {
 			return []variant{{"Message history", fixedSize(0, 140, func(gtx layout.Context) layout.Dimensions {
 				if i, ok := d.Update(gtx); ok {
@@ -213,6 +220,11 @@ func dropdownPage() *page {
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return d.Layout(gtx, th) }),
 					layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
 					layout.Flexed(1, atoms.Muted("Chosen: "+firstLineOf(chosen)).SingleLine().Fn(th)))
+			})}, {"Select field", fixedSize(380, 120, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.Y = 0
+				return sel.Layout(gtx, th)
+			})}, {"Select field, disabled", fixedSize(380, 28, func(gtx layout.Context) layout.Dimensions {
+				return disabled.Layout(gtx, th)
 			})}}
 		},
 	}

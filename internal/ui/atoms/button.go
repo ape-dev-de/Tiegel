@@ -180,6 +180,9 @@ type IconButton struct {
 	// Color of the glyph; defaults to th.Color.TextMuted.
 	Color    color.NRGBA
 	Disabled bool
+	// Active draws the button as a pressed toggle (accent tint and glyph),
+	// e.g. "listening" or "breakpoints muted".
+	Active bool
 	// Description is the accessible name (and tooltip text for callers).
 	Description string
 
@@ -220,9 +223,16 @@ func (b *IconButton) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensi
 		if col.A == 0 {
 			col = th.Color.TextMuted
 		}
-		if !b.Disabled && b.click.Hovered() {
+		if b.Active {
+			draw.RRect(gtx.Ops, r, rad, tokens.Over(tokens.WithAlpha(th.Color.Accent, 0x38), th.Color.Surface))
+			col = th.Color.Accent
+		}
+		if !b.Disabled && !b.Active && b.click.Hovered() {
 			draw.RRect(gtx.Ops, r, rad, th.Color.SurfaceHover)
 			col = th.Color.Text
+		}
+		if b.Disabled {
+			col = th.Color.TextDisabled
 		}
 		if !b.Disabled && b.click.Pressed() {
 			draw.RRect(gtx.Ops, r, rad, th.Color.Border)
@@ -239,6 +249,7 @@ func (b *IconButton) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensi
 		if b.Description != "" {
 			semantic.DescriptionOp(b.Description).Add(gtx.Ops)
 		}
+		semantic.SelectedOp(b.Active).Add(gtx.Ops)
 		return layout.Dimensions{Size: size}
 	})
 }

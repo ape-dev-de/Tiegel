@@ -117,11 +117,25 @@ var (
 	GlyphThemeDark     = NewGlyph("theme-dark", icons.ImageBrightness2)
 	GlyphThemeLight    = NewGlyph("theme-light", icons.ImageWBSunny)
 	GlyphIndeterminate = NewGlyph("indeterminate", icons.ToggleIndeterminateCheckBox)
+	GlyphStop          = NewGlyph("stop", icons.AVStop)
+	GlyphPause         = NewGlyph("pause", icons.AVPause)
+	GlyphStepOver      = NewGlyph("step-over", icons.ContentRedo)
+	GlyphStepInto      = NewGlyph("step-into", icons.NavigationArrowDownward)
+	GlyphStepOut       = NewGlyph("step-out", icons.NavigationArrowUpward)
+	GlyphMute          = NewGlyph("mute", icons.ContentBlock)
+	GlyphListen        = NewGlyph("listen", icons.ActionSettingsInputAntenna)
+	GlyphCopy          = NewGlyph("copy", icons.ContentContentCopy)
+	GlyphEdit          = NewGlyph("edit", icons.EditorModeEdit)
+	GlyphComputer      = NewGlyph("computer", icons.HardwareComputer)
+	GlyphContainer     = NewGlyph("container", icons.ActionDNS)
+	GlyphMore          = NewGlyph("more", icons.NavigationMoreHoriz)
+	GlyphDropDown      = NewGlyph("drop-down", icons.NavigationArrowDropDown)
+	GlyphList          = NewGlyph("list", icons.ActionList)
+	GlyphSwap          = NewGlyph("swap", icons.ActionSwapHoriz)
 	GlyphChevronUp     = NewGlyph("chevron-up", icons.NavigationExpandLess)
 	GlyphArrowLeft     = NewGlyph("arrow-left", icons.NavigationArrowBack)
 	GlyphArrowRight    = NewGlyph("arrow-right", icons.NavigationArrowForward)
 	GlyphUpload        = NewGlyph("upload", icons.FileFileUpload)
-	GlyphEdit          = NewGlyph("edit", icons.EditorModeEdit)
 	GlyphDelete        = NewGlyph("delete", icons.ActionDelete)
 	GlyphCommit        = NewGlyph("commit", icons.ActionCheckCircle)
 	GlyphCloud         = NewGlyph("cloud", icons.FileCloud)
@@ -137,6 +151,9 @@ var Glyphs = []*Glyph{
 	GlyphThemeDark, GlyphThemeLight, GlyphIndeterminate, GlyphChevronUp,
 	GlyphArrowLeft, GlyphArrowRight, GlyphUpload, GlyphEdit, GlyphDelete,
 	GlyphCommit, GlyphCloud, GlyphTag,
+	GlyphStop, GlyphPause, GlyphStepOver, GlyphStepInto, GlyphStepOut, GlyphMute,
+	GlyphListen, GlyphCopy, GlyphComputer, GlyphContainer, GlyphMore,
+	GlyphDropDown, GlyphList, GlyphSwap,
 }
 
 // Icon draws a glyph in a square box. It is a value component.
