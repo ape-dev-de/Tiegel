@@ -76,6 +76,18 @@ type HunkSel struct {
 	Hash   string `json:"hash,omitempty"`
 }
 
+// ReasonStaleSelection is the Reason of StaleSelection.
+const ReasonStaleSelection = "staleSelection"
+
+// StaleSelection is the error data of a CodeConflict caused by a hunk
+// selection (Header/Hash) that no longer matches the current diff: the
+// client should reload the diff and let the user select again.
+type StaleSelection struct {
+	Reason string `json:"reason"`
+	Path   string `json:"path"`
+	Hunk   int    `json:"hunk"`
+}
+
 // checkSel verifies the optional Header/Hash of each selection against the
 // current diff.
 func checkSel(f *gitcli.FileDiff, hs []HunkSel) error {
@@ -83,15 +95,16 @@ func checkSel(f *gitcli.FileDiff, hs []HunkSel) error {
 		if h.Header == "" && h.Hash == "" {
 			continue
 		}
+		data := StaleSelection{Reason: ReasonStaleSelection, Path: f.Path(), Hunk: h.Hunk}
 		if h.Hunk < 0 || h.Hunk >= len(f.Hunks) {
-			return api.Errorf(api.CodeConflict, "%s: hunk %d no longer exists; refresh the diff", f.Path(), h.Hunk)
+			return api.Errorf(api.CodeConflict, "%s: hunk %d no longer exists; refresh the diff", f.Path(), h.Hunk).WithData(data)
 		}
 		cur := &f.Hunks[h.Hunk]
 		if h.Header != "" && h.Header != cur.Header() {
-			return api.Errorf(api.CodeConflict, "%s: hunk %d changed (was %q, now %q); refresh the diff", f.Path(), h.Hunk, h.Header, cur.Header())
+			return api.Errorf(api.CodeConflict, "%s: hunk %d changed (was %q, now %q); refresh the diff", f.Path(), h.Hunk, h.Header, cur.Header()).WithData(data)
 		}
 		if h.Hash != "" && h.Hash != cur.Hash() {
-			return api.Errorf(api.CodeConflict, "%s: hunk %d changed (hash mismatch); refresh the diff", f.Path(), h.Hunk)
+			return api.Errorf(api.CodeConflict, "%s: hunk %d changed (hash mismatch); refresh the diff", f.Path(), h.Hunk).WithData(data)
 		}
 	}
 	return nil

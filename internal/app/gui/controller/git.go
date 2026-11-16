@@ -18,8 +18,9 @@ import (
 // (git.*): it loads status, diffs, log, branches, gutter ranges and merge
 // data and turns user intents (commit selection, push, rollback, checkout,
 // resolve) into API calls. Diffs are requested as raw unified text and
-// parsed with gitcli.ParseDiff, so hunk indexes are exactly the ones the
-// module uses for git.commitSelection. gitcli is used for its data types
+// parsed with gitcli.ParseDiff – the parser the module uses – so hunk
+// indexes, headers and hashes (gitcli.Hunk.Hash) are exactly the ones the
+// module checks in git.commitSelection. gitcli is used for its data types
 // only; no git command runs in the GUI.
 
 // GutterDelay debounces gutter updates after document edits.
@@ -56,6 +57,11 @@ type GitFileSelection struct {
 	Untracked      bool
 	Whole          bool
 	Hunks          []gitcli.HunkSelection
+	// Diff is the diff the Hunks refer to (from git.diff with base HEAD).
+	// When set, every selected hunk is sent with its header and hash, so
+	// the module refuses a selection whose diff changed in between (Commit
+	// takes it from Changes when nil).
+	Diff *gitcli.FileDiff
 }
 
 // GitCommitRequest is a commit from the commit window.
@@ -70,6 +76,9 @@ type GitCommitRequest struct {
 type GitProblem struct {
 	// Err is the error of a failed commit (or other operation).
 	Err error
+	// Stale is set when the commit was refused because the selected
+	// hunks no longer match the current diff; the changes are reloaded.
+	Stale bool
 	// Push is set when pushing failed; Committed tells whether the commit
 	// before it succeeded.
 	Push      bool
@@ -328,12 +337,15 @@ func (g *Git) LoadUntrackedDiff(path string) {
 
 // CommitParams builds the git.commitSelection parameters of a request:
 // whole files (and the source of a rename) as paths, partial files as
-// hunk selections (indexes into git.diff with base HEAD).
+// hunk selections (indexes into git.diff with base HEAD, with header and
+// hash when the selection's Diff is known).
 func CommitParams(req GitCommitRequest) map[string]any {
 	var paths []string
 	type hunkSel struct {
-		Hunk  int   `json:"hunk"`
-		Lines []int `json:"lines,omitempty"`
+		Hunk   int    `json:"hunk"`
+		Lines  []int  `json:"lines,omitempty"`
+		Header string `json:"header,omitempty"`
+		Hash   string `json:"hash,omitempty"`
 	}
 	type fileHunks struct {
 		Path  string    `json:"path"`
@@ -350,7 +362,11 @@ func CommitParams(req GitCommitRequest) map[string]any {
 		}
 		fh := fileHunks{Path: f.Path}
 		for _, h := range f.Hunks {
-			fh.Hunks = append(fh.Hunks, hunkSel{Hunk: h.Hunk, Lines: h.Lines})
+			hs := hunkSel{Hunk: h.Hunk, Lines: h.Lines}
+			if d := f.Diff; d != nil && h.Hunk >= 0 && h.Hunk < len(d.Hunks) {
+				hs.Header, hs.Hash = d.Hunks[h.Hunk].Header(), d.Hunks[h.Hunk].Hash()
+			}
+			fh.Hunks = append(fh.Hunks, hs)
 		}
 		hunks = append(hunks, fh)
 	}
@@ -408,6 +424,11 @@ func (g *Git) Commit(req GitCommitRequest) {
 	c := g.c
 	g.Busy = true
 	g.setProblem(nil)
+	for i := range req.Files {
+		if f := &req.Files[i]; f.Diff == nil && len(f.Hunks) > 0 && !f.Untracked {
+			f.Diff = g.changeDiff(f.Path)
+		}
+	}
 	params := CommitParams(req)
 	c.Go(func(ctx context.Context) func() {
 		var res struct {
@@ -419,7 +440,11 @@ func (g *Git) Commit(req GitCommitRequest) {
 		return func() {
 			g.Busy = false
 			if err != nil {
-				g.setProblem(&GitProblem{Err: err})
+				stale := IsStaleSelection(err)
+				g.setProblem(&GitProblem{Err: err, Stale: stale})
+				if stale {
+					g.LoadChanges()
+				}
 				return
 			}
 			g.Committed++
@@ -438,6 +463,30 @@ func (g *Git) Commit(req GitCommitRequest) {
 			g.afterChange()
 		}
 	})
+}
+
+// changeDiff returns the git.diff (base HEAD) of path in Changes.
+func (g *Git) changeDiff(path string) *gitcli.FileDiff {
+	for _, c := range g.Changes {
+		if c.Status.Path == path {
+			return c.Diff
+		}
+	}
+	return nil
+}
+
+// IsStaleSelection reports whether err is the module's refusal of a hunk
+// selection that no longer matches the diff (CodeConflict with reason
+// staleSelection).
+func IsStaleSelection(err error) bool {
+	var ae *api.Error
+	if !errors.As(err, &ae) || ae.Code != api.CodeConflict || ae.Data == nil {
+		return false
+	}
+	var d struct {
+		Reason string `json:"reason"`
+	}
+	return decodeData(ae.Data, &d) && d.Reason == "staleSelection"
 }
 
 // Push pushes the current branch (git.push); failures are reported as a

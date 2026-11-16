@@ -306,7 +306,7 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `lsp.definition` / `lsp.implementation` | `path`, `at` | `[{path, file, range}]` |
 | `lsp.semanticTokens` | `path` | `[{range, type, modifiers}]` |
 
-**git** – Hunk-Indizes beziehen sich auf `git.diff` mit denselben Optionen. Jeder Hunk in `git.diff` hat `header` und `hash` (Inhalts-Hash); eine Auswahl `{hunk, header?, hash?}` mit diesen Werten wird abgelehnt (-32004), wenn sich der Diff inzwischen geändert hat (z.B. durch Formatierung beim Speichern) – statt still einen anderen Hunk zu nehmen. Ohne `header`/`hash` gilt nur der Index (rückwärtskompatibel). Clients sollten beide mitschicken.
+**git** – Hunk-Indizes beziehen sich auf `git.diff` mit denselben Optionen. Jeder Hunk in `git.diff` hat `header` und `hash` (Inhalts-Hash); eine Auswahl `{hunk, header?, hash?}` mit diesen Werten wird abgelehnt (-32004 mit `data: {reason: "staleSelection", path, hunk}`), wenn sich der Diff inzwischen geändert hat (z.B. durch Formatierung beim Speichern) – statt still einen anderen Hunk zu nehmen; der Client lädt dann den Diff neu. Ohne `header`/`hash` gilt nur der Index (rückwärtskompatibel). Clients sollten beide mitschicken.
 
 | Methode | Parameter | Ergebnis |
 |---|---|---|

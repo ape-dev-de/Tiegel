@@ -103,6 +103,10 @@ type View struct {
 	gitd *gitDock
 	dbgd *debugDock
 
+	recovery *recoveryBar
+	// phpStart: the PHP chooser starts with "Start container & detect".
+	phpStart bool
+
 	custom    *ChooserSpec
 	popup     *Popup
 	clipboard *string
@@ -117,7 +121,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v := &View{
 		ctl: ctl, goos: goos, Registry: NewRegistry(), shaper: tokens.NewShaper(),
 		editors: map[string]*editorSession{}, Invalidate: func() {},
-		systemDark: systemDarkMode, Raise: func() {},
+		systemDark: systemDarkMode, Raise: func() {}, recovery: newRecoveryBar(),
 	}
 	for _, a := range defaultActions() {
 		v.Registry.AddAction(a)
@@ -213,13 +217,14 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 	v.handleTabs(gtx)
 	v.handleStatus(gtx)
 	v.handleProblems(gtx)
+	v.handleRecovery(gtx)
 	v.handleOverlay(gtx)
 	v.closeStaleEditors()
 
 	slots := templates.Slots{
 		Sidebar: func(gtx layout.Context) layout.Dimensions { return v.tree.Layout(gtx, th) },
 		Tabs:    v.layoutTabs,
-		Editor:  v.layoutEditor,
+		Editor:  v.layoutEditorArea,
 		Status:  func(gtx layout.Context) layout.Dimensions { return v.status.Layout(gtx, th) },
 	}
 	if v.findOpen && v.activeSession() != nil {
@@ -324,6 +329,9 @@ func (v *View) handleTree(gtx layout.Context) {
 	if seen := [2]uint64{ct.Version, v.ctl.GitVersion}; seen != v.treeSeen || v.tree.Root == nil {
 		v.treeSeen = seen
 		v.tree.Root = v.convertNode(ct.Root)
+		// A revealed file expanded its parents without an ExpandEvent;
+		// load them level by level as the tree grows.
+		v.ctl.LoadAncestors(v.tree.Selected())
 	}
 	for _, e := range v.tree.Update(gtx) {
 		switch e := e.(type) {
@@ -360,6 +368,7 @@ func (v *View) handleTabs(gtx layout.Context) {
 		v.tabBar.ScrollToActive()
 		if t := v.ctl.ActiveTab(); t != nil {
 			v.tree.Select(t.Path)
+			v.ctl.LoadAncestors(t.Path)
 		}
 	}
 	for _, e := range v.tabBar.Update(gtx) {
@@ -404,6 +413,14 @@ func (v *View) handleStatus(gtx layout.Context) {
 		v.php.Source = st.PHP.Source + ": " + st.PHP.Detail
 	}
 	v.php.Override = st.PHP.Source == "override"
+	v.php.Hint, v.php.HintBadge = "", ""
+	if h := st.PHP.Hint; h != nil {
+		v.php.Hint, v.php.HintBadge = h.Message, "hint"
+		if h.Code == controller.HintContainerNotRunning {
+			v.php.HintBadge = "container stopped"
+			v.php.Hint += " – click: Start container & detect"
+		}
+	}
 	for _, e := range v.php.Update(gtx) {
 		if _, ok := e.(rtui.OverrideEvent); ok {
 			v.openPHPChooser()
@@ -570,6 +587,11 @@ func (v *View) openPHPChooser() {
 	v.chooseMode = choosePHP
 	v.chooser.Open("PHP Version", "Filter", "")
 	v.chooser.Items = v.chooser.Items[:0]
+	h := v.ctl.Status.PHP.Hint
+	v.phpStart = h != nil && h.Code == controller.HintContainerNotRunning
+	if v.phpStart {
+		v.chooser.Items = append(v.chooser.Items, palette.Item{Label: "Start container & detect", Detail: "starts the stopped compose service (docker may pull its image)", Glyph: atoms.GlyphContainer})
+	}
 	v.chooser.Items = append(v.chooser.Items, palette.Item{Label: "Detect automatically", Detail: "interpreter, then composer.json", Glyph: atoms.GlyphRefresh})
 	for _, ver := range controller.PHPVersions {
 		v.chooser.Items = append(v.chooser.Items, palette.Item{Label: "PHP " + ver, Glyph: atoms.GlyphTag})
@@ -676,11 +698,19 @@ func (v *View) choose(e palette.ChooseEvent) {
 			}
 		}
 	case choosePHP:
+		i := e.Index
+		if v.phpStart {
+			if i == 0 {
+				v.ctl.DetectPHPStarting()
+				break
+			}
+			i--
+		}
 		switch {
-		case e.Index == 0:
+		case i == 0:
 			v.ctl.SetPHPOverride("")
-		case e.Index > 0:
-			v.ctl.SetPHPOverride(controller.PHPVersions[e.Index-1])
+		case i > 0 && i <= len(controller.PHPVersions):
+			v.ctl.SetPHPOverride(controller.PHPVersions[i-1])
 		}
 	}
 }

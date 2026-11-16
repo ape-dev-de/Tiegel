@@ -131,6 +131,14 @@ type Controller struct {
 
 	gitPending bool
 
+	// Recovery lists unsaved changes of the last session that could not
+	// be saved (history.recovery, loaded when a project opens).
+	Recovery        []RecoveryPoint
+	RecoveryVersion uint64
+	// RecoveryShown is a recovery point loaded for review (ShowRecovery).
+	RecoveryShown        *RecoveryDiff
+	RecoveryShownVersion uint64
+
 	// Vcs is the git state (commit window, log, branches, gutter, merge).
 	Vcs *Git
 	// Debug is the debugger state (listener, sessions, stack, variables,
@@ -391,6 +399,9 @@ func (c *Controller) projectOpened(info ProjectInfo) {
 	c.Debug.reset()
 	c.Debug.refresh()
 	c.startLSP()
+	c.RecoveryShown = nil
+	c.setRecovery(nil)
+	c.loadRecovery()
 	c.Go(func(ctx context.Context) func() {
 		rel := getSetting[[]string](ctx, c.be, KeyRecentFiles, "project", nil)
 		return func() {
@@ -501,6 +512,28 @@ func (c *Controller) refreshRuntime() {
 			}
 			c.Status.PHP = v
 			c.Status.Interpreter = label
+		}
+	})
+}
+
+// DetectPHPStarting detects the PHP version and allows starting a stopped
+// compose container for it (php.version with start: true; docker may pull
+// an image). Only call it on an explicit user action.
+func (c *Controller) DetectPHPStarting() {
+	c.Status.Notice = "Starting container to detect the PHP version…"
+	c.Go(func(ctx context.Context) func() {
+		var v PHPVersion
+		err := c.call(ctx, "php.version", map[string]bool{"start": true}, &v)
+		return func() {
+			if err != nil {
+				c.notice(err)
+				return
+			}
+			c.Status.PHP = v
+			c.Status.Notice = "PHP " + v.Short + " detected"
+			if v.Hint != nil {
+				c.Status.Notice = v.Hint.Message
+			}
 		}
 	})
 }
