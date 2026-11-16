@@ -19,3 +19,51 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev
       - run: make check
+
+  # Windows: the client side (UI, api client, WSL interpreter) is built
+  # without cgo, so Tree-sitter is absent there (decision D80). Gio needs no
+  # cgo on Windows. -race needs cgo and is therefore not used here.
+  windows:
+    runs-on: windows-latest
+    env:
+      CGO_ENABLED: "0"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - name: Test (without UI packages)
+        run: go test $(go list ./... | grep -v -e /internal/ui -e /cmd/tiegel-catalog)
+      - name: Build binaries
+        run: |
+          go build -o bin/tiegel.exe ./cmd/tiegel
+          go build -o bin/tiegel-catalog.exe ./cmd/tiegel-catalog
+
+  # Cross-compilation check from Linux: every target must at least build
+  # without cgo (backend without Tree-sitter, see docs/plattformen.md).
+  cross:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build ${{ matrix.target }}
+        run: |
+          export GOOS=${TARGET%/*} GOARCH=${TARGET#*/}
+          go build -o /dev/null ./cmd/tiegel
+          go vet ./internal/api/... ./internal/interp/... ./internal/syntax/... ./internal/headless/...
+          if [ "$GOOS" = windows ]; then go build -o /dev/null ./cmd/tiegel-catalog; fi
+        env:
+          TARGET: ${{ matrix.target }}

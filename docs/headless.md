@@ -6,7 +6,7 @@ Einsatzzwecke:
 
 - **Pipelines und Skripte** – `tiegel --headless compose --json | jq …`
 - **Unit- und End-to-End-Tests** – die E2E-Tests bauen das Binary und rufen es mit `--headless` auf (`internal/headless/headless_test.go`).
-- **Andere Clients** – `tiegel --headless serve` spricht JSON-RPC 2.0 über stdin/stdout (später auch per Socket, M9/WSL).
+- **Andere Clients** – `tiegel --headless serve` spricht JSON-RPC 2.0 über stdin/stdout oder – mit `--listen` – über einen Unix-Socket bzw. Loopback-TCP für mehrere Clients gleichzeitig (Windows-GUI ↔ WSL-Backend, siehe [plattformen.md](plattformen.md)).
 
 Der Headless-Pfad initialisiert kein Gio und öffnet kein Fenster; er funktioniert ohne Display (CI, SSH).
 
@@ -69,7 +69,10 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `runtime-diagnose [INTERPRETER-ID]` | Xdebug-Einrichtung des (gewählten) Interpreters: INI-Werte `xdebug.mode/client_host/client_port`, Exec-Modus, Pfad-Mappings, Hinweise; Exit 1 bei Warnungen | `runtime.diagnose` |
 | `mappings [set HOST=REMOTE... \| reset] [--exec-mode auto\|exec\|run]` | Pfad-Mappings anzeigen oder dauerhaft korrigieren (`reset`: wieder aus Compose); Exec-Modus für Compose-Interpreter | `runtime.mappings.*`, `runtime.execMode` |
 | `php-override [VERSION \| clear]` | dauerhaften PHP-Versions-Override setzen/entfernen, danach Version und Quelle | `php.setVersionOverride`, `php.version` |
-| `serve [--framing ndjson\|lsp] [--concurrent]` | JSON-RPC 2.0 über stdin/stdout | alle |
+| `highlights DATEI [--lines VON:BIS] [--language L]` | Syntax-Highlighting als `start ende rolle "text"` (Byte-Offsets, ohne `plain`-Bereiche) | `syntax.highlights` |
+| `folds DATEI [--language L]` | Faltbereiche als `von-bis` (Zeilen, 1-basiert) | `syntax.folds` |
+| `outline DATEI [--language L]` | Struktur (Namespaces, Klassen, Member, Funktionen) eingerückt als `zeile:spalte modifier art name signatur` | `syntax.outline` |
+| `serve [--framing ndjson\|lsp] [--concurrent] [--listen ADDR [--token-file F] [--token T] [--allow-remote]]` | JSON-RPC 2.0 über stdin/stdout, mit `--listen unix:PFAD` oder `tcp:127.0.0.1:PORT` über einen Socket (Token-Authentisierung, siehe unten) | alle |
 | `call METHOD [JSON \| -]` | beliebige API-Methode aufrufen; `-` liest die Parameter von stdin; Ausgabe immer JSON | alle |
 | `help [BEFEHL]` | Hilfe | – |
 
@@ -123,6 +126,21 @@ Einzelbefehle laufen jeweils in einem frischen Prozess: offene Dokumente leben n
 - **Eingabeende**: Endet stdin, wartet der Server auf alle ausstehenden Antworten und liefert die zuletzt ausgelösten Events aus, bevor er sich beendet. `printf '…' | tiegel --headless serve` bekommt also jede Antwort.
 - **Abbruch**: `$/cancelRequest` mit `{"id": …}` bricht eine laufende Anfrage ab (Kontext wird abgebrochen).
 - `--project DIR` öffnet das Projekt vor der ersten Anfrage; sonst `project.open` aufrufen.
+- `auth` (`{token}` → `{ok, version, apiVersion}`) beantwortet jeder Transport; über stdio ist es ohne Wirkung.
+
+### Socket (`serve --listen`)
+
+```
+tiegel --headless serve --listen unix:$XDG_RUNTIME_DIR/tiegel.sock --concurrent
+tiegel --headless serve --listen tcp:127.0.0.1:7420 --token-file ~/.config/Tiegel/serve.token
+```
+
+- Mehrere Clients gleichzeitig; jede Verbindung ist eine eigene Sitzung mit eigenen Event-Abos. Alle teilen dieselben offenen Dokumente.
+- **Authentisierung:** Die erste Anfrage jeder Verbindung muss `auth` mit dem Token sein. Jede andere Anfrage davor und ein falsches Token liefern `-32007` und schließen die Verbindung; ohne erfolgreiche Anmeldung wird sie nach 10 s geschlossen.
+- **Token:** `--token T` (sichtbar in der Prozessliste, nur für Tests), sonst `$TIEGEL_TOKEN`, sonst ein zufälliges 256-Bit-Token, das in `--token-file` (Standard `<Konfigurationsverzeichnis>/serve.token`, Modus 0600) geschrieben und beim Beenden gelöscht wird.
+- **Adressen:** Unix-Sockets werden mit Modus 0600 angelegt (verwaiste Socket-Dateien werden ersetzt, belegte nicht). TCP nur auf Loopback (`127.0.0.1`, `::1`, `localhost`); andere Adressen (auch `0.0.0.0`) nur mit `--allow-remote` und Warnung – die Verbindung ist **unverschlüsselt**.
+- **Start/Ende:** Nach dem Binden schreibt der Server eine JSON-Zeile auf stdout (`{"listen":"tcp:127.0.0.1:54321","tokenFile":"…","pid":…}`; bei Port 0 mit dem echten Port). SIGINT/SIGTERM beenden ihn sauber: keine neuen Verbindungen, offene werden geschlossen, Socket- und Token-Datei entfernt, Exit 0.
+- Go-Clients nutzen `internal/api/client` (`Dial`, `Spawn`), siehe [plattformen.md](plattformen.md).
 
 Beispielsitzung:
 
@@ -158,6 +176,7 @@ Fehler sind JSON-RPC-Fehlerobjekte `{"code": …, "message": …}`:
 | -32004 | Versionskonflikt (`version` passt nicht zum Dokument) | 1 |
 | -32005 | externes Programm/Dienst nicht verfügbar (php, git, Language Server, Port belegt, Update-Server) | 1 |
 | -32006 | Modul abgeschaltet (`module disabled`; `data: {module, method}`) – mit `modules.enable` wieder einschalten | 1 |
+| -32007 | nicht angemeldet / falsches Token (nur Socket-Verbindungen; die Verbindung wird geschlossen) | – |
 
 Fehlerobjekte können `data` tragen (z.B. `git.push`: `{kind, message, stderr}`).
 
@@ -169,7 +188,7 @@ Alles, was auf dem Event-Bus veröffentlicht wird, kann ein Client abonnieren:
 {"jsonrpc":"2.0","id":1,"method":"events.subscribe","params":{"topics":["doc.*","debug.*"]}}
 ```
 
-Muster: exakte Topics, `präfix.*` oder `*`. Zustellung als Notification `event` mit `{"topic": …, "payload": …}`. Innerhalb eines Abos bleibt die Reihenfolge erhalten; zwischen Antworten und Events gibt es keine feste Reihenfolge (Events laufen asynchron).
+Muster: exakte Topics, `präfix.*` oder `*`. Zustellung als Notification `event` mit `{"topic": …, "payload": …}`. Jedes Event kommt pro Verbindung höchstens einmal (auch wenn mehrere Muster passen) und alle Events einer Verbindung in Veröffentlichungsreihenfolge; zwischen Antworten und Events gibt es keine feste Reihenfolge (Events laufen asynchron).
 
 Vom Kern veröffentlichte Topics: `project.opened`/`project.closed` (`{root, name}`), `file.opened` (`{path, file, language, version, size}`), `file.saved` (`{path, file, trigger, size}` – auch bei Autosave), `doc.opened`, `doc.changed`, `doc.edited`, `doc.saved`, `doc.closed`, `modules.changed`, `settings.changed`.
 
@@ -195,6 +214,7 @@ Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`,
 | `php-features` | `php-runtime` | `php.check`, `php.diagnostics`, `php.setVersionOverride` | nutzt `php.resolveVersion` |
 | `lang-php` | (`php-runtime` optional) | `lsp.*` | nutzt `php.resolveVersion` |
 | `git` | – | `git.*` | ruft Guard `commit.before` (Kern: Autosave) und Filter `commit.message` |
+| `syntax` | – | `syntax.*` | – (folgt `doc.edited`) |
 | `debug-xdebug` | `php-runtime` | `debug.*` | ruft Guard `debug.before` (Kern: Autosave), nutzt `runtime.pathMappings` |
 
 `modules.enable`/`modules.disable` wirken sofort (und dauerhaft): ein abgeschaltetes Modul räumt Hooks und Abos ab, seine Methoden antworten mit `-32006 module disabled`. `app.methods` zeigt zu jeder Methode `module` und `disabled`.
@@ -238,6 +258,8 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `search.replaceInDoc` | wie `search.inDoc` + `replacement` | Zustand + `replaced` (ein Undo-Schritt) |
 | `modules.list` | – | `{id, dependsOn, enabled, running, error}` |
 | `modules.enable` / `modules.disable` | `id`, `withDependencies?` | Modulzustand (wirkt sofort) |
+
+`version` bei `doc.insert`/`doc.delete`/`doc.replace` ist optimistisches Sperren: Ist es angegeben (auch `0`), muss es der aktuellen Dokumentversion entsprechen, sonst `-32004` mit `data: {version}` (aktuelle Version). Darauf baut der Dokument-Spiegel `internal/api/docsync` für entfernte Clients auf.
 
 **php-runtime**
 
@@ -317,6 +339,14 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `debug.breakpoints.set` | `file`, `line`, `condition?`, `enabled?` | Liste + `changed` (dauerhaft pro Projekt, wirkt sofort in laufenden Sitzungen, neue Sitzungen bekommen alle aktiven Breakpoints) |
 | `debug.breakpoints.remove` | `file`+`line` oder `id` | Liste + `changed` |
 | `debug.breakpoints.enable` | `file`+`line` oder `id`, `enabled` | Liste + `changed` |
+
+**syntax** – Highlighting, Faltbereiche und Struktur vom Backend, v.a. für Clients ohne Tree-sitter (Windows-UI ohne cgo gegen ein WSL-Backend, D80). Quelle ist ein offenes Dokument (inkrementell aus `doc.edited` geparst), sonst die Datei – oder `text` (Sprache aus `language` bzw. der Endung von `path`). `language`: `php`, `json`, `yaml`, `xml`, `dotenv`, `plaintext`. Ergebnisse enthalten immer `path`, `language` (`php`, `json`, `yaml`, `xml`, `env`, `""`), `version` (Pufferversion, 0 bei Dateien), `open`, `length`. Ohne Tree-sitter (Build ohne cgo) liefern PHP/JSON/YAML/XML `-32005`.
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `syntax.highlights` | `path?`, `text?`, `language?`, Bereich `start?`/`end?` (Byte-Offsets) oder `startLine?`/`endLine?` (1-basiert, inklusiv), `plain?` (auch ungefärbte Bereiche) | `start`, `end`, `spans[{start, end, role}]` – Rollen: `keyword`, `string`, `number`, `comment`, `variable`, `function`, `type`, `constant`, `operator`, `punctuation`, `tag`, `attribute`, `property` (`plain`) |
+| `syntax.folds` | `path?`, `text?`, `language?` | `folds[{startLine, endLine}]` (1-basiert, inklusiv) |
+| `syntax.outline` | `path?`, `text?`, `language?` | `symbols[{kind, name, detail, modifiers, start, end, nameStart, children}]` mit Positionen `{offset, line, col}` (1-basiert, Spalte in Zeichen); `kind`: `namespace`, `class`, `interface`, `trait`, `enum`, `enum case`, `method`, `function`, `property`, `constant` (nur PHP) |
 
 `session` bei `debug.*` darf fehlen, wenn genau eine Sitzung aktiv ist.
 

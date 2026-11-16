@@ -118,7 +118,7 @@ func (a *App) ReadText(path string) (text []byte, open bool, err error) {
 // one undo step. version, if non-zero, must match. Events follow from the
 // buffer's OnEdit listener.
 func (a *App) EditDocument(path string, version uint64, start, end int, text string) (DocState, error) {
-	return a.edit(path, version, func(b *buffer.Buffer) error {
+	return a.edit(path, nonZero(version), func(b *buffer.Buffer) error {
 		if start < 0 || end < start || end > b.Len() {
 			return Errorf(CodeInvalidParams, "range [%d,%d) out of bounds (document has %d bytes)", start, end, b.Len())
 		}

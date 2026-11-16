@@ -23,25 +23,30 @@ type Event struct {
 // Session is one client of the App (a JSON-RPC connection, a CLI run, the
 // GUI). It carries the client's event subscriptions; handlers find it in
 // their context via SessionFrom.
+//
+// All patterns of a session share one bus subscription, so every event is
+// delivered at most once (even if several patterns match) and all events
+// reach the client in publish order.
 type Session struct {
 	app    *App
 	notify func(Event)
 
-	mu     sync.Mutex
-	subs   map[string]func()
-	closed bool
+	mu       sync.Mutex
+	patterns map[string]bool
+	unsub    func()
+	closed   bool
 }
 
 type sessionKey struct{}
 
 // NewSession creates a session whose subscribed events are passed to notify.
-// notify is called from bus goroutines, one subscription at a time in publish
-// order; it must be safe for concurrent use across subscriptions.
+// notify is called from a bus goroutine, one event at a time in publish
+// order.
 func (a *App) NewSession(notify func(Event)) *Session {
 	if notify == nil {
 		notify = func(Event) {}
 	}
-	return &Session{app: a, notify: notify, subs: make(map[string]func())}
+	return &Session{app: a, notify: notify, patterns: make(map[string]bool)}
 }
 
 // SessionFrom returns the session a method is called in, if any.
@@ -52,7 +57,12 @@ func SessionFrom(ctx context.Context) (*Session, bool) {
 
 // Call invokes method within the session.
 func (s *Session) Call(ctx context.Context, method string, params json.RawMessage) (any, error) {
-	return s.app.Call(context.WithValue(ctx, sessionKey{}, s), method, params)
+	return s.app.Call(s.With(ctx), method, params)
+}
+
+// With returns ctx carrying the session, as seen by handlers (SessionFrom).
+func (s *Session) With(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sessionKey{}, s)
 }
 
 // Subscribe forwards events of the given topic patterns ("doc.saved",
@@ -64,18 +74,33 @@ func (s *Session) Subscribe(patterns ...string) []string {
 		return nil
 	}
 	for _, p := range patterns {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
+		if p = strings.TrimSpace(p); p != "" {
+			s.patterns[p] = true
 		}
-		if _, ok := s.subs[p]; ok {
-			continue
-		}
-		s.subs[p] = s.app.bus.Subscribe(p, func(e bus.Event) {
-			s.notify(Event{Topic: e.Topic, Payload: encodePayload(e.Payload)})
-		})
+	}
+	if len(s.patterns) > 0 && s.unsub == nil {
+		s.unsub = s.app.bus.Subscribe("*", s.deliver)
 	}
 	return s.topicsLocked()
+}
+
+// deliver forwards e if one of the session's patterns matches.
+func (s *Session) deliver(e bus.Event) {
+	s.mu.Lock()
+	ok := matchAny(s.patterns, e.Topic)
+	s.mu.Unlock()
+	if ok {
+		s.notify(Event{Topic: e.Topic, Payload: encodePayload(e.Payload)})
+	}
+}
+
+func matchAny(patterns map[string]bool, topic string) bool {
+	for p := range patterns {
+		if bus.Match(p, topic) {
+			return true
+		}
+	}
+	return false
 }
 
 // Unsubscribe stops forwarding the given patterns; without patterns all
@@ -84,22 +109,21 @@ func (s *Session) Unsubscribe(patterns ...string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(patterns) == 0 {
-		for p := range s.subs {
-			patterns = append(patterns, p)
-		}
+		clear(s.patterns)
 	}
 	for _, p := range patterns {
-		if un, ok := s.subs[p]; ok {
-			un()
-			delete(s.subs, p)
-		}
+		delete(s.patterns, strings.TrimSpace(p))
+	}
+	if len(s.patterns) == 0 && s.unsub != nil {
+		s.unsub()
+		s.unsub = nil
 	}
 	return s.topicsLocked()
 }
 
 func (s *Session) topicsLocked() []string {
-	out := make([]string, 0, len(s.subs))
-	for p := range s.subs {
+	out := make([]string, 0, len(s.patterns))
+	for p := range s.patterns {
 		out = append(out, p)
 	}
 	sort.Strings(out)

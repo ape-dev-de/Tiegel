@@ -122,7 +122,7 @@ func (a *App) replaceInDoc(_ context.Context, p ReplaceParams) (ReplaceResult, e
 		return ReplaceResult{}, err
 	}
 	var n int
-	st, err := a.edit(p.Path, 0, func(b *buffer.Buffer) error {
+	st, err := a.edit(p.Path, nil, func(b *buffer.Buffer) error {
 		b.BreakUndo()
 		var rerr error
 		n, rerr = search.ReplaceAll(b, q, p.Replacement)

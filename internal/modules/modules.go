@@ -5,6 +5,7 @@
 //	lang-php      language server integration (php-runtime optional, via hooks)
 //	git           git integration
 //	debug-xdebug  Xdebug debugger (→ php-runtime)
+//	syntax        highlighting, folds, outline over the API (D80)
 //
 // The modules never import each other; they share data through the bus and
 // the hook points declared in internal/api/contract.go. None of them imports
@@ -19,6 +20,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/modules/langphp"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpfeatures"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpruntime"
+	"github.com/ape-dev-de/tiegel/internal/modules/syntaxmod"
 )
 
 // Options configure all modules (tests replace single ones).
@@ -38,6 +40,7 @@ func All(opts Options) []module.Module {
 		langphp.New(opts.LangPHP),
 		git.New(opts.Git),
 		debugxdebug.New(opts.Debug),
+		syntaxmod.New(),
 	}
 }
 

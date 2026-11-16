@@ -1,3 +1,5 @@
+//go:build cgo
+
 package syntax
 
 import (
@@ -10,57 +12,6 @@ import (
 
 	ts "github.com/tree-sitter/go-tree-sitter"
 )
-
-// Point is a zero-based position: Line counts '\n'-separated lines, Column
-// counts bytes from the start of the line (not runes).
-type Point struct {
-	Line   int
-	Column int
-}
-
-// InputEdit describes a single text change, in the coordinates of the text
-// before the change (start, old end) and after it (new end).
-type InputEdit struct {
-	StartByte   int
-	OldEndByte  int
-	NewEndByte  int
-	StartPoint  Point
-	OldEndPoint Point
-	NewEndPoint Point
-}
-
-// NewInputEdit computes the InputEdit for replacing old[start:oldEnd] with
-// inserted. old is the text before the change.
-func NewInputEdit(old []byte, start, oldEnd int, inserted []byte) InputEdit {
-	sp := PointAt(old, start)
-	return InputEdit{
-		StartByte:   start,
-		OldEndByte:  oldEnd,
-		NewEndByte:  start + len(inserted),
-		StartPoint:  sp,
-		OldEndPoint: PointAt(old, oldEnd),
-		NewEndPoint: advance(sp, inserted),
-	}
-}
-
-// PointAt returns the Point of byte offset off in src (clamped to len(src)).
-func PointAt(src []byte, off int) Point {
-	if off > len(src) {
-		off = len(src)
-	}
-	if off < 0 {
-		off = 0
-	}
-	return advance(Point{}, src[:off])
-}
-
-func advance(p Point, text []byte) Point {
-	n := bytes.Count(text, []byte{'\n'})
-	if n == 0 {
-		return Point{Line: p.Line, Column: p.Column + len(text)}
-	}
-	return Point{Line: p.Line + n, Column: len(text) - bytes.LastIndexByte(text, '\n') - 1}
-}
 
 func (e InputEdit) ts() *ts.InputEdit {
 	return &ts.InputEdit{
@@ -77,18 +28,9 @@ func (p Point) ts() ts.Point { return ts.Point{Row: uint(p.Line), Column: uint(p
 
 func fromTSPoint(p ts.Point) Point { return Point{Line: int(p.Row), Column: int(p.Column)} }
 
-// Span is a highlighted byte range [Start, End) of the document.
-type Span struct {
-	Start int
-	End   int
-	Role  Role
-}
-
-// Range is an inclusive, zero-based line range, used for folding regions.
-type Range struct {
-	StartLine int
-	EndLine   int
-}
+// TreeSitter reports whether this build includes Tree-sitter (cgo). Without
+// it, documents of Tree-sitter languages cannot be created (ErrNoTreeSitter).
+const TreeSitter = true
 
 // readChunk is the maximum number of bytes handed to Tree-sitter per read.
 const readChunk = 64 << 10
@@ -99,9 +41,6 @@ const readChunk = 64 << 10
 type cancelState struct {
 	ctx context.Context
 }
-
-// ErrClosed is returned by operations on a closed Document.
-var ErrClosed = errors.New("syntax: document closed")
 
 // Document holds the parse state of one buffer: the source, the Tree-sitter
 // parser and the current syntax tree.
@@ -413,18 +352,4 @@ func (d *Document) Highlights(start, end int) []Span {
 		}
 	}
 	return compress(paint, start)
-}
-
-// compress turns a per-byte role slice into spans starting at offset base.
-func compress(paint []Role, base int) []Span {
-	var out []Span
-	for i := 0; i < len(paint); {
-		j := i + 1
-		for j < len(paint) && paint[j] == paint[i] {
-			j++
-		}
-		out = append(out, Span{Start: base + i, End: base + j, Role: paint[i]})
-		i = j
-	}
-	return out
 }

@@ -94,13 +94,17 @@ func (m *Module) Start(ctx module.Context) error {
 	if !ok {
 		return errors.New("php-features: needs an api.App context")
 	}
-	table, err := phpver.DefaultTable()
-	if err != nil {
-		return err
-	}
-	checker, err := phpver.NewChecker(table)
-	if err != nil {
-		return err
+	// Without Tree-sitter (built without cgo, D80) the module still runs
+	// for php.setVersionOverride; checks report CodeUnavailable.
+	var checker *phpver.Checker
+	if syntax.TreeSitter {
+		table, err := phpver.DefaultTable()
+		if err != nil {
+			return err
+		}
+		if checker, err = phpver.NewChecker(table); err != nil {
+			return err
+		}
 	}
 	c, cancel := context.WithCancel(context.Background())
 	m.mu.Lock()
@@ -177,7 +181,7 @@ func (m *Module) onDoc(e bus.Event) {
 
 // track starts (or restarts) tracking a document from a snapshot.
 func (m *Module) track(s api.DocSnapshot) {
-	if s.Language != string(syntax.LangPHP) {
+	if s.Language != string(syntax.LangPHP) || !syntax.TreeSitter {
 		return
 	}
 	m.mu.Lock()
@@ -392,6 +396,9 @@ type CheckResult struct {
 }
 
 func (m *Module) check(ctx context.Context, p CheckParams) (CheckResult, error) {
+	if !syntax.TreeSitter {
+		return CheckResult{}, api.Errorf(api.CodeUnavailable, "php.check: %w", syntax.ErrNoTreeSitter)
+	}
 	abs, err := m.app.ResolvePath(p.Path)
 	if err != nil {
 		return CheckResult{}, err
@@ -435,6 +442,9 @@ func (m *Module) check(ctx context.Context, p CheckParams) (CheckResult, error) 
 }
 
 func (m *Module) diagnostics(ctx context.Context, p api.PathParams) (Diagnostics, error) {
+	if !syntax.TreeSitter {
+		return Diagnostics{}, api.Errorf(api.CodeUnavailable, "php.diagnostics: %w", syntax.ErrNoTreeSitter)
+	}
 	abs, err := m.app.ResolvePath(p.Path)
 	if err != nil {
 		return Diagnostics{}, err

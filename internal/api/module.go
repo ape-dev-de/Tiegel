@@ -49,7 +49,7 @@ func Provide[P, R any](ctx module.Context, name, summary string, fn func(ctx con
 		return fmt.Errorf("api: Provide %s: module context has no App", name)
 	}
 	owner := ctx.ModuleID()
-	if err := a.methods.provide(Method{Name: name, Summary: summary, Handler: typed(fn), Module: owner}); err != nil {
+	if err := a.methods.provide(Method{Name: name, Summary: summary, Handler: typed(fn), direct: direct(fn), Module: owner}); err != nil {
 		return err
 	}
 	ctx.OnStop(func() { a.methods.disable(name, owner) })
