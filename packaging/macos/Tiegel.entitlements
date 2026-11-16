@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for Tiegel.app, signed with the Hardened Runtime
+  (codesign option "runtime"). Intentionally empty:
+
+  * No App Sandbox: Tiegel starts php, docker, git and language servers from
+    the user's PATH and edits arbitrary project folders. The sandbox would
+    forbid both.
+
+  * No com.apple.security.network.server / .network.client: these are App
+    Sandbox entitlements and have no effect on non-sandboxed apps. The local
+    DBGp listener (port 9003) and the opt-in update check work without them.
+    (Listening on a non-loopback address may trigger the macOS application
+    firewall prompt; that is a user setting, not an entitlement.)
+
+  * No com.apple.security.cs.allow-jit / allow-unsigned-executable-memory /
+    disable-library-validation: the Go runtime and cgo code (Gio/Metal,
+    Tree-sitter) are fully ahead-of-time compiled and need none of these
+    Hardened Runtime exceptions. Child processes (php, docker, git) are
+    separate executables and are not restricted by Tiegel's runtime flags.
+
+  Add exceptions here only with a documented reason (docs/DECISIONS.md).
+-->
+<plist version="1.0">
+<dict/>
+</plist>

@@ -21,3 +21,13 @@ run:
 
 catalog:
 	go run ./cmd/tiegel-catalog
+
+# --- macOS packaging (M8) -------------------------------------------------
+# Signs ad-hoc unless TIEGEL_SIGN_IDENTITY is set; see docs/release.md.
+.PHONY: app dmg
+
+app:
+	scripts/macos/build-app.sh
+
+dmg: app
+	scripts/macos/dmg.sh

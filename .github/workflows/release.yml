@@ -1,0 +1,169 @@
+# Builds release artifacts for tags v* and attaches them to a GitHub release.
+#
+# Signing and notarization are optional: without the secrets below the macOS
+# app is signed ad-hoc (works after "Open" via right-click / xattr, but
+# Gatekeeper warns). See docs/release.md.
+#
+#   MACOS_CERTIFICATE_P12       base64 of the "Developer ID Application" .p12
+#   MACOS_CERTIFICATE_PASSWORD  password of that .p12
+#   MACOS_SIGN_IDENTITY         e.g. "Developer ID Application: Jane Doe (TEAMID1234)"
+#   NOTARY_API_KEY_P8           base64 of the App Store Connect API key (.p8)
+#   NOTARY_API_KEY_ID           key ID of that API key
+#   NOTARY_API_ISSUER_ID        issuer ID of that API key
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make check
+
+      - name: Import signing certificate
+        env:
+          P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          if [ -z "$P12" ] || [ -z "$IDENTITY" ]; then
+            echo "No signing secrets: building ad-hoc signed app."
+            exit 0
+          fi
+          kc="$RUNNER_TEMP/tiegel-signing.keychain-db"
+          kc_pw="$(openssl rand -hex 24)"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kc_pw" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kc_pw" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kc_pw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          {
+            echo "TIEGEL_SIGN_IDENTITY=$IDENTITY"
+            echo "TIEGEL_KEYCHAIN=$kc"
+          } >> "$GITHUB_ENV"
+
+      - name: Prepare notarization key
+        env:
+          KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+          KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          ISSUER: ${{ secrets.NOTARY_API_ISSUER_ID }}
+        run: |
+          if [ -z "$KEY_P8" ] || [ -z "$KEY_ID" ] || [ -z "$ISSUER" ] || [ -z "${TIEGEL_SIGN_IDENTITY:-}" ]; then
+            echo "No notarization secrets (or no signing identity): skipping notarization."
+            exit 0
+          fi
+          echo "$KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          {
+            echo "TIEGEL_NOTARY_KEY=$RUNNER_TEMP/notary.p8"
+            echo "TIEGEL_NOTARY_KEY_ID=$KEY_ID"
+            echo "TIEGEL_NOTARY_ISSUER=$ISSUER"
+          } >> "$GITHUB_ENV"
+
+      - name: Build Tiegel.app (universal)
+        env:
+          TIEGEL_VERSION: ${{ env.TAG }}
+        run: scripts/macos/build-app.sh --arch universal --out dist
+
+      - name: Create DMG
+        run: scripts/macos/dmg.sh --app dist/Tiegel.app --out "dist/Tiegel-${TAG}-macos-universal.dmg"
+
+      - name: Notarize DMG
+        run: |
+          if [ -n "${TIEGEL_NOTARY_KEY:-}" ]; then
+            scripts/macos/notarize.sh --require "dist/Tiegel-${TAG}-macos-universal.dmg"
+          else
+            scripts/macos/notarize.sh "dist/Tiegel-${TAG}-macos-universal.dmg"
+          fi
+
+      - name: Clean up secrets
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/notary.p8"
+          if [ -n "${TIEGEL_KEYCHAIN:-}" ]; then security delete-keychain "$TIEGEL_KEYCHAIN" || true; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: dist/Tiegel-*.dmg
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-latest
+    # Bonus artifact: a failing Linux build must not block the macOS release.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Gio deps
+        run: sudo apt-get update && sudo apt-get install -y gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev
+      - name: Build
+        env:
+          TIEGEL_VERSION: ${{ env.TAG }}
+          CGO_ENABLED: "1"
+        run: |
+          name="Tiegel-${TAG}-linux-amd64"
+          mkdir -p "dist/$name"
+          go build -trimpath -ldflags "-s -w $(scripts/ldflags.sh)" -o "dist/$name/tiegel" ./cmd/tiegel
+          cp LICENSE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist/Tiegel-*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: assets
+      - name: Checksums
+        working-directory: assets
+        run: |
+          sha256sum Tiegel-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          pre=""
+          case "$TAG" in *-*) pre="--prerelease" ;; esac
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber
+          else
+            gh release create "$TAG" assets/* --verify-tag --title "Tiegel $TAG" --generate-notes $pre
+          fi
