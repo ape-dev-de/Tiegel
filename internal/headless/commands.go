@@ -34,21 +34,89 @@ func init() {
 		&command{name: "serve", usage: "serve [--framing ndjson|lsp] [--concurrent]", summary: "JSON-RPC 2.0 over stdin/stdout", maxArgs: 0, run: runServe},
 		&command{name: "call", usage: "call METHOD [JSON-PARAMS | -]", summary: "call any API method (\"-\" reads params from stdin)", minArgs: 1, maxArgs: 2, run: runCall},
 		&command{name: "version", usage: "version", summary: "print the version", maxArgs: 0, run: runVersion},
+		&command{name: "update-check", usage: "update-check [--prereleases]", summary: "check for a newer release (network access, only when run)", maxArgs: 0, run: runUpdateCheck},
+		&command{name: "git-status", usage: "git-status", summary: "branch and changed files of the project", maxArgs: 0, cwdProject: true, run: runGitStatus},
+		&command{name: "php-version", usage: "php-version", summary: "project PHP version and where it comes from", maxArgs: 0, cwdProject: true, run: runPHPVersion},
+		&command{name: "php-check", usage: "php-check FILE... [--php VERSION]", summary: "check PHP files against the project's PHP version (exit 1 on findings)", minArgs: 1, maxArgs: -1, cwdProject: true, run: runPHPCheck},
 	)
 }
 
 func runVersion(c *cli) error {
-	var info api.AppInfo
-	if err := c.call("app.info", nil, &info); err != nil {
+	var vi api.VersionInfo
+	if err := c.call("app.version", nil, &vi); err != nil {
 		return err
 	}
-	return c.emit(map[string]string{"version": info.Version, "apiVersion": info.APIVersion}, func(w io.Writer) {
-		v := info.Version
-		if v == "" {
-			v = "dev"
+	return c.emit(vi, func(w io.Writer) { fmt.Fprintf(w, "%s (api %s)\n", vi.String, vi.APIVersion) })
+}
+
+func runUpdateCheck(c *cli) error {
+	var res api.UpdateCheckResult
+	err := c.call("update.check", api.UpdateCheckParams{Prereleases: c.p.has("prereleases")}, &res)
+	if err != nil {
+		return err
+	}
+	return c.emit(res, func(w io.Writer) {
+		if res.Available {
+			fmt.Fprintf(w, "update available: %s (running %s)\n%s\n", res.Latest, res.Current, res.URL)
+			return
 		}
-		fmt.Fprintf(w, "tiegel %s (api %s)\n", v, info.APIVersion)
+		fmt.Fprintf(w, "up to date (running %s, latest %s)\n", res.Current, res.Latest)
 	})
+}
+
+func runGitStatus(c *cli) error {
+	var st api.GitStatus
+	if err := c.call("git.status", nil, &st); err != nil {
+		return err
+	}
+	return c.emit(st, func(w io.Writer) {
+		branch := st.Branch
+		if st.Detached {
+			branch = "(detached " + st.Head + ")"
+		}
+		fmt.Fprintf(w, "## %s", branch)
+		if st.Upstream != "" {
+			fmt.Fprintf(w, "...%s [ahead %d, behind %d]", st.Upstream, st.Ahead, st.Behind)
+		}
+		fmt.Fprintln(w)
+		for _, f := range st.Files {
+			fmt.Fprintf(w, "%s%s %s\n", f.Index, f.Worktree, f.Path)
+		}
+	})
+}
+
+func runPHPVersion(c *cli) error {
+	var pv api.PHPVersionResult
+	if err := c.call("php.version", api.PHPVersionParams{}, &pv); err != nil {
+		return err
+	}
+	return c.emit(pv, func(w io.Writer) { fmt.Fprintf(w, "%s\t%s\t%s\n", pv.Version, pv.Source, pv.Detail) })
+}
+
+func runPHPCheck(c *cli) error {
+	failed := false
+	var all []api.PHPCheckResult
+	for _, f := range c.p.args {
+		var res api.PHPCheckResult
+		if err := c.call("php.check", api.PHPCheckParams{Path: f, Version: c.p.value("php")}, &res); err != nil {
+			return err
+		}
+		failed = failed || len(res.Diagnostics) > 0
+		all = append(all, res)
+	}
+	if err := c.emit(all, func(w io.Writer) {
+		for i, res := range all {
+			for _, d := range res.Diagnostics {
+				fmt.Fprintf(w, "%s:%d:%d: %s: %s [%s] (PHP %s)\n", c.p.args[i], d.Line, d.Col, d.Severity, d.Message, d.Feature, res.Version)
+			}
+		}
+	}); err != nil {
+		return err
+	}
+	if failed {
+		return &quietError{code: ExitError}
+	}
+	return nil
 }
 
 func runInfo(c *cli) error {

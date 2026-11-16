@@ -48,7 +48,7 @@ func usagef(format string, args ...any) error { return &usageError{fmt.Sprintf(f
 // flagSpec lists the known flags; true means the flag takes a value.
 var flagSpec = map[string]bool{
 	// global
-	"json": false, "project": true, "config-dir": true, "help": false, "h": false,
+	"json": false, "version": false, "project": true, "config-dir": true, "help": false, "h": false,
 	// serve
 	"framing": true, "concurrent": false,
 	// files
@@ -65,6 +65,10 @@ var flagSpec = map[string]bool{
 	"show": true, "restore": true,
 	// interpreters version
 	"modules": false, "ini": false,
+	// update-check
+	"prereleases": false,
+	// php-check
+	"php": true,
 }
 
 // parsed is the parsed command line.
@@ -159,6 +163,9 @@ func Run(ctx context.Context, args []string, env Env) int {
 	p, err := parseArgs(args)
 	if err != nil {
 		return fail(env, err)
+	}
+	if p.cmd == "" && p.has("version") {
+		p.cmd = "version"
 	}
 	if p.cmd == "" || p.cmd == "help" || p.has("help") || p.has("h") {
 		topic := p.cmd

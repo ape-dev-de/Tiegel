@@ -4,7 +4,8 @@
 // project settings, Local History, autosave pipeline) and exposes every
 // backend function as a method in a namespace:
 //
-//	app.*      info, methods
+//	app.*      info, version, methods
+//	update.*   check (explicit request only; never automatic)
 //	events.*   subscribe, unsubscribe, publish
 //	project.*  open, info, close
 //	files.*    list, read, detectLanguage
@@ -16,6 +17,8 @@
 //	lsp.*      servers, known
 //	debug.*    listen, stop, sessions, continue, stack, eval, setBreakpoint
 //	modules.*  list, enable, disable
+//	git.*      status, diff, log, branches, commit
+//	php.*      version (with source), check (features/deprecations of a file)
 //
 // All methods take a context and a JSON-serialisable params struct and return
 // a JSON-serialisable result. They live in one method table (name → handler)

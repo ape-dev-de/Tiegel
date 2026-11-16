@@ -18,6 +18,8 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
+	"github.com/ape-dev-de/tiegel/internal/update"
+	"github.com/ape-dev-de/tiegel/internal/version"
 )
 
 // Version is the API version reported by "app.info". It changes when methods
@@ -43,8 +45,13 @@ type Options struct {
 	ComposeEnv map[string]string
 	// GOOS is the host OS for Xdebug hints; empty means runtime.GOOS.
 	GOOS string
-	// AppVersion is the Tiegel build version reported by "app.info".
+	// AppVersion is the Tiegel build version reported by "app.info";
+	// empty means version.Version.
 	AppVersion string
+	// UpdateSource overrides the release feed of "update.check".
+	UpdateSource string
+	// UpdateClient performs the update request (nil: a default client).
+	UpdateClient update.Doer
 	// Extensions register additional namespaces after the built-in ones
 	// (see the package documentation).
 	Extensions []func(a *App) error
@@ -81,6 +88,9 @@ func New(opts Options) (*App, error) {
 			return nil, fmt.Errorf("api: config dir: %w", err)
 		}
 		opts.ConfigDir = dir
+	}
+	if opts.AppVersion == "" {
+		opts.AppVersion = version.Version
 	}
 	if opts.GOOS == "" {
 		opts.GOOS = runtime.GOOS
@@ -127,6 +137,9 @@ func New(opts Options) (*App, error) {
 	a.registerLSP()
 	a.registerDebug()
 	a.registerModules()
+	a.registerVersion()
+	a.registerGit()
+	a.registerPHP()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)

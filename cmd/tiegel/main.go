@@ -14,10 +14,8 @@ import (
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/headless"
+	"github.com/ape-dev-de/tiegel/internal/version"
 )
-
-// version is set at build time via -ldflags "-X main.version=...".
-var version = "dev"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -27,7 +25,7 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) int {
-	opts := api.Options{AppVersion: version}
+	opts := api.Options{}
 	for _, a := range args {
 		if a == "--headless" {
 			return headless.Run(ctx, args, headless.Env{
@@ -41,7 +39,7 @@ func run(ctx context.Context, args []string) int {
 		return headless.ExitUsage
 	}
 	if showVersion {
-		fmt.Println("tiegel", version)
+		fmt.Println(version.String())
 		return headless.ExitOK
 	}
 	if dir := os.Getenv("TIEGEL_CONFIG_DIR"); dir != "" {

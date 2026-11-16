@@ -220,7 +220,12 @@ func TestSessionEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	mu.Lock()
-	if len(got) != 3 || got[0].Topic != "demo.x" || string(got[0].Payload) != `{"n":1}` || got[1].Topic != "other" || got[1].Payload != nil || got[2].Payload[0] != '"' {
+	// Different subscriptions deliver independently: compare by topic.
+	byTopic := map[string]string{}
+	for _, e := range got {
+		byTopic[e.Topic] = string(e.Payload)
+	}
+	if len(got) != 3 || byTopic["demo.x"] != `{"n":1}` || byTopic["other"] != "" || !strings.HasPrefix(byTopic["demo.func"], `"`) {
 		t.Fatalf("events %+v", got)
 	}
 	mu.Unlock()
@@ -383,7 +388,9 @@ func TestServeHeaderFramingConcurrent(t *testing.T) {
 	a := newTestApp(t)
 	c1, c2 := net.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- a.Serve(context.Background(), c1, ServeOptions{Framing: jsonrpc2.HeaderFraming, Concurrent: true}) }()
+	go func() {
+		done <- a.Serve(context.Background(), c1, ServeOptions{Framing: jsonrpc2.HeaderFraming, Concurrent: true})
+	}()
 	client := jsonrpc2.NewConn(c2)
 	client.Start()
 	var info AppInfo
