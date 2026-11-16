@@ -36,28 +36,6 @@ func (a *App) registerFileOps() {
 	mustHandle(a, "files.phpNamespace", "PSR-4 namespace of a directory according to composer.json", a.filesPHPNamespace)
 }
 
-// FileChange is one entry of a files.changed event.
-type FileChange struct {
-	// Op is "created", "renamed" or "deleted".
-	Op string `json:"op"`
-	// Path is the display path (project relative, slash separated), File
-	// the absolute path. For "renamed" they are the new location.
-	Path string `json:"path"`
-	File string `json:"file"`
-	// From/FromFile are the old location of a rename or move.
-	From     string `json:"from,omitempty"`
-	FromFile string `json:"fromFile,omitempty"`
-	Dir      bool   `json:"dir,omitempty"`
-	// Trashed reports a delete that moved the entry to the trash.
-	Trashed bool `json:"trashed,omitempty"`
-}
-
-// FilesChangedEvent is the payload of files.changed: the file operations
-// of one API call, for the file tree and indexes.
-type FilesChangedEvent struct {
-	Changes []FileChange `json:"changes"`
-}
-
 // DocRenamedEvent is the payload of doc.renamed: an open document now
 // belongs to another file (rename or move). It is followed by doc.closed
 // for the old path (with RenamedTo set) and doc.opened for the new one, so
@@ -144,6 +122,9 @@ func (a *App) validNewPath(abs string) error {
 }
 
 func (a *App) publishChanges(changes []FileChange) {
+	for i := range changes {
+		changes[i].Source = FileSourceTiegel
+	}
 	if len(changes) > 0 {
 		a.bus.Publish(TopicFilesChanged, FilesChangedEvent{Changes: changes})
 	}
@@ -168,7 +149,7 @@ func missingParents(dir string) []string {
 }
 
 func (a *App) created(abs string, dir bool) FileChange {
-	return FileChange{Op: "created", Path: a.displayPath(abs), File: abs, Dir: dir}
+	return FileChange{Kind: FileCreated, Path: a.displayPath(abs), File: abs, Dir: dir}
 }
 
 // CreateFileParams are the params of "files.createFile".
@@ -456,7 +437,7 @@ func (a *App) move(src, dst string, overwrite bool) (FileOpResult, []FileChange,
 			a.log.Warn("local history not moved", "from", src, "to", dst, "err", herr)
 		}
 	}
-	changes = append(changes, FileChange{Op: "renamed", Path: res.Path, File: dst, From: res.From, FromFile: src, Dir: res.Dir})
+	changes = append(changes, FileChange{Kind: FileRenamed, Path: res.Path, File: dst, OldPath: res.From, OldFile: src, Dir: res.Dir})
 	return res, changes, nil
 }
 
@@ -549,9 +530,9 @@ func (a *App) filesCopy(_ context.Context, p TransferParams) (FilesOpResult, err
 		}
 		// An open (unmodified) document of an overwritten file shows the
 		// new content.
-		if data, err := os.ReadFile(d); err == nil {
-			a.reload(d, data)
-		}
+		// reload records the new disk state, so the watcher does not
+		// report the copy as an external change.
+		a.reload(d)
 		changes = append(changes, a.created(d, sst.IsDir()))
 		res.Results = append(res.Results, FileOpResult{Path: a.displayPath(d), File: d, Dir: sst.IsDir(), From: a.displayPath(s)})
 	}
@@ -676,7 +657,7 @@ func (a *App) filesDelete(_ context.Context, p DeleteParams) (DeleteResult, erro
 				}
 			}
 			res.Deleted = append(res.Deleted, a.displayPath(f))
-			changes = append(changes, FileChange{Op: "deleted", Path: a.displayPath(f), File: f, Dir: st.IsDir(), Trashed: !p.Permanent})
+			changes = append(changes, FileChange{Kind: FileDeleted, Path: a.displayPath(f), File: f, Dir: st.IsDir(), Trashed: !p.Permanent})
 		}
 		return nil
 	})

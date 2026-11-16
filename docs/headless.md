@@ -100,6 +100,7 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `hierarchy FQN \| hierarchy DATEI ZEILE[:SPALTE]` | Typ-Hierarchie: Obertypen (rekursiv, nicht indizierte wie `Countable` mit `?`) und Untertypen eingerückt | `nav.typeHierarchy` |
 | `gutter DATEI` | Gutter-Marken: `zeile<TAB>art fqn<TAB>up N<TAB>down M` | `nav.gutter` |
 | `index-status [--rebuild [--full]]` | baut den Index (bzw. aktualisiert ihn aus dem Cache) und zeigt Zustand und Zahlen; `--full` verwirft Index und Cache | `index.status`, `index.rebuild` |
+| `watch [--backend auto\|fsevents\|fsnotify\|poll] [--exclude DIR]...` | Projekt beobachten und Änderungen zeilenweise ausgeben, bis Strg+C: `watching ROOT (backend, N files in M directories, T ms)`, dann `created/modified/deleted PFAD`, `renamed ALT -> NEU` (Ordner mit `/`), `git PFADE` (HEAD, index, refs …). `--json`: ein Event pro Zeile `{"topic", "payload"}`. `--exclude` ersetzt die Einstellung `watch.exclude` (Standard `node_modules`) | `watch.start`, Events `files.changed`, `git.changed`, `watch.status` |
 | `serve [--framing ndjson\|lsp] [--concurrent] [--listen ADDR [--token-file F] [--token T] [--allow-remote]]` | JSON-RPC 2.0 über stdin/stdout, mit `--listen unix:PFAD` oder `tcp:127.0.0.1:PORT` über einen Socket (Token-Authentisierung, siehe unten) | alle |
 | `call METHOD [JSON \| -]` | beliebige API-Methode aufrufen; `-` liest die Parameter von stdin; Ausgabe immer JSON | alle |
 | `help [BEFEHL]` | Hilfe | – |
@@ -209,7 +210,7 @@ Fehler sind JSON-RPC-Fehlerobjekte `{"code": …, "message": …}`:
 | -32000 | Ausführung fehlgeschlagen | 1 |
 | -32001 | nicht gefunden (Datei, Dokument, Revision, Modul, Sitzung, Repository) | 1 |
 | -32003 | kein Projekt geöffnet | 1 |
-| -32004 | Konflikt: Versionskonflikt (`version` passt nicht zum Dokument), `doc.close` mit ungespeicherten Änderungen ohne `discard` oder mit veralteter `generation`, Hunk-Auswahl passt nicht mehr zum Diff (`header`/`hash`), `git.commitSelection` während Merge/Rebase/Cherry-pick/Revert | 1 |
+| -32004 | Konflikt: Versionskonflikt (`version` passt nicht zum Dokument), `doc.save`/`doc.saveAll` auf eine extern geänderte Datei (`data: {reason: "externalChange", path, kind: modified\|created\|deleted, generation}`), `doc.close` mit ungespeicherten Änderungen ohne `discard` oder mit veralteter `generation`, Hunk-Auswahl passt nicht mehr zum Diff (`header`/`hash`), `git.commitSelection` während Merge/Rebase/Cherry-pick/Revert | 1 |
 | -32005 | externes Programm/Dienst nicht verfügbar (php, git, Language Server, Port belegt, Update-Server) | 1 |
 | -32006 | Modul abgeschaltet (`module disabled`; `data: {module, method}`) – mit `modules.enable` wieder einschalten | 1 |
 | -32007 | nicht angemeldet / falsches Token (nur Socket-Verbindungen; die Verbindung wird geschlossen) | – |
@@ -228,7 +229,18 @@ Muster: exakte Topics, `präfix.*` oder `*`. Zustellung als Notification `event`
 
 Vom Kern veröffentlichte Topics: `project.opened`/`project.closed` (`{root, name}`), `file.opened` (`{path, file, language, version, size}`), `file.saved` (`{path, file, trigger, size}` – auch bei Autosave), `doc.opened`, `doc.changed`, `doc.edited`, `doc.saved`, `doc.closed`, `doc.renamed`, `files.changed`, `modules.changed`, `settings.changed`, `search.results` (gestreamte Projektsuche: `{id, files, done, summary, error}`).
 
-`files.changed` meldet die Dateioperationen eines API-Aufrufs (`files.*`) für Dateibaum und Indizes: `{changes: [{op: created|renamed|deleted, path, file, from?, fromFile?, dir?, trashed?}]}`; bei `renamed` sind `path`/`file` der neue Ort. Folgt ein offenes Dokument einem Umbenennen/Verschieben, kommen `doc.renamed` (`{from, to, fromFile, file, generation, language}`), dann `doc.closed` für den alten Pfad mit `renamedTo` und `doc.opened` für den neuen – Abonnenten, die nur Öffnen/Schließen kennen (Language Server, Syntax), folgen so automatisch; Dokument, Puffer, Undo und Generation bleiben erhalten. Der Language Server bekommt zusätzlich `workspace/didRenameFiles`, wenn er sich dafür registriert hat.
+`files.changed` meldet die Dateioperationen eines API-Aufrufs (`files.*`) für Dateibaum und Indizes: `{changes: [{kind: created|renamed|deleted, path, file, oldPath?, oldFile?, dir?, trashed?, source: "tiegel"}]}` (derselbe Typ wie beim Watcher, siehe unten); bei `renamed` sind `path`/`file` der neue Ort. Folgt ein offenes Dokument einem Umbenennen/Verschieben, kommen `doc.renamed` (`{from, to, fromFile, file, generation, language}`), dann `doc.closed` für den alten Pfad mit `renamedTo` und `doc.opened` für den neuen – Abonnenten, die nur Öffnen/Schließen kennen (Language Server, Syntax), folgen so automatisch; Dokument, Puffer, Undo und Generation bleiben erhalten. Der Language Server bekommt zusätzlich `workspace/didRenameFiles`, wenn er sich dafür registriert hat.
+
+**Dateiwatcher und externe Änderungen (D140, D141).** Läuft der Watcher (`serve` und GUI starten ihn bei `project.open`, sonst `watch.start`), kommen:
+
+- `files.changed` – `{changes: [{kind, path, file, oldPath?, oldFile?, dir?, source: "watcher"}]}`, `kind` = `created` \| `modified` \| `deleted` \| `renamed` (mit `oldPath`); gebündelt (100 ms Ruhe, spätestens 1 s), `.git`-Interna, `node_modules` (bzw. `watch.exclude`) und Tiegels Temp-Dateien fehlen. Auch eigene Speichervorgänge erscheinen hier (für Dateibaum und Git-Status), lösen aber nie die folgenden Dokument-Events aus – ebenso wenig Tiegels eigene Dateioperationen (`files.rename`/`move`/`copy`).
+- `git.changed` – `{op: "external", paths: [".git/HEAD", ".git/index", ".git/refs/…"]}` bei Änderungen von HEAD, Index, Refs, `packed-refs` oder `MERGE_HEAD`/`CHERRY_PICK_HEAD`/`REVERT_HEAD`/`REBASE_HEAD` durch andere Programme.
+- `doc.reloaded` – Dokumentzustand + `source` (`watcher`, `refresh`, `resolve`, `api`): ein offenes Dokument **ohne** ungespeicherte Änderungen wurde aus der Datei neu geladen (ein Undo-Schritt, nur der geänderte Bereich wird ersetzt).
+- `doc.externalConflict` – `{path, file, generation, version, kind, modified, diskSize, diskTime, diff: {hunks: [{bufferStart, bufferLines, diskStart, diskLines}], added, removed}, source}`: die Datei eines Dokuments **mit** ungespeicherten Änderungen wurde extern geändert (`source: "watcher"`) oder ein Speichern wurde deshalb verweigert (`"save"`). Einmal pro Plattenstand. Der Dokumentzustand trägt dann `external: "modified"` (bzw. `"created"`).
+- `doc.deletedOnDisk` – gleicher Aufbau mit `kind: "deleted"` und ggf. `renamedTo`: die Datei wurde gelöscht oder umbenannt; das Dokument bleibt offen (`external: "deleted"`), Speichern legt sie nur mit `force` neu an. Taucht die Datei mit gleichem Inhalt wieder auf, verschwindet der Status.
+- `watch.status` – Watcher-Zustand (`{running, ready, root, backend, dirs, files, startupMs, batches, rescans, degraded?}`) nach dem Startscan, beim Stoppen und beim Rückfall auf Polling.
+
+Autosave überschreibt eine extern geänderte Datei **nie**: `idle`/`focusLost` überspringen sie (Event statt Fehler), `beforeCommit`/`beforeRun`/`beforeDebug`/`close` melden einen Fehler (beim Schließen wird der Puffer als Wiederherstellungspunkt gesichert). Die Prüfung vor dem Schreiben arbeitet auch ohne Watcher.
 
 `doc.edited` beschreibt **jede** Pufferänderung – egal ob über `doc.*`, Undo, Autosave-Filter oder direkt in der GUI – im Format `{path, file, language, version, start, oldEnd, newEnd, startPoint, oldEndPoint, newEndPoint, range: {start: {line, character}, end: …}, text, oldText}`: Byte-Offsets und Zeile/Byte-Spalte (Tree-sitter) sowie der ersetzte Bereich in LSP-Koordinaten (0-basiert, UTF-16). `version` steigt pro Änderung um 1.
 
@@ -292,14 +304,18 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `files.phpNamespace` | `path?` (Ordner) | `{dir, namespace, found, mapping}` aus `composer.json` PSR-4 |
 | `doc.open` | `path`, `create?`, `text?` | Dokumentzustand (+ `text`, `alreadyOpen`); jeder Dokumentzustand enthält `generation` (eindeutig pro geöffneter Instanz, neu nach Schließen + Öffnen) |
 | `doc.close` | `path`, `generation?`, `discard?` | `path`, `generation`, `discarded`; mit ungespeicherten Änderungen nur mit `discard: true` (sonst -32004, `data` = Dokumentzustand); mit `generation` nur, wenn sie zur offenen Instanz passt (sonst -32004 – ein verspätetes Close trifft kein neu geöffnetes Dokument) |
-| `doc.list` | – | Dokumentzustände |
+| `doc.list` | – | Dokumentzustände (mit `external`, solange eine externe Änderung offen ist) |
 | `doc.text` | `path`, `start?`, `end?` | `text`, `version` |
 | `doc.insert` | `path`, `at`, `text`, `version?` | Dokumentzustand |
 | `doc.delete` | `path`, `start`, `end`, `version?` | Dokumentzustand |
 | `doc.replace` | `path`, `start?`, `end?`, `text`, `version?` (ohne Bereich: ganzes Dokument) | Dokumentzustand |
 | `doc.undo` / `doc.redo` | `path` | Dokumentzustand + `done` |
-| `doc.save` | `path` | Zustand + `size`, `revision` (Hooks `file.beforeSave`, Local History, `file.saved`); der Inhalt wird erst unter der Speicher-Sperre gelesen, ein älterer Stand überschreibt nie einen neueren Autosave |
+| `doc.save` | `path`, `force?`, `reload?` | Zustand + `size`, `revision` (Hooks `file.beforeSave`, Local History, `file.saved`); der Inhalt wird erst unter der Speicher-Sperre gelesen, ein älterer Stand überschreibt nie einen neueren Autosave. Wurde die Datei seit dem Lesen/Schreiben extern geändert (Inhalt weicht ab), -32004 mit `data.reason = "externalChange"`; `force: true` überschreibt trotzdem, `reload: true` verwirft stattdessen den Puffer und lädt die Datei (wie `doc.resolveExternal takeDisk`) |
+| `doc.resolveExternal` | `path`, `action` (`keepMine` \| `takeDisk`) | `keepMine`: Puffer über die geänderte Datei speichern (wie `doc.save force`); `takeDisk`: Puffer durch die Datei ersetzen (ein Undo-Schritt; -32001, wenn sie gelöscht ist). Ergebnis wie `doc.save` + `action` |
 | `doc.saveAll` | – | `saved: [..]` |
+| `watch.start` | `backend?` (`auto`, `fsevents`, `fsnotify`, `poll`), `exclude?` | Watcher-Status; (neu)startet den Projekt-Watcher; ohne `exclude` gilt die Einstellung `watch.exclude` (Projekt, sonst global; Ordnernamen oder projektrelative Pfade, Standard `["node_modules"]`) |
+| `watch.stop` / `watch.status` | – | Watcher-Status `{running, ready, root, backend, dirs, files, startupMs, batches, rescans, degraded?}` |
+| `watch.refresh` | – | `external: [Dokumentzustand]`; scannt das Projekt sofort (Events wie oben, synchron) und gleicht **alle** offenen Dokumente mit der Platte ab (auch ohne Watcher; z.B. bei Fensterfokus) |
 | `history.list` | `path` | Revisionen (neueste zuerst) |
 | `history.content` | `path`, `id` | `revision`, `text` |
 | `history.restore` | `path`, `id` | neue Revision (offenes Dokument wird neu geladen; unter der Speicher-Sperre) |
@@ -308,7 +324,7 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `autosave.trigger` | `trigger?` (`focusLost` Standard, `idle`, `beforeRun`, `beforeDebug`, `beforeCommit`, `close`) | `saved: [..]` – alle geänderten Dokumente über Autosave (Hooks, Local History mit Label `autosave: <trigger>`); mit `close` werden nicht speicherbare Dokumente als Wiederherstellungspunkt gesichert, der Fehler (-32000) nennt das und trägt die Punkte als `data` |
 | `autosave.config` | `idleSeconds?` (0 = aus) | `idleSeconds` (dauerhaft in den globalen Settings; jede Pufferänderung startet den Leerlauf-Timer neu) |
 | `settings.get` | `key`, `scope?` (`global`, `project`) | `key`, `scope`, `found`, `value` |
-| `settings.set` | `key` (nur `ui.*`, `editor.*`, `update.*`), `scope?`, `value` (`null` löscht) | wie `settings.get` |
+| `settings.set` | `key` (nur `ui.*`, `editor.*`, `update.*`, `watch.*`), `scope?`, `value` (`null` löscht) | wie `settings.get` |
 | `search.inDoc` | `path`, `pattern`, `regex?`, `caseSensitive?`, `wholeWord?`, `limit?` | Treffer mit `line`, `col`, `text`, `lineText` (offenes Dokument oder Datei) |
 | `search.replaceInDoc` | wie `search.inDoc` + `replacement` | Zustand + `replaced` (ein Undo-Schritt) |
 | `search.inProject` | `pattern`, `regex?`, `caseSensitive?`, `wholeWord?`, `mask?` (`"*.php,*.inc,!*.min.js"`; mit `/` gegen den Projektpfad), `scope?` (`project`, `directory` + `dir`, `openFiles`), `paths?` (nur diese Dateien), `libraries?`, `ignored?`, `limit?` (5000), `maxFileSize?` (4 MiB), `stream?`, `id?` | `{id, files[{path, file, open, version, matches[{start, end, line, col, text, lineText, previewStart?}]}], matches, filesMatched, filesSearched, skippedBinary, skippedLarge, limited, cancelled, durationMs}`; offene Dokumente werden im Puffer durchsucht (auch ungespeicherte neue). Mit `stream: true` kommt sofort `{id, running: true}`, die Treffer folgen als Events `search.results` (Stapel; das letzte hat `done: true` und `summary`) |

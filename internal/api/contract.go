@@ -164,6 +164,41 @@ type BreakpointHitEvent struct {
 	Condition  string `json:"condition,omitempty"`
 }
 
+// FileChange is one entry of files.changed. Path/OldPath are display
+// paths (project relative, slash separated), File/OldFile absolute; for
+// "renamed" Path/File are the new location.
+type FileChange struct {
+	// Kind is created, modified, deleted or renamed.
+	Kind    string `json:"kind"`
+	Path    string `json:"path"`
+	File    string `json:"file"`
+	OldPath string `json:"oldPath,omitempty"`
+	OldFile string `json:"oldFile,omitempty"`
+	Dir     bool   `json:"dir,omitempty"`
+	// Trashed reports a delete that moved the entry to the trash.
+	Trashed bool `json:"trashed,omitempty"`
+	// Source is FileSourceTiegel for file operations through the API
+	// (files.*) and FileSourceWatcher for changes the project watcher
+	// found on disk (other programs, but also Tiegel's own saves).
+	Source string `json:"source"`
+}
+
+// Change kinds and sources of FileChange.
+const (
+	FileCreated  = "created"
+	FileModified = "modified"
+	FileDeleted  = "deleted"
+	FileRenamed  = "renamed"
+
+	FileSourceTiegel  = "tiegel"
+	FileSourceWatcher = "watcher"
+)
+
+// FilesChangedEvent is the payload of files.changed.
+type FilesChangedEvent struct {
+	Changes []FileChange `json:"changes"`
+}
+
 // GitChangedEvent is the payload of git.changed.
 type GitChangedEvent struct {
 	// Op is the operation, e.g. "stage", "commit", "checkout".

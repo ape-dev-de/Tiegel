@@ -12,7 +12,8 @@
 //	files.*    list, read, detectLanguage, createFile, createDir, rename,
 //	           move, copy, delete, reveal, copyPath, createPhpClass,
 //	           phpNamespace (D131)
-//	doc.*      open, close, list, text, insert, delete, replace, undo, redo, save, saveAll
+//	doc.*      open, close, list, text, insert, delete, replace, undo, redo, save, saveAll, resolveExternal
+//	watch.*    start, stop, status, refresh (project file watcher, external changes)
 //	history.*  list, content, restore
 //	search.*   inDoc, replaceInDoc, inProject, cancel, replaceInProject
 //	modules.*  list, enable, disable

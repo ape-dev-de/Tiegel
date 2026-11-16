@@ -56,6 +56,7 @@ func run(ctx context.Context, args []string) int {
 		opts.ConfigDir = dir
 	}
 	opts.Extensions = append(opts.Extensions, modules.Install)
+	opts.Watch = true // external changes, file tree and Git status (AP10.7)
 	app, err := api.New(opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tiegel: %v\n", err)

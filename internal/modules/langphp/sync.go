@@ -125,8 +125,8 @@ func (m *Module) onFilesChanged(e bus.Event) {
 	}
 	var files []protocol.FileRename
 	for _, c := range ev.Changes {
-		if c.Op == "renamed" {
-			files = append(files, protocol.FileRename{OldURI: protocol.URIFromPath(c.FromFile), NewURI: protocol.URIFromPath(c.File)})
+		if c.Kind == api.FileRenamed && c.Source == api.FileSourceTiegel {
+			files = append(files, protocol.FileRename{OldURI: protocol.URIFromPath(c.OldFile), NewURI: protocol.URIFromPath(c.File)})
 		}
 	}
 	ctx, cancel := syncCtx()

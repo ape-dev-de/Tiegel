@@ -63,11 +63,24 @@ type Doc struct {
 	// meanwhile (discarded content must not be written, and versions of a
 	// reopened document must not be confused with the old ones).
 	Instance uint64
+	// Force asks DirtyDocs.Save to write even if the file was changed by
+	// another program since it was last read or written (see
+	// ErrExternalChange). Only explicit user decisions set it.
+	Force bool
 }
 
 // ErrDocGone is returned by DirtyDocs.Save when the document instance of
 // the snapshot is no longer open. SaveAll skips such documents silently.
 var ErrDocGone = errors.New("autosave: document is no longer open")
+
+// ErrExternalChange is returned (wrapped) by DirtyDocs.Save when the file
+// on disk was changed by another program since the document last read or
+// wrote it: the save is refused instead of silently overwriting the other
+// change. SaveAll skips such documents for the background triggers
+// (idle, focusLost) – the conflict is reported to the user separately –
+// and reports them as errors for all others (e.g. before a commit, which
+// must not run on content the user has not seen).
+var ErrExternalChange = errors.New("file changed on disk")
 
 // DirtyDocs is the editor-side view autosave works with.
 type DirtyDocs interface {
@@ -78,7 +91,9 @@ type DirtyDocs interface {
 	// differ from the snapshot when a file.beforeSave filter changed it;
 	// the implementation should then update the buffer as well. It
 	// returns ErrDocGone (without writing) if doc.Instance is set and that
-	// instance is no longer open.
+	// instance is no longer open, and an error wrapping ErrExternalChange
+	// (without writing) if the file was changed externally and doc.Force
+	// is not set.
 	Save(ctx context.Context, doc Doc) error
 }
 
@@ -203,11 +218,21 @@ func (m *Manager) SaveAll(ctx context.Context, trigger Trigger) error {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(append(errs, err)...)
 		}
-		if _, err := m.saveLocked(ctx, d, trigger); err != nil && !errors.Is(err, ErrDocGone) {
+		_, err := m.saveLocked(ctx, d, trigger)
+		switch {
+		case err == nil, errors.Is(err, ErrDocGone):
+		case errors.Is(err, ErrExternalChange) && background(trigger):
+		default:
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// background reports whether trigger saves without the user asking for it
+// and without an operation depending on the result.
+func background(trigger Trigger) bool {
+	return trigger == TriggerIdle || trigger == TriggerFocusLost
 }
 
 // SaveWith runs the save pipeline for the document snapshot returns. The
@@ -269,7 +294,7 @@ func (m *Manager) saveLocked(ctx context.Context, d Doc, trigger Trigger) (Saved
 	if err := ctx.Err(); err != nil {
 		return SavedEvent{}, fmt.Errorf("autosave: %s: %w", d.Path, err)
 	}
-	if err := m.cfg.Docs.Save(ctx, Doc{Path: d.Path, Content: content, Version: d.Version, Instance: d.Instance}); err != nil {
+	if err := m.cfg.Docs.Save(ctx, Doc{Path: d.Path, Content: content, Version: d.Version, Instance: d.Instance, Force: d.Force}); err != nil {
 		return SavedEvent{}, fmt.Errorf("autosave: save %s: %w", d.Path, err)
 	}
 

@@ -193,6 +193,7 @@ func Run(ctx context.Context, args []string, env Env) int {
 	}
 
 	opts := env.Options
+	opts.Watch = opts.Watch || cmd.watch
 	mods := env.Modules
 	// One-shot commands index the project only when they navigate
 	// (php-index starts on the first index.*/nav.* call); serve indexes in
@@ -299,7 +300,9 @@ type command struct {
 	// cwdProject opens the working directory as project unless --project
 	// is given.
 	cwdProject bool
-	run        func(c *cli) error
+	// watch starts the project file watcher (long-running commands).
+	watch bool
+	run   func(c *cli) error
 }
 
 var commands = map[string]*command{}

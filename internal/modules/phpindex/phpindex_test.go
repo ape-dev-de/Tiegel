@@ -178,14 +178,13 @@ func TestIncrementalUpdates(t *testing.T) {
 
 	// a new file announced by the file watcher
 	modtest.WriteFile(t, filepath.Join(dir, "src/Circle.php"), "<?php\nnamespace App;\nclass Circle implements Shape { public function area(): float { return 3.0; } }\n")
-	a.Bus().Publish(TopicFilesChanged, map[string]any{"kind": "created", "paths": []string{filepath.Join(dir, "src/Circle.php")}})
+	circle := filepath.Join(dir, "src/Circle.php")
+	a.Bus().Publish(TopicFilesChanged, api.FilesChangedEvent{Changes: []api.FileChange{{Kind: api.FileCreated, Path: "src/Circle.php", File: circle, Source: api.FileSourceWatcher}}})
 	modtest.Eventually(t, "Circle via files.changed", func() bool { return slices.Contains(impls(), `App\Circle@index`) })
 
-	// a relative path and a directory change (full scan)
+	// a directory change (full scan)
 	modtest.WriteFile(t, filepath.Join(dir, "src/sub/Tri.php"), "<?php\nnamespace App;\nclass Tri implements Shape {}\n")
-	a.Bus().Publish(TopicFilesChanged, struct {
-		Paths []string `json:"paths"`
-	}{Paths: []string{"src/sub"}})
+	a.Bus().Publish(TopicFilesChanged, api.FilesChangedEvent{Changes: []api.FileChange{{Kind: api.FileCreated, Path: "src/sub", File: filepath.Join(dir, "src/sub"), Dir: true, Source: api.FileSourceWatcher}}})
 	modtest.Eventually(t, "Tri via directory change", func() bool { return slices.Contains(impls(), `App\Tri@index`) })
 
 	// an edit of an open document (debounced), without saving
@@ -279,22 +278,7 @@ func TestCacheAndLifecycle(t *testing.T) {
 	}
 }
 
-func TestPathsOf(t *testing.T) {
-	got := pathsOf(map[string]any{
-		"kind":    "renamed/moved",
-		"renamed": []map[string]string{{"from": "/a/x.php", "to": "/a/y.php"}},
-		"paths":   []string{"/a/x.php", "noslash"},
-		"Path":    `C:\w\z.php`,
-	})
-	want := []string{`C:\w\z.php`, "/a/x.php", "/a/y.php"}
-	slices.Sort(got)
-	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		t.Fatalf("pathsOf %q", got)
-	}
-	if pathsOf(make(chan int)) != nil {
-		t.Fatal("unencodable")
-	}
+func TestUnavailable(t *testing.T) {
 	if !strings.Contains(unavailable().Error(), "cgo") {
 		t.Fatal("unavailable")
 	}

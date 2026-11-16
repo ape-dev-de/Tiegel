@@ -236,8 +236,9 @@ const (
 	// TopicDocRenamed: an open document follows its renamed or moved file
 	// (DocRenamedEvent); doc.closed (old path) and doc.opened follow.
 	TopicDocRenamed = "doc.renamed"
-	// TopicFilesChanged: files were created, renamed/moved or deleted
-	// through the API (FilesChangedEvent).
+	// TopicFilesChanged: files were created, modified, renamed/moved or
+	// deleted, through the API (files.*, source "tiegel") or found by the
+	// project watcher (source "watcher"); FilesChangedEvent.
 	TopicFilesChanged  = "files.changed"
 	TopicModuleChanged = "modules.changed"
 )

@@ -217,7 +217,7 @@ func TestDocSaveWithoutProject(t *testing.T) {
 	if err := (docSet{a}).Save(context.Background(), autosave.Doc{Path: filepath.Join(filepath.Dir(path), "other"), Content: []byte("x")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileAtomic(filepath.Join(path, "below-file"), nil); err == nil {
+	if _, err := writeFileAtomic(filepath.Join(path, "below-file"), nil); err == nil {
 		t.Fatal("expected error writing below a file")
 	}
 }

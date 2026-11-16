@@ -119,7 +119,7 @@ func TestFilesCreate(t *testing.T) {
 		t.Fatal("content")
 	}
 	ch := changesOf(t, rec.take(t, a))
-	if len(ch) != 3 || ch[0].Path != "src" || !ch[0].Dir || ch[1].Path != "src/Deep" || ch[2].Path != "src/Deep/new.php" || ch[2].Op != "created" {
+	if len(ch) != 3 || ch[0].Path != "src" || !ch[0].Dir || ch[1].Path != "src/Deep" || ch[2].Path != "src/Deep/new.php" || ch[2].Kind != "created" || ch[2].Source != FileSourceTiegel {
 		t.Fatalf("changes %+v", ch)
 	}
 	wantCode(t, a, "files.createFile", CreateFileParams{Path: "a.php"}, CodeConflict)
@@ -327,7 +327,7 @@ func TestFilesMoveCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	ch := changesOf(t, rec.take(t, a))
-	if len(ch) != 2 || ch[0].Op != "renamed" || ch[0].From != "a.php" || ch[1].From != "dir" || !ch[1].Dir {
+	if len(ch) != 2 || ch[0].Kind != "renamed" || ch[0].OldPath != "a.php" || ch[1].OldPath != "dir" || !ch[1].Dir {
 		t.Fatalf("changes %+v", ch)
 	}
 	// One path to a new name, creating parents.
@@ -335,7 +335,7 @@ func TestFilesMoveCopy(t *testing.T) {
 	if res.Results[0].Path != "new/place/b2.php" {
 		t.Fatalf("move to path %+v", res)
 	}
-	if ch := changesOf(t, rec.take(t, a)); len(ch) != 3 || ch[0].Path != "new" || ch[1].Path != "new/place" || ch[2].Op != "renamed" {
+	if ch := changesOf(t, rec.take(t, a)); len(ch) != 3 || ch[0].Path != "new" || ch[1].Path != "new/place" || ch[2].Kind != "renamed" {
 		t.Fatalf("move to path changes %+v", ch)
 	}
 	wantCode(t, a, "files.move", TransferParams{Paths: []string{"target/a.php", "new"}, To: "nodir"}, CodeInvalidParams)
@@ -362,7 +362,7 @@ func TestFilesMoveCopy(t *testing.T) {
 		}
 	}
 	ch = changesOf(t, rec.take(t, a))
-	if len(ch) < 2 || ch[0].Op != "created" || ch[0].Path != "new/a.php" {
+	if len(ch) < 2 || ch[0].Kind != "created" || ch[0].Path != "new/a.php" {
 		t.Fatalf("copy changes %+v", ch)
 	}
 	wantCode(t, a, "files.copy", TransferParams{Path: "target/a.php", To: "new"}, CodeConflict)
@@ -414,7 +414,7 @@ func TestFilesDelete(t *testing.T) {
 	}
 	evs := rec.take(t, a)
 	ch := changesOf(t, evs)
-	if len(ch) != 2 || ch[0].Op != "deleted" || !ch[0].Trashed || !ch[1].Dir {
+	if len(ch) != 2 || ch[0].Kind != "deleted" || !ch[0].Trashed || !ch[1].Dir {
 		t.Fatalf("changes %+v", ch)
 	}
 	if !strings.Contains(topics(evs), "doc.closed") {

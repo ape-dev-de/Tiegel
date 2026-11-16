@@ -17,6 +17,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/core/trash"
+	"github.com/ape-dev-de/tiegel/internal/core/watch"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
 	"github.com/ape-dev-de/tiegel/internal/update"
@@ -56,6 +57,15 @@ type Options struct {
 	// Extensions register additional namespaces after the built-in ones
 	// (see the package documentation).
 	Extensions []func(a *App) error
+	// Watch starts the project file watcher on project.open (GUI and
+	// serve; one-shot CLI commands leave it off). See watch.start.
+	Watch bool
+	// WatchBackend selects the watcher backend (auto, fsevents, fsnotify,
+	// poll); empty means auto.
+	WatchBackend string
+	// WatchPollInterval is the rescan interval of the polling backend
+	// (0: watch.DefaultPollInterval).
+	WatchPollInterval time.Duration
 	// GlobalSettings, if set, is the global settings store to use instead
 	// of opening one from ConfigDir. Several App instances in one process
 	// (one per project window) share it so that writes of one App are not
@@ -87,6 +97,10 @@ type App struct {
 	claims  map[string][]string
 	docSeq  uint64 // last document generation, guarded by mu
 
+	watchMu  sync.Mutex
+	watcher  *watch.Watcher
+	closing  chan struct{} // closed by Close
+	closeMu  sync.Once
 	searches searchRegistry // running project searches (search.cancel)
 	// trash moves a path to the trash (files.delete); start launches a
 	// detached program (files.reveal). Tests replace both.
@@ -123,6 +137,10 @@ func New(opts Options) (*App, error) {
 		docs:    make(map[string]*Doc),
 		trash:   trash.Move,
 		start:   startDetached,
+		closing: make(chan struct{}),
+	}
+	if _, err := watch.ParseBackend(opts.WatchBackend); err != nil {
+		return nil, fmt.Errorf("api: %w", err)
 	}
 	a.hooks = hooks.New(hooks.WithErrorHandler(func(e *hooks.HookError) {
 		log.Warn("hook failed", "hook", e.Hook, "owner", e.Owner, "err", e.Err)
@@ -163,6 +181,7 @@ func New(opts Options) (*App, error) {
 	a.registerApp()
 	a.registerProject()
 	a.registerDocs()
+	a.registerWatch()
 	a.registerFileOps()
 	a.registerSearch()
 	a.registerModules()
@@ -187,6 +206,8 @@ func New(opts Options) (*App, error) {
 // points in Local History (see "history.recovery").
 func (a *App) Close() error {
 	var errs []error
+	a.closeMu.Do(func() { close(a.closing) })
+	a.stopWatch()
 	a.saver.Close()
 	a.preserveUnsaved("unsaved on exit", nil)
 	if err := a.modules.Stop(); err != nil {

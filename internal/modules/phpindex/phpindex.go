@@ -28,10 +28,8 @@ package phpindex
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -50,9 +48,9 @@ const ID = "php-index"
 const (
 	TopicProgress = "index.progress"
 	TopicUpdated  = "index.updated"
-	// TopicFilesChanged is published by the project file watcher; the
-	// payload's path lists are read generically (see pathsOf).
-	TopicFilesChanged = "files.changed"
+	// TopicFilesChanged is published by the project watcher and the
+	// file operations (api.FilesChangedEvent).
+	TopicFilesChanged = api.TopicFilesChanged
 )
 
 // Settings (project settings, global without a project).
@@ -259,21 +257,22 @@ func (m *Module) onFilesChanged(ev bus.Event) {
 	if st == nil {
 		return
 	}
-	paths := pathsOf(ev.Payload)
-	if len(paths) == 0 {
-		st.requestSync(false)
+	fc, ok := ev.Payload.(api.FilesChangedEvent)
+	if !ok || len(fc.Changes) == 0 {
+		st.requestSync(false) // unknown payload: a cheap mtime scan
 		return
 	}
-	for _, p := range paths {
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(st.root, filepath.FromSlash(p))
-		}
-		if st.ix.Accepts(p) {
-			st.queueFiles(p)
-		} else {
-			// a directory (or anything else) changed: a cheap mtime scan
-			// finds what happened below it
-			st.requestSync(false)
+	for _, c := range fc.Changes {
+		for _, p := range []string{c.File, c.OldFile} {
+			switch {
+			case p == "":
+			case !c.Dir && st.ix.Accepts(p):
+				st.queueFiles(p) // a missing file is removed from the index
+			case c.Dir:
+				// a directory appeared, vanished or moved: a cheap mtime
+				// scan finds what happened below it
+				st.requestSync(false)
+			}
 		}
 	}
 }
@@ -823,51 +822,4 @@ func (m *Module) gutter(ctx context.Context, p GutterParams) (GutterResult, erro
 		})
 	}
 	return res, nil
-}
-
-// pathsOf collects path strings from a files.changed payload of any shape:
-// string fields named path/from/to/old/new and string lists such as
-// paths/created/modified/deleted/renamed (also nested).
-func pathsOf(payload any) []string {
-	raw, err := encodeAny(payload)
-	if err != nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	var out []string
-	var walk func(v any, key string)
-	walk = func(v any, key string) {
-		switch x := v.(type) {
-		case string:
-			if key != "kind" && key != "op" && key != "type" && strings.ContainsAny(x, `/\`) && !seen[x] {
-				seen[x] = true
-				out = append(out, x)
-			}
-		case []any:
-			for _, e := range x {
-				walk(e, key)
-			}
-		case map[string]any:
-			keys := make([]string, 0, len(x))
-			for k := range x {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				walk(x[k], strings.ToLower(k))
-			}
-		}
-	}
-	walk(raw, "")
-	return out
-}
-
-func encodeAny(v any) (any, error) {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-	var out any
-	err = json.Unmarshal(b, &out)
-	return out, err
 }

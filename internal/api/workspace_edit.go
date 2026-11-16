@@ -264,7 +264,7 @@ func (a *App) writeWithHistory(abs string, old, updated []byte, label string) (u
 			return 0, Errorf(CodeFailed, "local history: %w", err)
 		}
 	}
-	if err := writeFileAtomic(abs, updated); err != nil {
+	if _, err := writeFileAtomic(abs, updated); err != nil {
 		return 0, Errorf(CodeFailed, "%w", err)
 	}
 	rev, _, err := h.Save(abs, updated, label)
@@ -416,7 +416,7 @@ func (a *App) applyDeleteOp(ctx context.Context, op FileOp, label string) (EditS
 		return wrapFS(os.Remove(abs), "delete "+res.Path)
 	})
 	if err == nil {
-		a.publishChanges([]FileChange{{Op: "deleted", Path: res.Path, File: abs, Dir: st.IsDir()}})
+		a.publishChanges([]FileChange{{Kind: FileDeleted, Path: res.Path, File: abs, Dir: st.IsDir()}})
 	}
 	return res, err
 }
