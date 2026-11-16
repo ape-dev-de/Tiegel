@@ -15,8 +15,11 @@
 //     MergeView), debug (DebugToolbar, CallStackList, VariablesTree,
 //     WatchesList, BreakpointsList, SessionList and the DebugPanel
 //     template), runtime (InterpreterPicker, PathMappingEditor,
-//     XdebugHintsList, StatusbarVersion); further ones (file tree, …)
-//     follow.
+//     XdebugHintsList, StatusbarVersion), filetree, tabs, statusbar,
+//     findbar, completion (completion list, info popup), problems,
+//     palette (choosers), settings (dialog), welcome.
+//   - templates: window layouts; Workbench is the main window (sidebar,
+//     tabs, editor, tool window area, right panel, status bar, overlay).
 //   - editorview: the code editor widget (virtual rendering, gutter,
 //     keymap-driven input, IME); see that package.
 //

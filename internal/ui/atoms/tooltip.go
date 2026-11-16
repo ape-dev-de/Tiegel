@@ -50,6 +50,9 @@ type Tooltip struct {
 	Text string
 	// AlwaysVisible shows the bubble without hovering (catalog, tests).
 	AlwaysVisible bool
+	// Above shows the bubble above the content (e.g. in a status bar at
+	// the bottom of the window).
+	Above bool
 
 	hover   gesture.Hover
 	since   time.Time
@@ -92,10 +95,15 @@ func (t *Tooltip) Layout(gtx layout.Context, th *tokens.Theme, content layout.Wi
 		return d
 	}
 
-	m := op.Record(gtx.Ops)
-	off := op.Offset(image.Pt(0, d.Size.Y+gtx.Dp(th.Space.XS))).Push(gtx.Ops)
 	bg := gtx
 	bg.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(tooltipMaxWidth), draw.Unbounded)}
+	pos := image.Pt(0, d.Size.Y+gtx.Dp(th.Space.XS))
+	if t.Above {
+		bd := draw.Measure(bg, TooltipBubble{Text: t.Text}.Fn(th))
+		pos = image.Pt(min(0, d.Size.X-bd.Size.X), -bd.Size.Y-gtx.Dp(th.Space.XS))
+	}
+	m := op.Record(gtx.Ops)
+	off := op.Offset(pos).Push(gtx.Ops)
 	TooltipBubble{Text: t.Text}.Layout(bg, th)
 	off.Pop()
 	op.Defer(gtx.Ops, m.Stop())

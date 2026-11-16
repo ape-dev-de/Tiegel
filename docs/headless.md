@@ -254,6 +254,10 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `history.list` | `path` | Revisionen (neueste zuerst) |
 | `history.content` | `path`, `id` | `revision`, `text` |
 | `history.restore` | `path`, `id` | neue Revision (offenes Dokument wird neu geladen) |
+| `autosave.trigger` | `trigger?` (`focusLost` Standard, `idle`, `beforeRun`, `beforeDebug`, `beforeCommit`) | `saved: [..]` – alle geänderten Dokumente über Autosave (Hooks, Local History mit Label `autosave: <trigger>`) |
+| `autosave.config` | `idleSeconds?` (0 = aus) | `idleSeconds` (dauerhaft in den globalen Settings; jede Pufferänderung startet den Leerlauf-Timer neu) |
+| `settings.get` | `key`, `scope?` (`global`, `project`) | `key`, `scope`, `found`, `value` |
+| `settings.set` | `key` (nur `ui.*`, `editor.*`, `update.*`), `scope?`, `value` (`null` löscht) | wie `settings.get` |
 | `search.inDoc` | `path`, `pattern`, `regex?`, `caseSensitive?`, `wholeWord?`, `limit?` | Treffer mit `line`, `col`, `text`, `lineText` (offenes Dokument oder Datei) |
 | `search.replaceInDoc` | wie `search.inDoc` + `replacement` | Zustand + `replaced` (ein Undo-Schritt) |
 | `modules.list` | – | `{id, dependsOn, enabled, running, error}` |
