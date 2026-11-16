@@ -1,0 +1,23 @@
+diff --git a/src/Domain/InvoiceNumber.php b/src/Domain/InvoiceNumber.php
+new file mode 100644
+index 0000000..1f2a3b4
+--- /dev/null
++++ b/src/Domain/InvoiceNumber.php
+@@ -0,0 +1,17 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Domain;
++
++final readonly class InvoiceNumber
++{
++    public function __construct(public string $prefix, public int $sequence)
++    {
++    }
++
++    public function __toString(): string
++    {
++        return sprintf('%s-%06d', $this->prefix, $this->sequence);
++    }
++}

@@ -18,13 +18,13 @@ import (
 
 // buildPages creates all catalog pages with their persistent widget state.
 func buildPages() []*page {
-	return []*page{
+	return append([]*page{
 		colorsPage(), syntaxPage(), typographyPage(),
 		labelPage(), iconPage(), buttonPage(), textFieldPage(), checkboxPage(),
-		badgePage(), tooltipPage(), dividerPage(),
+		badgePage(), tooltipPage(), dividerPage(), surfacePage(),
 		searchFieldPage(), fileRowPage(), tabPage(), breakpointPage(), diffPage(),
 		editorPage(),
-	}
+	}, gitPages()...)
 }
 
 // ---- Tokens ----------------------------------------------------------------

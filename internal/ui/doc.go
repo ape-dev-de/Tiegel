@@ -6,9 +6,11 @@
 //     4dp spacing grid, radii, component sizes. The only source of colors
 //     and measurements.
 //   - atoms:     Label, Icon/Glyph, Button, IconButton, TextField, Checkbox,
-//     Badge, Tooltip/TooltipBubble, Divider.
-//   - molecules: SearchField, FileRow, Tab, BreakpointRow, DiffBlock.
-//   - organisms: (M2.5+) file tree, commit dialog, debug panel, …
+//     Badge, Tooltip/TooltipBubble, Divider, Surface.
+//   - molecules: SearchField, FileRow, Tab, BreakpointRow, DiffBlock,
+//     CodeLine, ListRow, Banner, ScrollList, Split, Dropdown.
+//   - organisms: git (CommitPanel, DiffView, LogView, BranchList,
+//     MergeView); further ones (file tree, debug panel, …) follow.
 //   - editorview: the code editor widget (virtual rendering, gutter,
 //     keymap-driven input, IME); see that package.
 //
@@ -45,8 +47,9 @@
 // last frame. Layout calls Update itself so a component also works when the
 // caller ignores events; call Update *before* Layout when you need them.
 //
-// Wrapper components that decorate arbitrary content (currently only
-// atoms.Tooltip) take the content as an additional last parameter:
+// Wrapper components that decorate or arrange arbitrary content
+// (atoms.Tooltip, atoms.Surface, molecules.ListRow, molecules.Split,
+// molecules.ScrollList) take the content as additional last parameters:
 //
 //	Layout(gtx, th, content layout.Widget)
 //

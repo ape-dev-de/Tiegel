@@ -117,6 +117,15 @@ var (
 	GlyphThemeDark     = NewGlyph("theme-dark", icons.ImageBrightness2)
 	GlyphThemeLight    = NewGlyph("theme-light", icons.ImageWBSunny)
 	GlyphIndeterminate = NewGlyph("indeterminate", icons.ToggleIndeterminateCheckBox)
+	GlyphChevronUp     = NewGlyph("chevron-up", icons.NavigationExpandLess)
+	GlyphArrowLeft     = NewGlyph("arrow-left", icons.NavigationArrowBack)
+	GlyphArrowRight    = NewGlyph("arrow-right", icons.NavigationArrowForward)
+	GlyphUpload        = NewGlyph("upload", icons.FileFileUpload)
+	GlyphEdit          = NewGlyph("edit", icons.EditorModeEdit)
+	GlyphDelete        = NewGlyph("delete", icons.ActionDelete)
+	GlyphCommit        = NewGlyph("commit", icons.ActionCheckCircle)
+	GlyphCloud         = NewGlyph("cloud", icons.FileCloud)
+	GlyphTag           = NewGlyph("tag", icons.ActionLabel)
 )
 
 // Glyphs lists all built-in glyphs (for the catalog and tests).
@@ -125,7 +134,9 @@ var Glyphs = []*Glyph{
 	GlyphChevronRight, GlyphChevronDown, GlyphClose, GlyphCheck, GlyphSearch,
 	GlyphAdd, GlyphRemove, GlyphSettings, GlyphRun, GlyphDebug, GlyphRefresh,
 	GlyphHistory, GlyphBranch, GlyphInfo, GlyphWarning, GlyphError, GlyphDone,
-	GlyphThemeDark, GlyphThemeLight, GlyphIndeterminate,
+	GlyphThemeDark, GlyphThemeLight, GlyphIndeterminate, GlyphChevronUp,
+	GlyphArrowLeft, GlyphArrowRight, GlyphUpload, GlyphEdit, GlyphDelete,
+	GlyphCommit, GlyphCloud, GlyphTag,
 }
 
 // Icon draws a glyph in a square box. It is a value component.
