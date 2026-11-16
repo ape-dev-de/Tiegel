@@ -8,6 +8,7 @@ import (
 )
 
 func TestGitRemoteCommands(t *testing.T) {
+	t.Parallel()
 	dir, remote := gitProject(t)
 	if code, _, errs := run(t, "", "git-pull", "--project", dir); code != ExitError || !strings.Contains(errs, "noUpstream") {
 		t.Fatalf("pull without upstream %d %q", code, errs)
@@ -61,6 +62,7 @@ func TestGitRemoteCommands(t *testing.T) {
 }
 
 func TestGitStashCommand(t *testing.T) {
+	t.Parallel()
 	dir, _ := gitProject(t)
 	if code, out, _ := run(t, "", "git-stash", "--project", dir); code != ExitOK || out != "" {
 		t.Fatalf("empty list %d %q", code, out)

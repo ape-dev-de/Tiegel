@@ -2,31 +2,19 @@ package headless
 
 import (
 	"encoding/json"
-	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
 
-// buildFakeLSP builds the fake language server binary.
+// buildFakeLSP builds the fake language server binary (once per run).
 func buildFakeLSP(t *testing.T) string {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("needs go build")
-	}
-	goBin, err := exec.LookPath("go")
-	if err != nil {
-		t.Skip("go toolchain not found")
-	}
-	bin := filepath.Join(t.TempDir(), exeName("fakelsp"))
-	if out, err := exec.Command(goBin, "build", "-o", bin, "github.com/ape-dev-de/tiegel/internal/lsp/fakeserver/fakelsp").CombinedOutput(); err != nil {
-		t.Fatalf("go build fakelsp: %v\n%s", err, out)
-	}
-	return bin
+	return buildOnce(t, &fakeLSPBin, "fakelsp", "github.com/ape-dev-de/tiegel/internal/lsp/fakeserver/fakelsp")
 }
 
 func TestLSPCheckCommand(t *testing.T) {
+	t.Parallel()
 	fake := buildFakeLSP(t)
 	dir := project(t, map[string]string{"bad.php": "<?php\necho 'ERR';\n", "ok.php": "<?php\necho 1;\n", "x.txt": "x"})
 
@@ -57,6 +45,7 @@ func TestLSPCheckCommand(t *testing.T) {
 }
 
 func TestLSPCheckE2E(t *testing.T) {
+	t.Parallel()
 	fake := buildFakeLSP(t)
 	bin := buildBinary(t)
 	dir := project(t, map[string]string{"bad.php": "<?php\n// ERR here\n"})

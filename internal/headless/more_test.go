@@ -25,6 +25,7 @@ func runWith(t *testing.T, mod func(*Env), args ...string) (int, string) {
 }
 
 func TestUpdateCheckCommand(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/old" {
 			_, _ = w.Write([]byte(`{"tag_name":"v0.0.1","html_url":"https://example.org/old"}`))
@@ -47,6 +48,7 @@ func TestUpdateCheckCommand(t *testing.T) {
 }
 
 func TestInterpreterCommandsWithFakePHP(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX shell script")
 	}
@@ -83,6 +85,7 @@ func TestInterpreterCommandsWithFakePHP(t *testing.T) {
 }
 
 func TestGitStatusCommand(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}

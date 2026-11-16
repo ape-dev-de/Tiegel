@@ -381,7 +381,9 @@ func (a *App) move(src, dst string, overwrite bool) (FileOpResult, []FileChange,
 	if src == dst {
 		return FileOpResult{}, nil, Errorf(CodeInvalidParams, "%s: source and target are the same", a.displayPath(src))
 	}
-	if fspath.Within(src, dst) {
+	// filepath.Rel compares case-insensitively on Windows, so a case-only
+	// rename (user.php → User.php) looks like "into itself" there.
+	if fspath.Within(src, dst) && !strings.EqualFold(src, dst) {
 		return FileOpResult{}, nil, Errorf(CodeInvalidParams, "cannot move %s into itself", a.displayPath(src))
 	}
 	if err := a.validNewPath(dst); err != nil {
@@ -510,6 +512,10 @@ func (a *App) filesCopy(_ context.Context, p TransferParams) (FilesOpResult, err
 		}
 		if dstSt, err := os.Lstat(d); err == nil {
 			switch {
+			case os.SameFile(sst, dstSt):
+				// A case variant on a case-insensitive file system
+				// (macOS, Windows): copying would truncate the source.
+				return res, Errorf(CodeInvalidParams, "%s: source and target are the same file", a.displayPath(s))
 			case !p.Overwrite:
 				return res, Errorf(CodeConflict, "%s already exists", a.displayPath(d))
 			case dstSt.IsDir() || sst.IsDir():

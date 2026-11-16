@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,6 +66,7 @@ func project(t *testing.T, files map[string]string) string {
 }
 
 func TestParseArgs(t *testing.T) {
+	t.Parallel()
 	p, err := parseArgs([]string{"--headless", "files", "--json", "--project=/x", "sub", "--depth", "2", "--", "--literal"})
 	if err != nil {
 		t.Fatal(err)
@@ -83,6 +85,7 @@ func TestParseArgs(t *testing.T) {
 }
 
 func TestHelpAndUsage(t *testing.T) {
+	t.Parallel()
 	code, out, _ := run(t, "")
 	if code != ExitOK || !strings.Contains(out, "Commands:") || !strings.Contains(out, "serve") {
 		t.Fatalf("help: %d %q", code, out)
@@ -114,6 +117,7 @@ func TestHelpAndUsage(t *testing.T) {
 }
 
 func TestInfoFilesLangRead(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{
 		".gitignore": "*.log\n", "a.php": "<?php echo 1;\n", "x.log": "", "vendor/v.php": "", "src/B.php": "<?php",
 	})
@@ -175,6 +179,7 @@ func TestInfoFilesLangRead(t *testing.T) {
 }
 
 func TestSearchCommand(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{"a.php": "<?php\n$foo = 1;\n"})
 	f := filepath.Join(dir, "a.php")
 	code, out, _ := run(t, "", "search", f, `\$\w+`, "--regex")
@@ -193,6 +198,7 @@ func TestSearchCommand(t *testing.T) {
 }
 
 func TestCallCommand(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{"a.php": "<?php\n"})
 	params, _ := json.Marshal(map[string]string{"path": filepath.Join(dir, "a.php")}) // escapes \ on Windows
 	code, out, _ := run(t, "", "call", "files.detectLanguage", string(params))
@@ -224,6 +230,7 @@ func TestCallCommand(t *testing.T) {
 }
 
 func TestRuntimeCommands(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{
 		"compose.yaml":  "services:\n  php:\n    image: php:8.3-fpm\n    volumes:\n      - ./:/var/www/html\n",
 		"composer.json": `{"require":{"php":"^8.0"}}`,
@@ -290,6 +297,7 @@ func TestRuntimeCommands(t *testing.T) {
 }
 
 func TestHistoryCommand(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{"a.php": "<?php\n"})
 	env := testEnv(t, nil, io.Discard, io.Discard)
 	// Create two revisions through the API using the same config dir.
@@ -355,6 +363,7 @@ func TestHistoryCommand(t *testing.T) {
 }
 
 func TestServeCommand(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{"a.php": "<?php\n"})
 	in := `{"jsonrpc":"2.0","id":1,"method":"doc.open","params":{"path":"a.php"}}` + "\n" +
 		`{"jsonrpc":"2.0","id":2,"method":"doc.insert","params":{"path":"a.php","at":{"line":2},"text":"echo 1;\n"}}` + "\n" +
@@ -397,6 +406,7 @@ func (b *lockedBuffer) Write(p []byte) (int, error) {
 }
 
 func TestDebugListenCommand(t *testing.T) {
+	t.Parallel()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -452,7 +462,35 @@ func exeName(name string) string {
 	return name
 }
 
-func buildBinary(t *testing.T) string {
+// builtBinary is a binary built at most once per test run and shared by
+// all tests of the package (building per test cost a link of the whole
+// IDE each time).
+type builtBinary struct {
+	once sync.Once
+	path string
+	out  []byte
+	err  error
+}
+
+var (
+	tiegelBin, fakeLSPBin builtBinary
+
+	buildDirOnce sync.Once
+	buildDir     string
+	buildDirErr  error
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if buildDir != "" {
+		_ = os.RemoveAll(buildDir)
+	}
+	os.Exit(code)
+}
+
+// buildOnce builds pkg (with extra go build flags) into a shared temporary
+// directory on first use and returns the binary path.
+func buildOnce(t *testing.T, b *builtBinary, name, pkg string, flags ...string) string {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("E2E tests need go build")
@@ -461,14 +499,26 @@ func buildBinary(t *testing.T) string {
 	if err != nil {
 		t.Skip("go toolchain not found")
 	}
-	bin := filepath.Join(t.TempDir(), exeName("tiegel"))
+	b.once.Do(func() {
+		buildDirOnce.Do(func() { buildDir, buildDirErr = os.MkdirTemp("", "tiegel-headless-test-") })
+		if b.err = buildDirErr; b.err != nil {
+			return
+		}
+		b.path = filepath.Join(buildDir, exeName(name))
+		args := append(append([]string{"build"}, flags...), "-o", b.path, pkg)
+		b.out, b.err = exec.Command(goBin, args...).CombinedOutput()
+	})
+	if b.err != nil {
+		t.Fatalf("go build %s: %v\n%s", name, b.err, b.out)
+	}
+	return b.path
+}
+
+func buildBinary(t *testing.T) string {
+	t.Helper()
 	// The E2E tests only drive --headless: build without the GUI (D84), so
 	// they need no Gio toolchain (cgo on macOS/Linux) and link faster.
-	cmd := exec.Command(goBin, "build", "-tags", "headless", "-o", bin, "github.com/ape-dev-de/tiegel/cmd/tiegel")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("go build: %v\n%s", err, out)
-	}
-	return bin
+	return buildOnce(t, &tiegelBin, "tiegel", "github.com/ape-dev-de/tiegel/cmd/tiegel", "-tags", "headless")
 }
 
 func e2e(t *testing.T, bin, cfg, stdin string, args ...string) (int, string, string) {
@@ -489,6 +539,7 @@ func e2e(t *testing.T, bin, cfg, stdin string, args ...string) (int, string, str
 }
 
 func TestE2E(t *testing.T) {
+	t.Parallel()
 	bin := buildBinary(t)
 	cfg := t.TempDir()
 	dir := project(t, map[string]string{"a.php": "<?php\n", ".gitignore": "*.tmp\n", "x.tmp": "", "src/B.php": "<?php"})

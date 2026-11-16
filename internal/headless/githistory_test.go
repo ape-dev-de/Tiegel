@@ -8,6 +8,7 @@ import (
 )
 
 func TestGitHistoryCommands(t *testing.T) {
+	t.Parallel()
 	dir, _ := gitProject(t)
 	write := func(name, content string) {
 		t.Helper()

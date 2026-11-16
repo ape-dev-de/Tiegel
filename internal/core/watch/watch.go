@@ -10,8 +10,10 @@
 //
 //   - FSEvents (macOS, cgo): one stream for the whole tree, no file
 //     descriptor per file,
-//   - fsnotify: inotify (Linux), ReadDirectoryChangesW (Windows), kqueue
-//     (BSD); one watch per directory,
+//   - fsnotify: inotify (Linux), kqueue (BSD); one watch per directory.
+//     On Windows the same backend name is one recursive
+//     ReadDirectoryChangesW on the root (per-directory handles would block
+//     renaming directories),
 //   - polling: a full rescan every PollInterval (fallback, and the backend
 //     used when the others fail).
 //
@@ -843,17 +845,24 @@ func (w *Watcher) diff(oldE, newE map[string]entry) []Change {
 	for _, rel := range created {
 		createdBy[keyOf(newE[rel])]++
 	}
+	renamedTo := map[string]string{} // new rel → old rel
 	renamedFrom := map[string]bool{}
 	for _, rel := range created {
 		e := newE[rel]
 		k := keyOf(e)
 		olds := byKey[k]
 		if len(olds) == 1 && createdBy[k] == 1 && (e.id != 0 || e.size > 0) && olds[0] != rel {
-			changes = append(changes, Change{Path: w.abs(rel), Kind: Renamed, OldPath: w.abs(olds[0]), Dir: e.dir})
+			renamedTo[rel] = olds[0]
 			renamedFrom[olds[0]] = true
+		}
+	}
+	pairDirsByContent(oldE, newE, created, deleted, renamedTo, renamedFrom)
+	for _, rel := range created {
+		if old, ok := renamedTo[rel]; ok {
+			changes = append(changes, Change{Path: w.abs(rel), Kind: Renamed, OldPath: w.abs(old), Dir: newE[rel].dir})
 			continue
 		}
-		changes = append(changes, Change{Path: w.abs(rel), Kind: Created, Dir: e.dir})
+		changes = append(changes, Change{Path: w.abs(rel), Kind: Created, Dir: newE[rel].dir})
 	}
 	for _, rel := range deleted {
 		if !renamedFrom[rel] {
@@ -861,6 +870,61 @@ func (w *Watcher) diff(oldE, newE map[string]entry) []Change {
 		}
 	}
 	return changes
+}
+
+// pairDirsByContent pairs directories that have no file ID (Windows:
+// FileInfo carries none, and a directory's size and mtime say nothing):
+// a created and a deleted directory are a rename when entries below them
+// were renamed from one to the other under the same relative path, and
+// the pairing is unique in both directions. Pairs are added to renamedTo
+// and renamedFrom.
+func pairDirsByContent(oldE, newE map[string]entry, created, deleted []string, renamedTo map[string]string, renamedFrom map[string]bool) {
+	sep := string(filepath.Separator)
+	gone := map[string]bool{}
+	for _, rel := range deleted {
+		if e := oldE[rel]; e.dir && e.id == 0 && !renamedFrom[rel] {
+			gone[rel] = true
+		}
+	}
+	if len(gone) == 0 {
+		return
+	}
+	cands := map[string]map[string]bool{} // created dir → deleted dirs
+	users := map[string]int{}             // deleted dir → number of created dirs naming it
+	for _, rel := range created {
+		if e := newE[rel]; !e.dir || e.id != 0 {
+			continue
+		}
+		if _, ok := renamedTo[rel]; ok {
+			continue
+		}
+		for n, o := range renamedTo {
+			rest, ok := strings.CutPrefix(n, rel+sep)
+			if !ok || !strings.HasSuffix(o, sep+rest) {
+				continue
+			}
+			if from := strings.TrimSuffix(o, sep+rest); gone[from] && from != rel {
+				if cands[rel] == nil {
+					cands[rel] = map[string]bool{}
+				}
+				if !cands[rel][from] {
+					cands[rel][from] = true
+					users[from]++
+				}
+			}
+		}
+	}
+	for rel, froms := range cands {
+		if len(froms) != 1 {
+			continue
+		}
+		for from := range froms {
+			if users[from] == 1 {
+				renamedTo[rel] = from
+				renamedFrom[from] = true
+			}
+		}
+	}
 }
 
 // diffGit rescans the Git metadata and returns the changed paths.

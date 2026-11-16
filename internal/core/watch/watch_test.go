@@ -415,3 +415,40 @@ func TestPruneRootsAndExcluded(t *testing.T) {
 		}
 	}
 }
+
+// Without file IDs (Windows) directory renames are paired through the
+// files renamed along with them.
+func TestDirRenameWithoutFileIDs(t *testing.T) {
+	sep := string(filepath.Separator)
+	j := func(s string) string { return strings.ReplaceAll(s, "/", sep) }
+	w := &Watcher{root: filepath.FromSlash("/r")}
+	file := entry{size: 3, mtime: 7}
+	file2 := entry{size: 4, mtime: 7}
+	dir := entry{dir: true, mtime: 1}
+	oldE := map[string]entry{
+		"new": dir, j("new/deep"): dir, j("new/deep/e.php"): file, j("new/f.php"): file2,
+		"empty": dir, "a": dir, "b": dir,
+	}
+	newE := map[string]entry{
+		"moved": dir, j("moved/deep"): dir, j("moved/deep/e.php"): file, j("moved/f.php"): file2,
+		"empty2": dir, "c": dir,
+	}
+	ch := w.diff(oldE, newE)
+	p := func(rel string) string { return w.abs(j(rel)) }
+	for from, to := range map[string]string{"new": "moved", "new/deep": "moved/deep", "new/deep/e.php": "moved/deep/e.php", "new/f.php": "moved/f.php"} {
+		if !hasRename(ch, p(from), p(to)) {
+			t.Errorf("no rename %s → %s in %+v", from, to, ch)
+		}
+	}
+	// Empty directories without content to compare stay created/deleted.
+	for _, rel := range []string{"empty2", "c"} {
+		if !has(ch, Created, p(rel)) {
+			t.Errorf("%s not created: %+v", rel, ch)
+		}
+	}
+	for _, rel := range []string{"empty", "a", "b"} {
+		if !has(ch, Deleted, p(rel)) {
+			t.Errorf("%s not deleted: %+v", rel, ch)
+		}
+	}
+}

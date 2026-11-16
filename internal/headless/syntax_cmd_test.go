@@ -9,6 +9,7 @@ import (
 )
 
 func TestSyntaxCommands(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{
 		".env":      "A=1\n# c\nB=2\n",
 		"k.php":     "<?php\nclass K\n{\n    public function f(): void\n    {\n    }\n}\n",

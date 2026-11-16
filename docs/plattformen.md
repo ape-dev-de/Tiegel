@@ -96,7 +96,9 @@ CI (`.github/workflows/ci.yml`, läuft auf `main`, `ci-*`-Branches, Pull Request
 
 - **Absolute Pfade:** `/x` bzw. `\x` gilt als absolut (Wurzel des aktuellen Laufwerks) und wird nie an die Projektwurzel gehängt (`internal/core/fspath`). API-Clients sollten unter Windows vollständige Pfade (`C:\…`) oder projektrelative Pfade senden.
 - **Zeilenenden:** Das Repository ist per `.gitattributes` LF-only. Tiegel selbst lässt `core.autocrlf` des Nutzers unangetastet: Gutter und Diffs vergleichen mit der Arbeitsbaum-Form (`git cat-file --filters`), die bei `autocrlf=true` CRLF hat – genau wie die ausgecheckten Dateien.
-- **Tests:** Git-Testrepos setzen `core.autocrlf=false`; Fake-Programme als Shell-Skript laufen unter Windows nicht und sind dort mit Begründung übersprungen; selbst gebaute Test-Binaries bekommen `.exe`.
+- **Dateiwatcher (D180):** ein rekursives `ReadDirectoryChangesW` auf die Projektwurzel statt eines Handles pro Ordner (das blockierte das Umbenennen von Ordnern); Verzeichnis-Umbenennungen werden mangels Datei-IDs über ihren Inhalt gepaart.
+- **Groß/Klein (D181):** reine Groß/Klein-Umbenennungen funktionieren (auch macOS ist case-insensitiv); Kopieren auf eine Schreibvariante derselben Datei wird abgelehnt.
+- **Tests:** Verzeichnisrechte (`chmod 0555`) verhindern unter Windows kein Schreiben; Tests für Schreibfehler machen dort stattdessen die Datei schreibgeschützt. Git-Testrepos setzen `core.autocrlf=false`; Fake-Programme als Shell-Skript laufen unter Windows nicht und sind dort mit Begründung übersprungen; selbst gebaute Test-Binaries bekommen `.exe`.
 
 ## Offene Punkte
 

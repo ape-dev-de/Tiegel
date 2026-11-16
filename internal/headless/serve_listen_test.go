@@ -55,6 +55,7 @@ func readListenInfo(t *testing.T, r io.Reader) ListenInfo {
 }
 
 func TestServeListen(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{"a.php": "<?php\n"})
 	sock := filepath.Join(socketDir(t), "s.sock")
 	pr, pw := io.Pipe()
@@ -100,6 +101,7 @@ func TestServeListen(t *testing.T) {
 }
 
 func TestServeListenErrors(t *testing.T) {
+	t.Parallel()
 	if code, _, errs := run(t, "", "serve", "--token", "x"); code != ExitUsage || !strings.Contains(errs, "--listen") {
 		t.Fatalf("token without listen: %d %q", code, errs)
 	}

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -39,14 +40,14 @@ func navParamsOf(f *fakeBackend, method string) map[string]any {
 func TestNavigateJumps(t *testing.T) {
 	f := projectFake()
 	c, n := navStarted(t, f)
-	cur := At(root+"/src/Mailer.php", 7)
+	cur := At(filepath.Join(root, "src/Mailer.php"), 7)
 	c.OpenFile(cur.File, nil)
 	c.Settle(time.Second)
 
 	f.answer("nav.definition", navResult{Locations: []NavTarget{target("index.php", 2, 6, "Mailer")}, Complete: true})
 	n.Navigate(cur, JumpDefinition)
 	c.Settle(time.Second)
-	if tab := c.ActiveTab(); tab == nil || tab.File != root+"/index.php" || !c.Nav.CanBack() {
+	if tab := c.ActiveTab(); tab == nil || tab.File != filepath.Join(root, "index.php") || !c.Nav.CanBack() {
 		t.Fatalf("definition: tab %+v back %v", tab, c.Nav.CanBack())
 	}
 	if p := navParamsOf(f, "nav.definition"); p["path"] != cur.File || p["at"].(map[string]any)["offset"].(float64) != 7 {
@@ -56,7 +57,7 @@ func TestNavigateJumps(t *testing.T) {
 	f.answer("nav.implementations", navResult{Locations: []NavTarget{target("src/A.php", 3, 10, "A"), target("src/B.php", 4, 12, "B")}, Complete: true})
 	n.Navigate(cur, JumpImplementations)
 	c.Settle(time.Second)
-	if n.Choice == nil || len(n.Choice.Targets) != 2 || n.Choice.Title != "Choose Implementation" || n.Choice.Targets[1].File != root+"/src/B.php" {
+	if n.Choice == nil || len(n.Choice.Targets) != 2 || n.Choice.Title != "Choose Implementation" || n.Choice.Targets[1].File != filepath.Join(root, "src/B.php") {
 		t.Fatalf("choice %+v", n.Choice)
 	}
 	if n.Choice.Targets[0].Label() != `App\A` || !strings.HasSuffix(n.Choice.Targets[1].Where(), "src/B.php:4") {
@@ -64,7 +65,7 @@ func TestNavigateJumps(t *testing.T) {
 	}
 	n.ChooseTarget(1)
 	c.Settle(time.Second)
-	if tab := c.ActiveTab(); tab == nil || tab.File != root+"/src/B.php" || n.Choice != nil {
+	if tab := c.ActiveTab(); tab == nil || tab.File != filepath.Join(root, "src/B.php") || n.Choice != nil {
 		t.Fatalf("chosen: %+v", tab)
 	}
 	if c.Reveal == nil || c.Reveal.Range.Start.Offset != 12 {
@@ -72,7 +73,7 @@ func TestNavigateJumps(t *testing.T) {
 		t.Fatalf("reveal %+v", c.Reveal)
 	}
 	// Back returns to where the jump started.
-	c.NavigateBack(At(root+"/src/B.php", 12))
+	c.NavigateBack(At(filepath.Join(root, "src/B.php"), 12))
 	c.Settle(time.Second)
 	if tab := c.ActiveTab(); tab.File != cur.File {
 		t.Fatalf("back to %s", tab.File)
@@ -93,7 +94,7 @@ func TestNavigateJumps(t *testing.T) {
 	f.answer("lsp.definition", []Location{{Path: "src/C.php", Range: TextRange{Start: TextPos{Offset: 3}}}})
 	n.Navigate(cur, JumpDefinition)
 	c.Settle(time.Second)
-	if f.called("lsp.definition") != 1 || c.ActiveTab().File != root+"/src/C.php" {
+	if f.called("lsp.definition") != 1 || c.ActiveTab().File != filepath.Join(root, "src/C.php") {
 		t.Fatalf("lsp fallback: %d %s", f.called("lsp.definition"), c.ActiveTab().File)
 	}
 }
@@ -103,7 +104,7 @@ func TestNavigateJumps(t *testing.T) {
 func TestGutterMarks(t *testing.T) {
 	f := projectFake()
 	c, n := navStarted(t, f)
-	file := root + "/src/Shape.php"
+	file := filepath.Join(root, "src/Shape.php")
 	f.answer("nav.gutter", map[string]any{"marks": []GutterMark{
 		{Line: 3, Kind: "interface", FQN: `App\Shape`, Down: []NavTarget{target("src/Circle.php", 5, 40, "Circle"), target("src/Square.php", 5, 41, "Square")}, DownTotal: 2},
 		{Line: 7, Kind: "method", FQN: `App\Shape::area`, Up: []NavTarget{target("src/Base.php", 9, 90, "Base")}},
@@ -116,7 +117,7 @@ func TestGutterMarks(t *testing.T) {
 	}
 	c.Settle(time.Second)
 	marks := n.GutterMarks(file)
-	if len(marks) != 2 || len(marks[3].Down) != 2 || marks[3].Down[0].File != root+"/src/Circle.php" {
+	if len(marks) != 2 || len(marks[3].Down) != 2 || marks[3].Down[0].File != filepath.Join(root, "src/Circle.php") {
 		t.Fatalf("marks %+v", marks)
 	}
 	if got := f.called("nav.gutter"); got != 1 {
@@ -149,7 +150,7 @@ func TestGutterMarks(t *testing.T) {
 		t.Fatal("up")
 	}
 	c.Settle(time.Second)
-	if c.ActiveTab() == nil || c.ActiveTab().File != root+"/src/Base.php" {
+	if c.ActiveTab() == nil || c.ActiveTab().File != filepath.Join(root, "src/Base.php") {
 		t.Fatalf("up jump %+v", c.ActiveTab())
 	}
 	if n.GutterJump(cur, 5, true) || n.GutterJump(cur, 7, false) {
@@ -177,7 +178,7 @@ func TestGutterMarks(t *testing.T) {
 func TestFindUsagesGrouping(t *testing.T) {
 	f := projectFake()
 	c, n := navStarted(t, f)
-	cur := At(root+"/src/Mailer.php", 20)
+	cur := At(filepath.Join(root, "src/Mailer.php"), 20)
 	n.FindUsages(cur, "send")
 	if !strings.Contains(c.Status.Notice, "language server") {
 		t.Fatalf("no server: %q", c.Status.Notice)
@@ -195,7 +196,7 @@ func TestFindUsagesGrouping(t *testing.T) {
 	if us == nil || us.Total != 3 || len(us.Groups) != 2 || us.Symbol != "send" {
 		t.Fatalf("usages %+v", us)
 	}
-	if g := us.Groups[0]; g.Path != "src/A.php" || g.File != root+"/src/A.php" || len(g.Items) != 2 || g.Items[0].LineText != "$m->send();" || g.Items[1].Range.Start.Line != 9 {
+	if g := us.Groups[0]; g.Path != "src/A.php" || g.File != filepath.Join(root, "src/A.php") || len(g.Items) != 2 || g.Items[0].LineText != "$m->send();" || g.Items[1].Range.Start.Line != 9 {
 		t.Fatalf("group A %+v", g)
 	}
 	if p := navParamsOf(f, "lsp.references"); p["includeDeclaration"] != false {
@@ -287,7 +288,7 @@ func TestRenameAndCodeActions(t *testing.T) {
 	f := projectFake()
 	c, n := navStarted(t, f)
 	c.Status.LSPRunning = true
-	cur := At(root+"/src/Mailer.php", 14)
+	cur := At(filepath.Join(root, "src/Mailer.php"), 14)
 	f.answer("lsp.prepareRename", map[string]any{"canRename": false})
 	n.StartRename(cur, "send")
 	c.Settle(time.Second)
@@ -384,7 +385,7 @@ func TestSymbolsAndStructure(t *testing.T) {
 	f.answer("nav.symbols", map[string]any{"symbols": []NavTarget{target("src/Mailer.php", 3, 6, "Mailer")}, "complete": true})
 	n.SearchSymbols("mai", []string{"type"}, 50)
 	c.Settle(time.Second)
-	if s := n.Symbols; s.Query != "mai" || len(s.Items) != 1 || s.Items[0].File != root+"/src/Mailer.php" || !s.Complete {
+	if s := n.Symbols; s.Query != "mai" || len(s.Items) != 1 || s.Items[0].File != filepath.Join(root, "src/Mailer.php") || !s.Complete {
 		t.Fatalf("symbols %+v", s)
 	}
 	if p := navParamsOf(f, "nav.symbols"); p["kinds"].([]any)[0] != "type" || p["limit"].(float64) != 50 {
@@ -412,7 +413,7 @@ func TestSymbolsAndStructure(t *testing.T) {
 			{"kind": "method", "name": "send", "detail": "(): void", "modifiers": []string{"public"}, "start": pos(30, 5), "nameStart": pos(46, 5)},
 		}},
 	}})
-	n.LoadStructure(root + "/src/Mailer.php")
+	n.LoadStructure(filepath.Join(root, "src/Mailer.php"))
 	c.Settle(time.Second)
 	st := n.Structure
 	if st == nil || len(st.Nodes) != 1 || st.Nodes[0].Offset != 12 || st.Nodes[0].Children[0].Name != "send" || st.Nodes[0].Children[0].Line != 5 {
@@ -420,7 +421,7 @@ func TestSymbolsAndStructure(t *testing.T) {
 	}
 	f.on("syntax.outline", func(json.RawMessage) (any, error) { return nil, api.Errorf(api.CodeUnavailable, "no cgo") })
 	f.answer("lsp.documentSymbols", []map[string]any{{"name": "Mailer", "kind": "Class", "selectionRange": TextRange{Start: TextPos{Offset: 12, Line: 3}}}})
-	n.LoadStructure(root + "/src/Mailer.php")
+	n.LoadStructure(filepath.Join(root, "src/Mailer.php"))
 	c.Settle(time.Second)
 	if st := n.Structure; len(st.Nodes) != 1 || st.Nodes[0].Kind != "class" || st.Err != "" {
 		t.Fatalf("lsp structure %+v", st)
@@ -436,14 +437,14 @@ func TestTypeHierarchy(t *testing.T) {
 		"supertypes": []map[string]any{{"fqn": `App\Shape`, "path": "src/Shape.php", "name": "Shape"}, {"fqn": "Countable", "name": "Countable"}},
 		"subtypes":   []map[string]any{},
 	})
-	n.LoadTypeHierarchy(At(root+"/src/Circle.php", 8))
+	n.LoadTypeHierarchy(At(filepath.Join(root, "src/Circle.php"), 8))
 	c.Settle(time.Second)
 	h := n.Hierarchy
-	if h == nil || h.Class.File != root+"/src/Circle.php" || len(h.Supertypes) != 2 || h.Supertypes[0].File != root+"/src/Shape.php" || h.Supertypes[1].File != "" {
+	if h == nil || h.Class.File != filepath.Join(root, "src/Circle.php") || len(h.Supertypes) != 2 || h.Supertypes[0].File != filepath.Join(root, "src/Shape.php") || h.Supertypes[1].File != "" {
 		t.Fatalf("hierarchy %+v", h)
 	}
 	f.on("nav.typeHierarchy", func(json.RawMessage) (any, error) { return nil, api.Errorf(api.CodeNotFound, "no class here") })
-	n.LoadTypeHierarchy(At(root+"/src/Circle.php", 0))
+	n.LoadTypeHierarchy(At(filepath.Join(root, "src/Circle.php"), 0))
 	c.Settle(time.Second)
 	if !strings.Contains(c.Status.Notice, "no class here") {
 		t.Fatalf("notice %q", c.Status.Notice)

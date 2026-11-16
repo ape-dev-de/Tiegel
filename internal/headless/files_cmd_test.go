@@ -9,6 +9,7 @@ import (
 )
 
 func TestFileCommands(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{
 		"composer.json": `{"autoload": {"psr-4": {"App\\": "src/"}}}`,
 		"a.txt":         "a",
