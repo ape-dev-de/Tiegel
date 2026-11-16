@@ -33,3 +33,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-16: M9-Backend gemergt (D80–D83).
 - 2026-11-16: GUI Teil A gemergt (D90–D93). Nächster Schritt: Git- und Debug-Anbindung (Teil B).
 - 2026-11-16: GUI Teil B gemergt (D100–D103) – MVP-Funktionsumfang vollständig verdrahtet. Review-Fixes in Arbeit.
+- 2026-11-16: Review-Fixes (14 Befunde, je Regressionstest) gemergt; siehe docs/reviews/2026-11-16-backend.md.
