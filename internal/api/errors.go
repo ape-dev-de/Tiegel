@@ -25,6 +25,9 @@ const (
 	// CodeModuleDisabled: the method belongs to a module that is disabled
 	// or not running (see modules.enable).
 	CodeModuleDisabled = -32006
+	// CodeUnauthorized: a socket client has not authenticated (or sent a
+	// wrong token); the server closes the connection.
+	CodeUnauthorized = -32007
 )
 
 // Error is an API error with a stable code. Transports map it to their own

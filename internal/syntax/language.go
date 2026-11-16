@@ -1,10 +1,10 @@
+//go:build cgo
+
 package syntax
 
 import (
-	"bytes"
 	"embed"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -13,19 +13,6 @@ import (
 	ts "github.com/tree-sitter/go-tree-sitter"
 	tsjson "github.com/tree-sitter/tree-sitter-json/bindings/go"
 	tsphp "github.com/tree-sitter/tree-sitter-php/bindings/go"
-)
-
-// Language identifies a supported source language.
-type Language string
-
-// Supported languages. LangPlain has no highlighting at all.
-const (
-	LangPlain Language = ""
-	LangPHP   Language = "php"
-	LangJSON  Language = "json"
-	LangYAML  Language = "yaml"
-	LangXML   Language = "xml"
-	LangEnv   Language = "env"
 )
 
 //go:embed queries/*.scm
@@ -137,50 +124,4 @@ func (g *grammar) fieldID(name string) uint16 {
 		g.fields[name] = id
 	}
 	return id
-}
-
-// HasTree reports whether documents of this language are backed by a
-// Tree-sitter syntax tree (false for .env and plain text).
-func (l Language) HasTree() bool {
-	_, ok := grammars[l]
-	return ok
-}
-
-// DetectLanguage guesses the language from the file name and, if needed, the
-// first bytes of the content (shebang or "<?php").
-func DetectLanguage(path string, head []byte) Language {
-	base := strings.ToLower(filepath.Base(path))
-	switch {
-	case base == ".env" || strings.HasPrefix(base, ".env.") || strings.HasSuffix(base, ".env"):
-		return LangEnv
-	}
-	switch strings.ToLower(filepath.Ext(base)) {
-	case ".php", ".phtml", ".php3", ".php4", ".php5", ".php7", ".php8", ".phps", ".inc":
-		return LangPHP
-	case ".json", ".jsonc", ".lock":
-		if filepath.Ext(base) == ".lock" && base != "composer.lock" {
-			break
-		}
-		return LangJSON
-	case ".yml", ".yaml":
-		return LangYAML
-	case ".xml", ".xsd", ".xsl", ".xslt", ".svg", ".xlf", ".xliff":
-		return LangXML
-	case ".dist":
-		// phpunit.xml.dist, phpcs.xml.dist, ...
-		return DetectLanguage(strings.TrimSuffix(path, filepath.Ext(path)), head)
-	}
-	if bytes.HasPrefix(head, []byte("#!")) {
-		line, _, _ := bytes.Cut(head, []byte("\n"))
-		if bytes.Contains(line, []byte("php")) {
-			return LangPHP
-		}
-	}
-	if bytes.HasPrefix(bytes.TrimSpace(head), []byte("<?php")) {
-		return LangPHP
-	}
-	if bytes.HasPrefix(bytes.TrimSpace(head), []byte("<?xml")) {
-		return LangXML
-	}
-	return LangPlain
 }

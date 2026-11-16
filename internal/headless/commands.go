@@ -33,7 +33,7 @@ func init() {
 		&command{name: "lsp-servers", usage: "lsp-servers [--all]", summary: "installed PHP language servers", maxArgs: 0, cwdProject: true, run: runLSPServers},
 		&command{name: "modules", usage: "modules [enable ID | disable ID]", summary: "list, enable or disable modules", maxArgs: 2, run: runModules},
 		&command{name: "history", usage: "history FILE [--show ID | --restore ID]", summary: "Local History of a file", minArgs: 1, maxArgs: 1, cwdProject: true, run: runHistory},
-		&command{name: "serve", usage: "serve [--framing ndjson|lsp] [--concurrent]", summary: "JSON-RPC 2.0 over stdin/stdout", maxArgs: 0, run: runServe},
+		&command{name: "serve", usage: "serve [--framing ndjson|lsp] [--concurrent] [--listen unix:PATH|tcp:HOST:PORT [--token-file F] [--token T] [--allow-remote]]", summary: "JSON-RPC 2.0 over stdin/stdout or a socket", maxArgs: 0, run: runServe},
 		&command{name: "call", usage: "call METHOD [JSON-PARAMS | -]", summary: "call any API method (\"-\" reads params from stdin)", minArgs: 1, maxArgs: 2, run: runCall},
 		&command{name: "version", usage: "version", summary: "print the version", maxArgs: 0, run: runVersion},
 		&command{name: "update-check", usage: "update-check [--prereleases]", summary: "check for a newer release (network access, only when run)", maxArgs: 0, run: runUpdateCheck},
@@ -525,6 +525,14 @@ func runServe(c *cli) error {
 		opts.Framing = jsonrpc2.HeaderFraming
 	default:
 		return usagef("--framing must be ndjson or lsp")
+	}
+	if c.p.has("listen") {
+		return runListen(c, opts)
+	}
+	for _, f := range []string{"token", "token-file", "allow-remote"} {
+		if c.p.has(f) {
+			return usagef("--%s needs --listen", f)
+		}
 	}
 	err := c.app.Serve(c.ctx, stdio{c.env.Stdin, c.env.Stdout}, opts)
 	if err != nil && c.ctx.Err() != nil {

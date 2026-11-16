@@ -1,3 +1,5 @@
+//go:build cgo
+
 package syntax
 
 import (
@@ -50,22 +52,6 @@ func (q *Query) Close() {
 		q.q.Close()
 		q.q = nil
 	}
-}
-
-// Capture is one captured node of a query match.
-type Capture struct {
-	Name      string
-	Kind      string // node kind, e.g. "enum_declaration"
-	StartByte int
-	EndByte   int
-	Start     Point
-	End       Point
-}
-
-// Match is one query match with its captures in pattern order.
-type Match struct {
-	Pattern  int
-	Captures []Capture
 }
 
 // errWrongLanguage is returned when a query is run against a tree of another

@@ -222,6 +222,15 @@ func (m *Module) interpList(ctx context.Context, p InterpListParams) ([]Interpre
 		found[l.ID()] = l
 		out = append(out, InterpreterInfo{ID: l.ID(), Label: l.Label(), Kind: string(l.Kind()), Version: l.PHPVersion, Path: l.Path})
 	}
+	// PHP inside WSL distributions (Windows only; a no-op elsewhere).
+	wsls, err := interp.DiscoverWSL(ctx, interp.WSLOptions{})
+	if err != nil {
+		m.app.Logger().Warn("wsl", "err", err)
+	}
+	for _, w := range wsls {
+		found[w.ID()] = w
+		out = append(out, InterpreterInfo{ID: w.ID(), Label: w.Label(), Kind: string(w.Kind()), Path: w.Path})
+	}
 	if root := m.app.ProjectRoot(); root != "" && (p.Compose == nil || *p.Compose) {
 		if proj, err := m.loadCompose(ctx, root, nil); err == nil {
 			for _, c := range compose.Detect(proj) {
@@ -256,6 +265,11 @@ func (m *Module) interpreter(ctx context.Context, id string) (interp.Interpreter
 			return nil, api.Errorf(api.CodeNotFound, "interpreter %s: %w", id, err)
 		}
 		return interp.NewLocal(path), nil
+	}
+	if rest, isWSL := strings.CutPrefix(id, "wsl:"); isWSL {
+		if distro, path, ok := strings.Cut(rest, ":"); ok && distro != "" && path != "" {
+			return interp.NewWSL(distro, path), nil
+		}
 	}
 	if _, err := m.interpList(ctx, InterpListParams{}); err != nil {
 		return nil, err

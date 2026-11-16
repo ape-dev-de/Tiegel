@@ -17,7 +17,7 @@ func TestInstall(t *testing.T) {
 	defer a.Close()
 	var list []api.ModuleInfo
 	modtest.Call(t, a, "modules.list", nil, &list)
-	want := []string{"php-runtime", "php-features", "lang-php", "git", "debug-xdebug"}
+	want := []string{"php-runtime", "php-features", "lang-php", "git", "debug-xdebug", "syntax"}
 	if len(list) != len(want) {
 		t.Fatalf("modules %+v", list)
 	}

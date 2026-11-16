@@ -3,10 +3,12 @@ package api
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/lsp/jsonrpc2"
@@ -21,6 +23,31 @@ type ServeOptions struct {
 	// handled one after another in arrival order, which is what pipelines
 	// expect ("doc.open" before "doc.insert").
 	Concurrent bool
+	// Token, if non-empty, makes the connection unusable until the client
+	// has sent the request "auth" with {"token": Token}. Every other request
+	// before that fails with CodeUnauthorized and closes the connection; so
+	// does a wrong token. Socket transports always set it.
+	Token string
+	// AuthTimeout closes a connection that has not authenticated in time
+	// (only with Token; 0 means 10 seconds).
+	AuthTimeout time.Duration
+}
+
+// AuthMethod is the request a socket client must send first (see
+// ServeOptions.Token). It is answered by every transport, also without a
+// token, so clients can always send it.
+const AuthMethod = "auth"
+
+// AuthParams are the params of "auth".
+type AuthParams struct {
+	Token string `json:"token"`
+}
+
+// AuthResult is the result of "auth".
+type AuthResult struct {
+	OK         bool   `json:"ok"`
+	Version    string `json:"version"`
+	APIVersion string `json:"apiVersion"`
 }
 
 // Serve speaks JSON-RPC 2.0 on rwc until the peer closes the stream or ctx is
@@ -46,7 +73,36 @@ func (a *App) Serve(ctx context.Context, rwc io.ReadWriteCloser, opts ServeOptio
 		_ = conn.Notify(context.Background(), NotifyMethod, ev)
 	})
 	defer sess.Close()
+	auth := &authState{token: opts.Token}
+	auth.ok.Store(opts.Token == "")
+	tf.afterWrite = func() {
+		if auth.failed.Load() {
+			go conn.Close()
+		}
+	}
+	if !auth.ok.Load() {
+		d := opts.AuthTimeout
+		if d <= 0 {
+			d = 10 * time.Second
+		}
+		t := time.AfterFunc(d, func() {
+			if !auth.ok.Load() {
+				_ = conn.Close()
+			}
+		})
+		defer t.Stop()
+	}
 	conn.HandleDefault(func(ctx context.Context, req *jsonrpc2.Request) (any, error) {
+		if req.Method == AuthMethod {
+			return a.authenticate(auth, req)
+		}
+		if !auth.ok.Load() {
+			if req.IsNotification() {
+				return nil, nil
+			}
+			auth.failed.Store(true)
+			return nil, toRPCError(Errorf(CodeUnauthorized, "authentication required (send %q first)", AuthMethod))
+		}
 		res, err := sess.Call(ctx, req.Method, req.Params)
 		if err != nil {
 			return nil, toRPCError(err)
@@ -64,6 +120,26 @@ func (a *App) Serve(ctx context.Context, rwc io.ReadWriteCloser, opts ServeOptio
 		return err
 	}
 	return nil
+}
+
+type authState struct {
+	token  string
+	ok     atomic.Bool
+	failed atomic.Bool
+}
+
+func (a *App) authenticate(st *authState, req *jsonrpc2.Request) (any, error) {
+	var p AuthParams
+	if err := DecodeParams(req.Params, &p); err != nil {
+		st.failed.Store(!st.ok.Load())
+		return nil, toRPCError(err)
+	}
+	if st.token != "" && subtle.ConstantTimeCompare([]byte(p.Token), []byte(st.token)) != 1 {
+		st.failed.Store(!st.ok.Load())
+		return nil, toRPCError(Errorf(CodeUnauthorized, "invalid token"))
+	}
+	st.ok.Store(true)
+	return AuthResult{OK: true, Version: a.opts.AppVersion, APIVersion: Version}, nil
 }
 
 func toRPCError(err error) *jsonrpc2.Error {
@@ -92,6 +168,7 @@ type trackingFraming struct {
 	sequential bool
 	stop       <-chan struct{}
 	atEOF      func()
+	afterWrite func() // after each response
 
 	mu      sync.Mutex
 	pending int
@@ -137,6 +214,9 @@ func (t *trackingFraming) WriteMessage(w io.Writer, body []byte) error {
 		close(t.changed)
 		t.changed = make(chan struct{})
 		t.mu.Unlock()
+		if t.afterWrite != nil {
+			t.afterWrite()
+		}
 	}
 	return err
 }

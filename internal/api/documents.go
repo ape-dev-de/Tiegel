@@ -334,41 +334,53 @@ type DocInsertParams struct {
 	Path string `json:"path"`
 	At   Pos    `json:"at"`
 	Text string `json:"text"`
-	// Version, if non-zero, must match the document version (optimistic
-	// locking for concurrent clients).
-	Version uint64 `json:"version,omitempty"`
+	// Version, if set (also 0), must match the document version
+	// (optimistic locking for concurrent clients, see VersionOf).
+	Version *uint64 `json:"version,omitempty"`
+}
+
+// VersionOf returns a pointer to v for the Version field of the edit
+// params.
+func VersionOf(v uint64) *uint64 { return &v }
+
+func nonZero(v uint64) *uint64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
 }
 
 // DocDeleteParams are the params of "doc.delete".
 type DocDeleteParams struct {
-	Path    string `json:"path"`
-	Start   Pos    `json:"start"`
-	End     Pos    `json:"end"`
-	Version uint64 `json:"version,omitempty"`
+	Path    string  `json:"path"`
+	Start   Pos     `json:"start"`
+	End     Pos     `json:"end"`
+	Version *uint64 `json:"version,omitempty"`
 }
 
 // DocReplaceParams are the params of "doc.replace". Without Start and End
 // the whole document is replaced.
 type DocReplaceParams struct {
-	Path    string `json:"path"`
-	Start   *Pos   `json:"start,omitempty"`
-	End     *Pos   `json:"end,omitempty"`
-	Text    string `json:"text"`
-	Version uint64 `json:"version,omitempty"`
+	Path    string  `json:"path"`
+	Start   *Pos    `json:"start,omitempty"`
+	End     *Pos    `json:"end,omitempty"`
+	Text    string  `json:"text"`
+	Version *uint64 `json:"version,omitempty"`
 }
 
 // edit runs fn on the locked document after the version check. Events are
 // published by the buffer's OnEdit listener.
-func (a *App) edit(path string, version uint64, fn func(b *buffer.Buffer) error) (DocState, error) {
+func (a *App) edit(path string, version *uint64, fn func(b *buffer.Buffer) error) (DocState, error) {
 	d, err := a.doc(path)
 	if err != nil {
 		return DocState{}, err
 	}
 	d.mu.Lock()
 	before := d.buf.Version()
-	if version != 0 && version != before {
+	if version != nil && *version != before {
 		d.mu.Unlock()
-		return DocState{}, Errorf(CodeConflict, "version mismatch: document is at %d, request expects %d", before, version)
+		return DocState{}, Errorf(CodeConflict, "version mismatch: document is at %d, request expects %d", before, *version).
+			WithData(map[string]uint64{"version": before})
 	}
 	err = fn(d.buf)
 	st := a.stateLocked(d)
@@ -430,7 +442,7 @@ type UndoResult struct {
 
 func (a *App) docUndo(_ context.Context, p PathParams) (UndoResult, error) {
 	var done bool
-	st, err := a.edit(p.Path, 0, func(b *buffer.Buffer) error {
+	st, err := a.edit(p.Path, nil, func(b *buffer.Buffer) error {
 		_, _, done = b.Undo()
 		return nil
 	})
@@ -439,7 +451,7 @@ func (a *App) docUndo(_ context.Context, p PathParams) (UndoResult, error) {
 
 func (a *App) docRedo(_ context.Context, p PathParams) (UndoResult, error) {
 	var done bool
-	st, err := a.edit(p.Path, 0, func(b *buffer.Buffer) error {
+	st, err := a.edit(p.Path, nil, func(b *buffer.Buffer) error {
 		_, _, done = b.Redo()
 		return nil
 	})
