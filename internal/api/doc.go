@@ -23,6 +23,7 @@
 //	git           git.*
 //	debug-xdebug  debug.*
 //	syntax        syntax.highlights, syntax.folds, syntax.outline (D80)
+//	php-index     index.*, nav.* (Tree-sitter symbol index, D111)
 //
 // All methods take a context and a JSON-serialisable params struct and return
 // a JSON-serialisable result. They live in one method table (name → handler)

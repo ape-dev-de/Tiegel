@@ -195,6 +195,16 @@ func TestLifecycleSyncAndFeatures(t *testing.T) {
 	if len(locs) != 1 || locs[0].Range.Start.Line != 2 || locs[0].Range.Start.Col != 2 {
 		t.Fatalf("implementation %+v", locs)
 	}
+	// The nav.lsp hook (used by php-index) answers with the same data.
+	for _, kind := range []string{"definition", "implementation", "other"} {
+		q, err := api.HookNavLSP.Apply(context.Background(), a.Hooks(), api.NavLSPQuery{Kind: kind, Path: filepath.Join(dir, "a.php"), At: api.Pos{Line: 1}})
+		if err != nil || q.Answered != (kind != "other") || kind != "other" && len(q.Locations) != 1 {
+			t.Fatalf("nav.lsp %s: %+v %v", kind, q, err)
+		}
+	}
+	if q, _ := api.HookNavLSP.Apply(context.Background(), a.Hooks(), api.NavLSPQuery{Kind: "definition", Path: filepath.Join(dir, "b.txt"), At: api.Pos{Line: 1}}); q.Answered || q.Err == "" {
+		t.Fatalf("nav.lsp error %+v", q)
+	}
 	var toks []SemanticToken
 	modtest.Call(t, a, "lsp.semanticTokens", api.PathParams{Path: "a.php"}, &toks)
 	if len(toks) != 3 || toks[0].Type != "class" || toks[0].Modifiers[0] != "declaration" || toks[0].Range.Start.Line != 2 {
