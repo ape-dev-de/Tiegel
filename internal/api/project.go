@@ -17,7 +17,6 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/history"
 	"github.com/ape-dev-de/tiegel/internal/core/langdetect"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
-	"github.com/ape-dev-de/tiegel/internal/interp"
 )
 
 // project is the open project. Its history store is opened lazily so that
@@ -87,9 +86,8 @@ func (a *App) projectOpen(ctx context.Context, p PathParams) (ProjectInfo, error
 	}
 	a.mu.Lock()
 	a.project = &project{root: root, settings: ps}
-	a.interps = make(map[string]interp.Interpreter)
 	a.mu.Unlock()
-	a.bus.Publish(TopicProjectOpened, map[string]string{"root": root})
+	a.bus.Publish(TopicProjectOpened, ProjectEvent{Root: root, Name: filepath.Base(root)})
 	return a.projectInfo(ctx, struct{}{})
 }
 
@@ -108,7 +106,7 @@ func (a *App) projectInfo(_ context.Context, _ struct{}) (ProjectInfo, error) {
 		SettingsDir: pr.settings.Dir(),
 		Git:         exists(filepath.Join(pr.root, ".git")),
 		Composer:    exists(filepath.Join(pr.root, "composer.json")),
-		Interpreter: settings.Get(pr.settings, settingInterpreter, ""),
+		Interpreter: settings.Get(pr.settings, SettingInterpreter, ""),
 		OpenDocs:    docs,
 	}
 	if files, err := compose.FindFiles(pr.root, a.opts.ComposeEnv); err == nil {
@@ -121,11 +119,16 @@ func (a *App) projectClose(_ context.Context, _ struct{}) (ProjectInfo, error) {
 	a.mu.Lock()
 	pr := a.project
 	a.project = nil
-	a.docs = make(map[string]*document)
-	a.interps = make(map[string]interp.Interpreter)
+	docs := a.docs
+	a.docs = make(map[string]*Doc)
 	a.mu.Unlock()
+	for _, d := range docs {
+		d.mu.Lock()
+		a.bus.Publish(TopicDocClosed, DocCloseResult{Path: d.path, Discarded: d.buf.Modified()})
+		d.mu.Unlock()
+	}
 	if pr != nil {
-		a.bus.Publish(TopicProjectClosed, map[string]string{"root": pr.root})
+		a.bus.Publish(TopicProjectClosed, ProjectEvent{Root: pr.root, Name: filepath.Base(pr.root)})
 	}
 	return ProjectInfo{}, nil
 }

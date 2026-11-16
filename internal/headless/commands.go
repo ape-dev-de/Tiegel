@@ -8,13 +8,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"text/tabwriter"
 	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/history"
 	"github.com/ape-dev-de/tiegel/internal/lsp/jsonrpc2"
+	gitmod "github.com/ape-dev-de/tiegel/internal/modules/git"
+	"github.com/ape-dev-de/tiegel/internal/modules/langphp"
+	"github.com/ape-dev-de/tiegel/internal/modules/phpfeatures"
+	"github.com/ape-dev-de/tiegel/internal/modules/phpruntime"
 )
 
 func init() {
@@ -30,7 +33,6 @@ func init() {
 		&command{name: "lsp-servers", usage: "lsp-servers [--all]", summary: "installed PHP language servers", maxArgs: 0, cwdProject: true, run: runLSPServers},
 		&command{name: "modules", usage: "modules [enable ID | disable ID]", summary: "list, enable or disable modules", maxArgs: 2, run: runModules},
 		&command{name: "history", usage: "history FILE [--show ID | --restore ID]", summary: "Local History of a file", minArgs: 1, maxArgs: 1, cwdProject: true, run: runHistory},
-		&command{name: "debug-listen", usage: "debug-listen [--addr HOST:PORT] [--map HOST=REMOTE]...", summary: "listen for Xdebug and print events until Ctrl+C", maxArgs: 0, run: runDebugListen},
 		&command{name: "serve", usage: "serve [--framing ndjson|lsp] [--concurrent]", summary: "JSON-RPC 2.0 over stdin/stdout", maxArgs: 0, run: runServe},
 		&command{name: "call", usage: "call METHOD [JSON-PARAMS | -]", summary: "call any API method (\"-\" reads params from stdin)", minArgs: 1, maxArgs: 2, run: runCall},
 		&command{name: "version", usage: "version", summary: "print the version", maxArgs: 0, run: runVersion},
@@ -65,7 +67,7 @@ func runUpdateCheck(c *cli) error {
 }
 
 func runGitStatus(c *cli) error {
-	var st api.GitStatus
+	var st gitmod.GitStatus
 	if err := c.call("git.status", nil, &st); err != nil {
 		return err
 	}
@@ -86,8 +88,8 @@ func runGitStatus(c *cli) error {
 }
 
 func runPHPVersion(c *cli) error {
-	var pv api.PHPVersionResult
-	if err := c.call("php.version", api.PHPVersionParams{}, &pv); err != nil {
+	var pv phpruntime.PHPVersionResult
+	if err := c.call("php.version", phpruntime.PHPVersionParams{}, &pv); err != nil {
 		return err
 	}
 	return c.emit(pv, func(w io.Writer) { fmt.Fprintf(w, "%s\t%s\t%s\n", pv.Version, pv.Source, pv.Detail) })
@@ -95,10 +97,10 @@ func runPHPVersion(c *cli) error {
 
 func runPHPCheck(c *cli) error {
 	failed := false
-	var all []api.PHPCheckResult
+	var all []phpfeatures.CheckResult
 	for _, f := range c.p.args {
-		var res api.PHPCheckResult
-		if err := c.call("php.check", api.PHPCheckParams{Path: f, Version: c.p.value("php")}, &res); err != nil {
+		var res phpfeatures.CheckResult
+		if err := c.call("php.check", phpfeatures.CheckParams{Path: f, Version: c.p.value("php")}, &res); err != nil {
 			return err
 		}
 		failed = failed || len(res.Diagnostics) > 0
@@ -302,17 +304,17 @@ func runInterpreters(c *cli) error {
 			if len(c.p.args) != 2 {
 				return usagef("usage: tiegel --headless interpreters select ID")
 			}
-			var info api.InterpreterInfo
-			if err := c.call("interp.select", api.InterpSelectParams{ID: c.p.args[1]}, &info); err != nil {
+			var info phpruntime.InterpreterInfo
+			if err := c.call("interp.select", phpruntime.InterpSelectParams{ID: c.p.args[1]}, &info); err != nil {
 				return err
 			}
 			return c.emit(info, func(w io.Writer) { fmt.Fprintf(w, "selected %s\n", info.ID) })
 		case "version":
-			params := api.InterpVersionParams{Modules: c.p.has("modules"), Ini: c.p.has("ini")}
+			params := phpruntime.InterpVersionParams{Modules: c.p.has("modules"), Ini: c.p.has("ini")}
 			if len(c.p.args) == 2 {
 				params.ID = c.p.args[1]
 			}
-			var res api.InterpVersionResult
+			var res phpruntime.InterpVersionResult
 			if err := c.call("interp.version", params, &res); err != nil {
 				return err
 			}
@@ -329,7 +331,7 @@ func runInterpreters(c *cli) error {
 			return usagef("usage: tiegel --headless %s", commands["interpreters"].usage)
 		}
 	}
-	var list []api.InterpreterInfo
+	var list []phpruntime.InterpreterInfo
 	if err := c.call("interp.list", nil, &list); err != nil {
 		return err
 	}
@@ -364,11 +366,11 @@ func sortedKeys(m map[string]string) []string {
 }
 
 func runCompose(c *cli) error {
-	params := api.ComposeParams{Profiles: c.p.flags["profile"]}
+	params := phpruntime.ComposeParams{Profiles: c.p.flags["profile"]}
 	if len(c.p.args) > 0 {
 		params.Dir = c.p.args[0]
 	}
-	var res api.ComposeResult
+	var res phpruntime.ComposeResult
 	if err := c.call("compose.detect", params, &res); err != nil {
 		return err
 	}
@@ -402,8 +404,8 @@ func runCompose(c *cli) error {
 }
 
 func runLSPServers(c *cli) error {
-	var list []api.LSPServerInfo
-	if err := c.call("lsp.servers", api.LSPServersParams{All: c.p.has("all")}, &list); err != nil {
+	var list []langphp.LSPServerInfo
+	if err := c.call("lsp.servers", langphp.LSPServersParams{All: c.p.has("all")}, &list); err != nil {
 		return err
 	}
 	return c.emit(list, func(w io.Writer) {
@@ -504,42 +506,6 @@ func runHistory(c *cli) error {
 		}
 		_ = tw.Flush()
 	})
-}
-
-func runDebugListen(c *cli) error {
-	params := api.DebugListenParams{Addr: c.p.value("addr")}
-	for _, m := range c.p.flags["map"] {
-		host, remote, ok := strings.Cut(m, "=")
-		if !ok || host == "" || remote == "" {
-			return usagef("--map needs HOST=REMOTE, got %q", m)
-		}
-		params.Mappings = append(params.Mappings, api.MappingInfo{Host: host, Remote: remote})
-	}
-	var mu sync.Mutex
-	out := c.env.Stdout
-	print := func(ev api.Event) {
-		mu.Lock()
-		defer mu.Unlock()
-		if c.json {
-			b, _ := json.Marshal(ev)
-			fmt.Fprintf(out, "%s\n", b)
-			return
-		}
-		fmt.Fprintf(out, "%s %s\n", ev.Topic, ev.Payload)
-	}
-	sess := c.app.NewSession(print)
-	defer sess.Close()
-	sess.Subscribe("debug.*")
-	raw, _ := json.Marshal(params)
-	if _, err := sess.Call(c.ctx, "debug.listen", raw); err != nil {
-		return err
-	}
-	<-c.ctx.Done()
-	_, err := sess.Call(c.ctx, "debug.stop", nil)
-	if err != nil && c.ctx.Err() == nil {
-		return err
-	}
-	return nil
 }
 
 // stdio joins stdin and stdout into the stream Serve needs.

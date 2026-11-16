@@ -260,7 +260,7 @@ func TestRuntimeCommands(t *testing.T) {
 	if _, out, _ = run(t, "", "lsp-servers", "--project", dir); !strings.Contains(out, "no PHP language server") {
 		t.Fatalf("lsp %q", out)
 	}
-	if _, out, _ = run(t, "", "modules"); !strings.Contains(out, "no modules") {
+	if _, out, _ = run(t, "", "modules"); !strings.Contains(out, "debug-xdebug  running  php-runtime") {
 		t.Fatalf("modules %q", out)
 	}
 	if code, _, _ := run(t, "", "modules", "enable"); code != ExitUsage {

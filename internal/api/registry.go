@@ -22,40 +22,89 @@ type Method struct {
 	Summary string
 	// Handler runs the method.
 	Handler HandlerFunc
+	// Module is the ID of the module that provides the method; empty for
+	// the kernel namespaces. Module methods are only callable while their
+	// module runs (see Provide).
+	Module string
 }
 
 // MethodInfo describes a registered method (without its handler).
 type MethodInfo struct {
 	Name    string `json:"name"`
 	Summary string `json:"summary"`
+	// Module is the providing module ("" for kernel methods).
+	Module string `json:"module,omitempty"`
+	// Disabled is true while the providing module is not running; calls
+	// fail with CodeModuleDisabled.
+	Disabled bool `json:"disabled,omitempty"`
+}
+
+type methodEntry struct {
+	Method
+	disabled bool
 }
 
 // registry is the method table shared by all transports.
 type registry struct {
 	mu      sync.RWMutex
-	methods map[string]Method
+	methods map[string]*methodEntry
 }
 
-func newRegistry() *registry { return &registry{methods: make(map[string]Method)} }
+func newRegistry() *registry { return &registry{methods: make(map[string]*methodEntry)} }
 
-func (r *registry) add(m Method) error {
+func validMethod(m Method) error {
 	if m.Name == "" || !strings.Contains(m.Name, ".") || m.Handler == nil {
 		return fmt.Errorf("api: invalid method %q (need \"namespace.verb\" and a handler)", m.Name)
+	}
+	return nil
+}
+
+func (r *registry) add(m Method) error {
+	if err := validMethod(m); err != nil {
+		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, dup := r.methods[m.Name]; dup {
 		return fmt.Errorf("api: method %q already registered", m.Name)
 	}
-	r.methods[m.Name] = m
+	r.methods[m.Name] = &methodEntry{Method: m}
 	return nil
 }
 
-func (r *registry) get(name string) (Method, bool) {
+// provide adds or re-activates a module method. A disabled entry of the same
+// module is replaced (the module was restarted).
+func (r *registry) provide(m Method) error {
+	if err := validMethod(m); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.methods[m.Name]; ok && !(e.disabled && e.Module == m.Module) {
+		return fmt.Errorf("api: method %q already registered", m.Name)
+	}
+	r.methods[m.Name] = &methodEntry{Method: m}
+	return nil
+}
+
+// disable marks a module method as unavailable; the entry stays so that
+// calls report CodeModuleDisabled instead of CodeMethodNotFound.
+func (r *registry) disable(name, owner string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.methods[name]; ok && e.Module == owner {
+		e.disabled = true
+	}
+}
+
+func (r *registry) get(name string) (methodEntry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	m, ok := r.methods[name]
-	return m, ok
+	e, ok := r.methods[name]
+	if !ok {
+		return methodEntry{}, false
+	}
+	return *e, true
 }
 
 func (r *registry) list() []MethodInfo {
@@ -63,7 +112,7 @@ func (r *registry) list() []MethodInfo {
 	defer r.mu.RUnlock()
 	out := make([]MethodInfo, 0, len(r.methods))
 	for _, m := range r.methods {
-		out = append(out, MethodInfo{Name: m.Name, Summary: m.Summary})
+		out = append(out, MethodInfo{Name: m.Name, Summary: m.Summary, Module: m.Module, Disabled: m.disabled})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -125,7 +174,13 @@ func (a *App) Methods() []MethodInfo { return a.methods.list() }
 func (a *App) Call(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	m, ok := a.methods.get(method)
 	if !ok {
+		if owner := a.claimant(method); owner != "" {
+			return nil, moduleDisabled(method, owner)
+		}
 		return nil, Errorf(CodeMethodNotFound, "method not found: %s", method)
+	}
+	if m.disabled {
+		return nil, moduleDisabled(method, m.Module)
 	}
 	return m.Handler(ctx, params)
 }

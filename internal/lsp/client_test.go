@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ape-dev-de/tiegel/internal/lsp/internal/fakeserver"
+	"github.com/ape-dev-de/tiegel/internal/lsp/fakeserver"
 	"github.com/ape-dev-de/tiegel/internal/lsp/jsonrpc2"
 	"github.com/ape-dev-de/tiegel/internal/lsp/protocol"
 )

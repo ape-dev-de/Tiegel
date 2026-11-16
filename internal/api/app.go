@@ -35,9 +35,9 @@ type Options struct {
 	ConfigDir string
 	// Logger receives diagnostics; nil discards them.
 	Logger *slog.Logger
-	// Interp controls local interpreter discovery for "interp.list".
+	// Interp controls local interpreter discovery (module php-runtime).
 	Interp interp.DiscoverOptions
-	// LSP controls language server detection for "lsp.servers".
+	// LSP controls language server detection (module lang-php).
 	// ProjectDir is filled in from the open project.
 	LSP servers.DetectOptions
 	// ComposeEnv takes precedence over the project's .env when loading
@@ -74,9 +74,8 @@ type App struct {
 
 	mu      sync.Mutex
 	project *project
-	docs    map[string]*document
-	interps map[string]interp.Interpreter
-	debug   *debugState
+	docs    map[string]*Doc
+	claims  map[string][]string
 }
 
 // New creates an App with the built-in namespaces and the extensions from
@@ -105,8 +104,7 @@ func New(opts Options) (*App, error) {
 		log:     log,
 		bus:     b,
 		methods: newRegistry(),
-		docs:    make(map[string]*document),
-		interps: make(map[string]interp.Interpreter),
+		docs:    make(map[string]*Doc),
 	}
 	a.hooks = hooks.New(hooks.WithErrorHandler(func(e *hooks.HookError) {
 		log.Warn("hook failed", "hook", e.Hook, "owner", e.Owner, "err", e.Err)
@@ -116,7 +114,10 @@ func New(opts Options) (*App, error) {
 		return nil, fmt.Errorf("api: global settings: %w", err)
 	}
 	a.global = global
-	a.modules = module.NewRegistry(module.Env{Bus: b, Hooks: a.hooks, Settings: global, Logger: log})
+	a.modules = module.NewRegistry(module.Env{
+		Bus: b, Hooks: a.hooks, Settings: global, Logger: log,
+		Extend: func(base module.Context) module.Context { return &ModuleContext{Context: base, app: a} },
+	})
 	saver, err := autosave.New(autosave.Config{
 		Docs:    docSet{a},
 		Hooks:   a.hooks,
@@ -127,19 +128,20 @@ func New(opts Options) (*App, error) {
 		return nil, fmt.Errorf("api: autosave: %w", err)
 	}
 	a.saver = saver
+	// Kernel hooks: autosave before commit and debug, file.saved on the bus.
+	autosave.SaveBeforeGuard(saver, a.hooks, HookCommitBefore, autosave.TriggerBeforeCommit)
+	autosave.SaveBeforeGuard(saver, a.hooks, HookDebugBefore, autosave.TriggerBeforeDebug)
+	autosave.Saved.On(a.hooks, 0, func(_ context.Context, ev autosave.SavedEvent) error {
+		b.Publish(TopicFileSaved, FileSavedEvent{Path: a.displayPath(ev.Path), File: ev.Path, Trigger: string(ev.Trigger), Size: ev.Size})
+		return nil
+	}, hooks.WithOwner("kernel"))
 
 	a.registerApp()
 	a.registerProject()
 	a.registerDocs()
 	a.registerSearch()
-	a.registerInterp()
-	a.registerCompose()
-	a.registerLSP()
-	a.registerDebug()
 	a.registerModules()
 	a.registerVersion()
-	a.registerGit()
-	a.registerPHP()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)
@@ -148,23 +150,23 @@ func New(opts Options) (*App, error) {
 	if err := errors.Join(a.initErrs...); err != nil {
 		return nil, err
 	}
+	if err := a.modules.Start(); err != nil {
+		log.Warn("modules", "err", err)
+	}
 	return a, nil
 }
 
-// Close stops the debugger listener and module registry, closes the project
-// and shuts the bus down. Unsaved documents are discarded.
+// Close stops the modules, closes the project and shuts the bus down.
+// Unsaved documents are discarded.
 func (a *App) Close() error {
 	var errs []error
 	a.saver.Close()
-	if err := a.stopDebug(); err != nil {
-		errs = append(errs, err)
-	}
 	if err := a.modules.Stop(); err != nil {
 		errs = append(errs, err)
 	}
 	a.mu.Lock()
 	a.project = nil
-	a.docs = make(map[string]*document)
+	a.docs = make(map[string]*Doc)
 	a.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

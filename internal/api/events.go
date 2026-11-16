@@ -175,7 +175,8 @@ func (a *App) eventsPublish(_ context.Context, p PublishParams) (struct{}, error
 	return struct{}{}, nil
 }
 
-// Topics published by the API itself.
+// Topics published by the kernel itself (modules add theirs, see
+// contract.go).
 const (
 	TopicProjectOpened = "project.opened"
 	TopicProjectClosed = "project.closed"
@@ -183,14 +184,5 @@ const (
 	TopicDocChanged    = "doc.changed"
 	TopicDocSaved      = "doc.saved"
 	TopicDocClosed     = "doc.closed"
-	TopicInterpSelect  = "interp.selected"
 	TopicModuleChanged = "modules.changed"
-	TopicDebugListen   = "debug.listening"
-	TopicDebugStopped  = "debug.stopped"
-	TopicDebugStarted  = "debug.session.started"
-	TopicDebugEnded    = "debug.session.ended"
-	TopicDebugStatus   = "debug.status"
-	TopicDebugOutput   = "debug.output"
-	TopicDebugNotify   = "debug.notification"
-	TopicDebugBreak    = "debug.breakpoint.resolved"
 )
