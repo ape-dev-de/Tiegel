@@ -179,6 +179,8 @@ type Diagnostics struct {
 	// Version is the document version the server diagnosed.
 	Version     uint64       `json:"version"`
 	Diagnostics []Diagnostic `json:"diagnostics"`
+	// raw keeps the server's diagnostics for code action requests.
+	raw []protocol.Diagnostic
 }
 
 // SeverityName returns the API name of an LSP severity.
@@ -227,7 +229,7 @@ func (m *Module) onDiagnostics(s *server, p protocol.PublishDiagnosticsParams) {
 	if p.Version != nil {
 		ver = *p.Version
 	}
-	ev := Diagnostics{Path: m.app.DisplayPath(abs), File: abs, Version: uint64(max(ver, 0)), Diagnostics: []Diagnostic{}}
+	ev := Diagnostics{Path: m.app.DisplayPath(abs), File: abs, Version: uint64(max(ver, 0)), Diagnostics: []Diagnostic{}, raw: p.Diagnostics}
 	for _, d := range p.Diagnostics {
 		r := textRange(data, d.Range)
 		dd := Diagnostic{

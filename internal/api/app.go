@@ -87,6 +87,7 @@ type App struct {
 	claims  map[string][]string
 	docSeq  uint64 // last document generation, guarded by mu
 
+	searches searchRegistry // running project searches (search.cancel)
 	// trash moves a path to the trash (files.delete); start launches a
 	// detached program (files.reveal). Tests replace both.
 	trash func(path string) error

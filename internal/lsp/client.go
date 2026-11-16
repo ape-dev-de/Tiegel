@@ -68,6 +68,10 @@ type Config struct {
 	OnDiagnostics func(protocol.PublishDiagnosticsParams)
 	// OnShowMessage is called for window/showMessage notifications.
 	OnShowMessage func(protocol.LogMessageParams)
+	// OnApplyEdit answers workspace/applyEdit requests of the server (for
+	// example while a workspace/executeCommand runs). Without it such
+	// requests are refused with applied=false.
+	OnApplyEdit func(ctx context.Context, p protocol.ApplyWorkspaceEditParams) protocol.ApplyWorkspaceEditResult
 }
 
 type document struct {
@@ -166,6 +170,16 @@ func (c *Client) registerHandlers() {
 			out[i] = lookupSetting(c.cfg.Settings, it.Section)
 		}
 		return out, nil
+	})
+	c.conn.Handle(protocol.MethodApplyEdit, func(ctx context.Context, req *jsonrpc2.Request) (any, error) {
+		var p protocol.ApplyWorkspaceEditParams
+		if err := req.UnmarshalParams(&p); err != nil {
+			return nil, err
+		}
+		if c.cfg.OnApplyEdit == nil {
+			return protocol.ApplyWorkspaceEditResult{FailureReason: "the client does not apply edits"}, nil
+		}
+		return c.cfg.OnApplyEdit(ctx, p), nil
 	})
 	c.conn.Handle(protocol.MethodPublishDiagnostics, func(_ context.Context, req *jsonrpc2.Request) (any, error) {
 		var p protocol.PublishDiagnosticsParams
@@ -287,8 +301,17 @@ func clientCapabilities() protocol.ClientCapabilities {
 	md := []string{protocol.Markdown, protocol.PlainText}
 	return protocol.ClientCapabilities{
 		General: &protocol.GeneralClientCapabilities{PositionEncodings: []string{"utf-16"}},
-		Workspace: &protocol.WorkspaceClientCapabilities{Configuration: true, WorkspaceFolders: true,
-			FileOperations: &protocol.FileOperationClientCapabilities{DidRename: true}},
+		Workspace: &protocol.WorkspaceClientCapabilities{
+			Configuration: true, WorkspaceFolders: true, ApplyEdit: true,
+			WorkspaceEdit: &protocol.WorkspaceEditClientCapabilities{
+				DocumentChanges:    true,
+				ResourceOperations: []string{protocol.ResourceCreate, protocol.ResourceRename, protocol.ResourceDelete},
+				FailureHandling:    "abort",
+			},
+			Symbol:         &protocol.WorkspaceSymbolClientCapabilities{SymbolKind: &protocol.SymbolKindCapabilities{ValueSet: protocol.AllSymbolKinds()}},
+			ExecuteCommand: &protocol.EmptyClientCapabilities{},
+			FileOperations: &protocol.FileOperationClientCapabilities{DidRename: true},
+		},
 		Window: &protocol.WindowClientCapabilities{WorkDoneProgress: true},
 		TextDocument: &protocol.TextDocumentClientCapabilities{
 			Synchronization: &protocol.SyncClientCapabilities{DidSave: true},
@@ -316,6 +339,26 @@ func clientCapabilities() protocol.ClientCapabilities {
 				TokenTypes:     standardTokenTypes,
 				TokenModifiers: standardTokenModifiers,
 				Formats:        []string{"relative"},
+			},
+			References:        &protocol.EmptyClientCapabilities{},
+			DocumentHighlight: &protocol.EmptyClientCapabilities{},
+			CodeAction: &protocol.CodeActionClientCapabilities{
+				CodeActionLiteralSupport: &protocol.CodeActionLiteralSupport{CodeActionKind: protocol.CodeActionKindValueSet{ValueSet: []string{
+					"", protocol.CodeActionQuickFix, protocol.CodeActionRefactor, protocol.CodeActionRefactorExtract,
+					protocol.CodeActionRefactorInline, protocol.CodeActionRefactorRewrite, protocol.CodeActionSource,
+					protocol.CodeActionSourceOrganizeImports, protocol.CodeActionSourceFixAll,
+				}}},
+				IsPreferredSupport: true,
+				DisabledSupport:    true,
+				DataSupport:        true,
+				ResolveSupport:     &protocol.CodeActionResolveSupport{Properties: []string{"edit"}},
+			},
+			Formatting:      &protocol.EmptyClientCapabilities{},
+			RangeFormatting: &protocol.EmptyClientCapabilities{},
+			Rename:          &protocol.RenameClientCapabilities{PrepareSupport: true},
+			DocumentSymbol: &protocol.DocumentSymbolClientCapabilities{
+				SymbolKind:                        &protocol.SymbolKindCapabilities{ValueSet: protocol.AllSymbolKinds()},
+				HierarchicalDocumentSymbolSupport: true,
 			},
 		},
 	}

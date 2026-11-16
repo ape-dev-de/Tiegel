@@ -640,15 +640,25 @@ type SemanticTokensOptions struct {
 
 // ServerCapabilities is the subset of server capabilities Tiegel uses.
 type ServerCapabilities struct {
-	PositionEncoding       string                       `json:"positionEncoding,omitempty"`
-	TextDocumentSync       *TextDocumentSyncOptions     `json:"textDocumentSync,omitempty"`
-	CompletionProvider     *CompletionOptions           `json:"completionProvider,omitempty"`
-	HoverProvider          *Provider                    `json:"hoverProvider,omitempty"`
-	SignatureHelpProvider  *SignatureHelpOptions        `json:"signatureHelpProvider,omitempty"`
-	DefinitionProvider     *Provider                    `json:"definitionProvider,omitempty"`
-	ImplementationProvider *Provider                    `json:"implementationProvider,omitempty"`
-	SemanticTokensProvider *SemanticTokensOptions       `json:"semanticTokensProvider,omitempty"`
-	Workspace              *WorkspaceServerCapabilities `json:"workspace,omitempty"`
+	PositionEncoding       string                   `json:"positionEncoding,omitempty"`
+	TextDocumentSync       *TextDocumentSyncOptions `json:"textDocumentSync,omitempty"`
+	CompletionProvider     *CompletionOptions       `json:"completionProvider,omitempty"`
+	HoverProvider          *Provider                `json:"hoverProvider,omitempty"`
+	SignatureHelpProvider  *SignatureHelpOptions    `json:"signatureHelpProvider,omitempty"`
+	DefinitionProvider     *Provider                `json:"definitionProvider,omitempty"`
+	ImplementationProvider *Provider                `json:"implementationProvider,omitempty"`
+	SemanticTokensProvider *SemanticTokensOptions   `json:"semanticTokensProvider,omitempty"`
+
+	ReferencesProvider              *Provider                    `json:"referencesProvider,omitempty"`
+	DocumentHighlightProvider       *Provider                    `json:"documentHighlightProvider,omitempty"`
+	CodeActionProvider              *Provider                    `json:"codeActionProvider,omitempty"`
+	DocumentFormattingProvider      *Provider                    `json:"documentFormattingProvider,omitempty"`
+	DocumentRangeFormattingProvider *Provider                    `json:"documentRangeFormattingProvider,omitempty"`
+	RenameProvider                  *Provider                    `json:"renameProvider,omitempty"`
+	DocumentSymbolProvider          *Provider                    `json:"documentSymbolProvider,omitempty"`
+	WorkspaceSymbolProvider         *Provider                    `json:"workspaceSymbolProvider,omitempty"`
+	ExecuteCommandProvider          *ExecuteCommandOptions       `json:"executeCommandProvider,omitempty"`
+	Workspace                       *WorkspaceServerCapabilities `json:"workspace,omitempty"`
 }
 
 // IsEnabled reports whether an optional provider capability is set.
@@ -687,9 +697,13 @@ type GeneralClientCapabilities struct {
 
 // WorkspaceClientCapabilities are workspace client capabilities.
 type WorkspaceClientCapabilities struct {
-	Configuration    bool                             `json:"configuration,omitempty"`
-	WorkspaceFolders bool                             `json:"workspaceFolders,omitempty"`
-	FileOperations   *FileOperationClientCapabilities `json:"fileOperations,omitempty"`
+	Configuration    bool                               `json:"configuration,omitempty"`
+	WorkspaceFolders bool                               `json:"workspaceFolders,omitempty"`
+	ApplyEdit        bool                               `json:"applyEdit,omitempty"`
+	WorkspaceEdit    *WorkspaceEditClientCapabilities   `json:"workspaceEdit,omitempty"`
+	Symbol           *WorkspaceSymbolClientCapabilities `json:"symbol,omitempty"`
+	ExecuteCommand   *EmptyClientCapabilities           `json:"executeCommand,omitempty"`
+	FileOperations   *FileOperationClientCapabilities   `json:"fileOperations,omitempty"`
 }
 
 // FileOperationClientCapabilities announce the workspace/did* file
@@ -741,6 +755,13 @@ type TextDocumentClientCapabilities struct {
 	Implementation     *LinkClientCapabilities               `json:"implementation,omitempty"`
 	PublishDiagnostics *PublishDiagnosticsClientCapabilities `json:"publishDiagnostics,omitempty"`
 	SemanticTokens     *SemanticTokensClientCapabilities     `json:"semanticTokens,omitempty"`
+	References         *EmptyClientCapabilities              `json:"references,omitempty"`
+	DocumentHighlight  *EmptyClientCapabilities              `json:"documentHighlight,omitempty"`
+	CodeAction         *CodeActionClientCapabilities         `json:"codeAction,omitempty"`
+	Formatting         *EmptyClientCapabilities              `json:"formatting,omitempty"`
+	RangeFormatting    *EmptyClientCapabilities              `json:"rangeFormatting,omitempty"`
+	Rename             *RenameClientCapabilities             `json:"rename,omitempty"`
+	DocumentSymbol     *DocumentSymbolClientCapabilities     `json:"documentSymbol,omitempty"`
 }
 
 // SyncClientCapabilities are document sync capabilities.
