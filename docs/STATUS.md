@@ -23,7 +23,7 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 | 7.1 | DBGp-Server | ✅ | 93 %; Test mit echtem Xdebug offen (lokal nicht installiert) |
 | 7.2–7.3 | Debug-Modul + UI | ✅ | Debug-Fenster, Breakpoint-Gutter, Ausführungspunkt, Variablen/Watches; Test mit echtem Xdebug offen |
 | M8 | Mac-Paketierung | ⚠️ | Skripte, Universal-App, DMG, release.yml, opt-in Update-Check fertig; echte Signatur/Notarisierung braucht Apple-Zertifikate + Secrets (docs/release.md) |
-| M10 | Parität & Fenster-Management | 🟡 | ✅ Fenster-Management (Stripes, Splits, mehrere Fenster), Projekte öffnen/wechseln, native Menüleiste + Ordnerdialog (macOS), Systemschriften; Backends ✅: Tree-sitter-Index (nav.*), Diff/Historie/Blame, Kontextmenü + files.*, Dateiwatcher + externe Änderungen, Find in Files, LSP-Ausbau, Git fetch/pull/stash; GUI-Verdrahtung in Arbeit |
+| M10 | Parität & Fenster-Management | 🟡 | ✅ Fenster-Management, Projekte, Menüleiste, Systemschriften, Tree-sitter-Navigation (Cmd+B/Cmd+Alt+B/Cmd+U, Gutter ↑↓, Go to Class/Symbol, Search Everywhere), Kontextmenüs (Editor/Baum/Tabs/Gutter), Datei-Operationen, Dateiwatcher + Konflikt-Banner, Diff-Tabs, Annotate, Historie, Local History, Find in Files, Usages/Alt+Enter/Reformat/Rename (LSP), Fetch/Pull/Stash; CI-Fix (Linux/Windows) in Arbeit; offen: P1-Rest aus vergleich.md (Terminal, Run-Konfigurationen, Sitzung speichern, Debug-Ergänzungen, Log-Graph, Qualitäts-Tools) |
 | M9 | Linux/WSL | 🟡 | Backend ✅: Socket-Transport mit Token, `api.Caller` (in-process/remote), Client, docsync, WSL-Interpreter + Pfade, `syntax.*`-API, CI Windows/Cross; GUI-Umschaltung, Pakete/Installer offen |
 
 ## Log
@@ -38,6 +38,8 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-16: GUI-Nacharbeiten aus Review gemergt (Hunk-Hash, Recovery-Banner, Container-Hinweis, Dateibaum-Bug).
 
 - 2026-11-16: M10-Backends gemergt (D110–D154), Vergleich in docs/vergleich.md.
+
+- 2026-11-16: M10-GUI-Integration gemergt (D160–D174).
 
 ## Offen / braucht den Nutzer
 - Echte Tests mit **Phpactor** (nicht installiert) und **Xdebug** (PHP 8.5 lokal ohne Xdebug) – Abnahme M4/M7.
