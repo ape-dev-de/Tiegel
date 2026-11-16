@@ -48,3 +48,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - Windows-GUI ↔ WSL-Backend in der GUI umschaltbar machen (Backend fertig), Linux-Paket, Windows-Installer.
 - Golden-Screenshot-Tests als Abnahme M2 (Screenshots werden erzeugt, aber nicht verglichen).
 - 2026-11-16: CI-Fixes gemergt (Windows-Pfade/EOL, Build-Tag `headless`, D84/D85). CI auf main komplett grün (macOS, Linux, Windows, Cross).
+- 2026-11-16: CI-Fixes M10 gemergt (D180–D183): git ≥ 2.48 Fetch, Windows-Watcher mit einem Handle, Groß/Klein-Umbenennung, Headless-Tests 75 s → 16 s.
