@@ -34,3 +34,11 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-16: GUI Teil A gemergt (D90–D93). Nächster Schritt: Git- und Debug-Anbindung (Teil B).
 - 2026-11-16: GUI Teil B gemergt (D100–D103) – MVP-Funktionsumfang vollständig verdrahtet. Review-Fixes in Arbeit.
 - 2026-11-16: Review-Fixes (14 Befunde, je Regressionstest) gemergt; siehe docs/reviews/2026-11-16-backend.md.
+- 2026-11-16: GUI-Nacharbeiten aus Review gemergt (Hunk-Hash, Recovery-Banner, Container-Hinweis, Dateibaum-Bug).
+
+## Offen / braucht den Nutzer
+- Echte Tests mit **Phpactor** (nicht installiert) und **Xdebug** (PHP 8.5 lokal ohne Xdebug) – Abnahme M4/M7.
+- **Signieren/Notarisieren**: Apple-Developer-Zertifikat + GitHub-Secrets (docs/release.md) – Abnahme M8.
+- Emoji/CJK-Ersatzschrift im Editor (Entscheidung zu z.B. Noto-Fonts, Lizenz OFL).
+- Windows-GUI ↔ WSL-Backend in der GUI umschaltbar machen (Backend fertig), Linux-Paket, Windows-Installer.
+- Golden-Screenshot-Tests als Abnahme M2 (Screenshots werden erzeugt, aber nicht verglichen).
