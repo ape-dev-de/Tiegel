@@ -278,12 +278,12 @@ func (c *Chooser) layoutList(th *tokens.Theme) layout.Widget {
 							return layout.Dimensions{}
 						}
 						w := gtx.Dp(groupW)
-						gtx.Constraints = layout.Exact(image.Pt(w, gtx.Constraints.Min.Y))
+						gtx.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
 						if i > 0 && c.Items[i-1].Group == it.Group {
 							return layout.Dimensions{Size: image.Pt(w, 0)}
 						}
-						atoms.Small(it.Group).SingleLine().Layout(gtx, th)
-						return layout.Dimensions{Size: image.Pt(w, 0)}
+						d := atoms.Small(it.Group).SingleLine().Layout(gtx, th)
+						return layout.Dimensions{Size: image.Pt(w, d.Size.Y), Baseline: d.Baseline}
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						if it.Glyph == nil {

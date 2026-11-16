@@ -211,6 +211,9 @@ func (v *View) baseContext(menu actions.ContextID) actions.Context {
 	if v.ctl.Vcs != nil && v.ctl.Vcs.Available {
 		c.Values["git"] = "true"
 	}
+	if v.ctl.Status.LSPRunning {
+		c.Values[actions.ValueLSP] = "true"
+	}
 	return c
 }
 

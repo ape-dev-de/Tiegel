@@ -98,7 +98,7 @@ func StandardActions() []Action {
 		{ID: EditComment, Label: "Comment Line", Shortcut: Shortcut{Mac: "Cmd+/", PC: "Ctrl+/"}},
 		{ID: NavDefinition, Label: "Go to Definition", Shortcut: Shortcut{Mac: "Cmd+B", PC: "Ctrl+B"}, Enabled: php},
 		{ID: NavImplement, Label: "Go to Implementation", Shortcut: Shortcut{Mac: "Cmd+Alt+B", PC: "Ctrl+Alt+B"}, Enabled: php},
-		{ID: EditorFindUses, Label: "Find Usages", Shortcut: Shortcut{Mac: "Alt+F7", PC: "Alt+F7"}, Enabled: php},
+		{ID: EditorFindUses, Label: "Find Usages", Shortcut: Shortcut{Mac: "Alt+F7", PC: "Alt+F7"}, Enabled: phpLSP},
 
 		{ID: GutterToggleBreakpoint, Label: "Toggle Breakpoint", Icon: "debug", Shortcut: Shortcut{Mac: "Cmd+F8", PC: "Ctrl+F8"}, Visible: php},
 		{ID: GutterShowLineNumbers, Label: "Show Line Numbers", Check: CheckBox, Checked: func(c Context) bool { return c.Value("lineNumbers") != "" }},

@@ -199,7 +199,6 @@ func (f *findDock) frame(gtx layout.Context) {
 	}
 	f.seen = n.FindVersion
 	st := n.Find
-	th := f.d.v.th
 	if st == nil {
 		f.shownFor = nil
 		f.tree.set(nil)
@@ -246,14 +245,14 @@ func (f *findDock) frame(gtx layout.Context) {
 	case st.Replace != nil:
 		summary = fmt.Sprintf("preview: %s in %s", plural(st.Replace.Replaced, "replacement"), plural(len(st.Replace.Files), "file"))
 	}
-	var extra []layout.FlexChild
+	var extra []func(gtx layout.Context, th *tokens.Theme) layout.Dimensions
 	if st.Running {
-		extra = append(extra, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return f.stop.Layout(gtx, th) }))
+		extra = append(extra, f.stop.Layout)
 	}
 	if st.Replace != nil && st.Replace.Replaced > 0 {
-		extra = append(extra, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return f.apply.Layout(gtx, th) }))
+		extra = append(extra, f.apply.Layout)
 	}
-	f.tree.Header = headerText(th, title, summary, extra...)
+	f.tree.Header = headerText(title, summary, extra...)
 }
 
 // fileNode is a file with its matches (or planned replacements).

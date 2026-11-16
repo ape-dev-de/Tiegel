@@ -28,7 +28,7 @@ type resultNode struct {
 type resultTree struct {
 	Roots []*resultNode
 	// Header draws above the tree (may be nil).
-	Header layout.Widget
+	Header func(gtx layout.Context, th *tokens.Theme) layout.Dimensions
 	// Empty is shown without roots.
 	Empty string
 	// OpenOnClick opens leaves with a single click (structure view).
@@ -93,7 +93,9 @@ func (t *resultTree) layout(gtx layout.Context, th *tokens.Theme) layout.Dimensi
 			if t.Header == nil {
 				return layout.Dimensions{}
 			}
-			return layout.Inset{Left: th.Space.S, Right: th.Space.S, Top: th.Space.XS, Bottom: th.Space.XS}.Layout(gtx, t.Header)
+			return layout.Inset{Left: th.Space.S, Right: th.Space.S, Top: th.Space.XS, Bottom: th.Space.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return t.Header(gtx, th)
+			})
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if len(t.flat) == 0 {
@@ -137,8 +139,9 @@ func (t *resultTree) layout(gtx layout.Context, th *tokens.Theme) layout.Dimensi
 }
 
 // headerText is a header with a strong title and a muted summary.
-func headerText(th *tokens.Theme, title, summary string, extra ...layout.FlexChild) layout.Widget {
-	return func(gtx layout.Context) layout.Dimensions {
+// It is drawn with the theme of the frame (the theme may change).
+func headerText(title, summary string, extra ...func(gtx layout.Context, th *tokens.Theme) layout.Dimensions) func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	return func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 		children := []layout.FlexChild{
 			layout.Rigid(atoms.Strong(title).SingleLine().Fn(th)),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -151,6 +154,11 @@ func headerText(th *tokens.Theme, title, summary string, extra ...layout.FlexChi
 				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, 0)}
 			}),
 		}
-		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, append(children, extra...)...)
+		for _, x := range extra {
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: th.Space.S}.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return x(gtx, th) })
+			}))
+		}
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
 	}
 }

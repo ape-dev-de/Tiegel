@@ -32,6 +32,15 @@ const (
 	EditorGitRollback = "vcs.rollback"
 )
 
+// ValueLSP is the Context value set while a language server runs.
+const ValueLSP = "lsp"
+
+// phpLSP enables language server features in PHP documents (hosts that do
+// not report the server state leave them enabled).
+func phpLSP(c Context) bool {
+	return php(c) && (c.Values == nil || c.Value(ValueLSP) != "")
+}
+
 // editorActions are the code navigation, refactoring and search actions.
 func editorActions() []Action {
 	hasLine := func(c Context) bool { return c.Line > 0 }
@@ -41,9 +50,9 @@ func editorActions() []Action {
 		{ID: NavGotoClass, Label: "Go to Class…", Icon: "file-code", Shortcut: Shortcut{Mac: "Cmd+O", PC: "Ctrl+N"}, Keywords: []string{"interface", "trait", "enum", "type"}},
 		{ID: NavGotoSymbol, Label: "Go to Symbol…", Shortcut: Shortcut{Mac: "Cmd+Alt+O", PC: "Ctrl+Alt+Shift+N"}, Keywords: []string{"method", "function", "constant", "property"}},
 		{ID: NavSearchEverywhere, Label: "Search Everywhere", Icon: "search", Keywords: []string{"shift shift", "double shift", "find"}},
-		{ID: RefactorRename, Label: "Rename Symbol…", Icon: "edit", Shortcut: Shortcut{Mac: "Shift+F6", PC: "Shift+F6"}, Enabled: php, Keywords: []string{"refactor"}},
-		{ID: CodeReformat, Label: "Reformat Code", Shortcut: Shortcut{Mac: "Cmd+Alt+L", PC: "Ctrl+Alt+L"}, Enabled: php, Keywords: []string{"format", "psr-12", "selection"}},
-		{ID: CodeContextActions, Label: "Show Context Actions", Shortcut: Shortcut{Mac: "Alt+Enter", PC: "Alt+Enter"}, Enabled: php, Keywords: []string{"quick fix", "intention", "code action", "import"}},
+		{ID: RefactorRename, Label: "Rename Symbol…", Icon: "edit", Shortcut: Shortcut{Mac: "Shift+F6", PC: "Shift+F6"}, Enabled: phpLSP, Keywords: []string{"refactor"}},
+		{ID: CodeReformat, Label: "Reformat Code", Shortcut: Shortcut{Mac: "Cmd+Alt+L", PC: "Ctrl+Alt+L"}, Enabled: phpLSP, Keywords: []string{"format", "psr-12", "selection"}},
+		{ID: CodeContextActions, Label: "Show Context Actions", Shortcut: Shortcut{Mac: "Alt+Enter", PC: "Alt+Enter"}, Enabled: phpLSP, Keywords: []string{"quick fix", "intention", "code action", "import"}},
 		{ID: ViewStructure, Label: "Structure", Icon: "list", Shortcut: Shortcut{Mac: "Cmd+7", PC: "Alt+7"}, Keywords: []string{"outline", "members"}},
 		{ID: FindInPath, Label: "Find in Files…", Icon: "search", Shortcut: Shortcut{Mac: "Cmd+Shift+F", PC: "Ctrl+Shift+F"}, Keywords: []string{"search", "path", "project"}},
 		{ID: ReplaceInPath, Label: "Replace in Files…", Shortcut: Shortcut{Mac: "Cmd+Shift+R", PC: "Ctrl+Shift+R"}, Keywords: []string{"replace in path", "project"}},

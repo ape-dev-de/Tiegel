@@ -76,6 +76,7 @@ type navDock struct {
 	// Shift Shift detection.
 	shiftUp   time.Time
 	shiftMark uint64
+	shiftSkip bool
 
 	// Symbol choosers (Go to Class/Symbol, Search Everywhere).
 	sym *symbolChooser
@@ -388,10 +389,15 @@ func (d *navDock) shiftKeys(gtx layout.Context) {
 		mark := d.activity()
 		switch e.State {
 		case key.Release:
+			if d.shiftSkip {
+				// The release of the second Shift starts no new pair.
+				d.shiftSkip = false
+				continue
+			}
 			d.shiftUp, d.shiftMark = gtx.Now, mark
 		case key.Press:
 			if !d.shiftUp.IsZero() && gtx.Now.Sub(d.shiftUp) <= doubleShift && mark == d.shiftMark {
-				d.shiftUp = time.Time{}
+				d.shiftUp, d.shiftSkip = time.Time{}, true
 				d.openSymbols(symEverywhere)
 			}
 		}
@@ -501,7 +507,7 @@ func (d *navDock) syncHierarchy() {
 	}
 	root.Children = []*resultNode{sup, sub}
 	d.hierarchy.set([]*resultNode{root})
-	d.hierarchy.Header = headerText(d.v.th, "Type Hierarchy", cls.FQN)
+	d.hierarchy.Header = headerText("Type Hierarchy", cls.FQN)
 }
 
 func countNodes(ns []controller.HierarchyNode) int {
@@ -539,7 +545,7 @@ func (d *navDock) syncUsages() {
 		roots = append(roots, gn)
 	}
 	d.usages.set(roots)
-	d.usages.Header = headerText(d.v.th, "Usages of "+orDefault(u.Symbol, "symbol"), fmt.Sprintf("%s in %s", plural(u.Total, "usage"), plural(len(u.Groups), "file")))
+	d.usages.Header = headerText("Usages of "+orDefault(u.Symbol, "symbol"), fmt.Sprintf("%s in %s", plural(u.Total, "usage"), plural(len(u.Groups), "file")))
 	if u.Total > 0 {
 		d.showTool(ToolUsages)
 	}
@@ -548,6 +554,9 @@ func (d *navDock) syncUsages() {
 func plural(n int, what string) string {
 	if n == 1 {
 		return "1 " + what
+	}
+	if strings.HasSuffix(what, "ch") || strings.HasSuffix(what, "s") {
+		return fmt.Sprintf("%d %ses", n, what)
 	}
 	return fmt.Sprintf("%d %ss", n, what)
 }
