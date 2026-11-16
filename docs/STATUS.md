@@ -13,7 +13,7 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 | H | Headless-Modus, `internal/api` | ✅ | ~50 API-Methoden, CLI + `serve` (NDJSON/LSP-Framing), E2E-Tests; siehe docs/headless.md |
 | 2.5 | Hauptfenster-Shell | ⬜ | nach Editor-Widget |
 | 3.1–3.3 | Puffer, Cursor, Suche, Folding | ✅ | Piece Table/Treap, 100k Zeilen laden 2 ms, Insert ~2 µs, 98.8 % |
-| 3.4–3.6 | Editor-Widget, Highlighting, Keymap | 🟡 | Welle 2 |
+| 3.4–3.6 | Editor-Widget, Highlighting, Keymap | ⚠️ | Widget + Keymap ✅ (100k Zeilen: Tastendruck→Frame ~0,2 ms); Tree-sitter-Adapter fehlt; Emoji/CJK-Fallback-Font offen |
 | 4.1 | LSP-Client | ✅ | Fake-Server-Tests; Smoke-Test mit Phpactor offen (nicht installiert) |
 | 4.2–4.3 | lang-php Modul + UI | ⬜ | |
 | 5.1–5.4 | Interpreter, Compose, PHP-Version, Features | ✅ | interp/compose 96–98 %; syntax (Tree-sitter) + phpver 96 %, 41 Features + 13 Deprecations; Erst-Parse 100k Zeilen ~0,5 s → im Hintergrund |
