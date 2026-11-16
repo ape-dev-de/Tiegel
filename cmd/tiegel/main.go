@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,6 +18,10 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/modules"
 	"github.com/ape-dev-de/tiegel/internal/version"
 )
+
+// errNoGUI is reported when a headless-only build is started without
+// --headless.
+var errNoGUI = errors.New("this build has no GUI (built with -tags headless); use tiegel --headless <command>, e.g. tiegel --headless serve")
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -42,6 +47,10 @@ func run(ctx context.Context, args []string) int {
 	if showVersion {
 		fmt.Println(version.String())
 		return headless.ExitOK
+	}
+	if !guiAvailable {
+		fmt.Fprintf(os.Stderr, "tiegel: %v\n", errNoGUI)
+		return headless.ExitUsage
 	}
 	if dir := os.Getenv("TIEGEL_CONFIG_DIR"); dir != "" {
 		opts.ConfigDir = dir

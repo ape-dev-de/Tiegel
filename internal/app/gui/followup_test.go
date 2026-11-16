@@ -56,6 +56,9 @@ func newGitEnvWith(t *testing.T, extra map[string]string) *env {
 	}
 	return newEnvWith(t, true, extra, func(root string) {
 		runGit(t, root, "init", "-q", "-b", "main")
+		// Byte-exact working tree: ignore core.autocrlf=true from the
+		// system config (Git for Windows); the app's git calls read it.
+		runGit(t, root, "config", "core.autocrlf", "false")
 		runGit(t, root, "config", "user.name", "Tiegel Test")
 		runGit(t, root, "config", "user.email", "test@example.invalid")
 		runGit(t, root, "config", "commit.gpgsign", "false")

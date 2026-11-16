@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/compose-spec/compose-go/v2/types"
+
+	"github.com/ape-dev-de/tiegel/internal/core/fspath"
 )
 
 // PathMapping maps a host path to a path inside the container.
@@ -41,7 +43,7 @@ func resolveHostPath(projectDir, src string) string {
 			src = filepath.Join(home, src[1:])
 		}
 	}
-	if !filepath.IsAbs(src) {
+	if !fspath.IsAbs(src) {
 		src = filepath.Join(projectDir, src)
 	}
 	return filepath.Clean(src)

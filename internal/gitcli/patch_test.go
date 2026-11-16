@@ -2,6 +2,7 @@ package gitcli
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -376,14 +377,20 @@ func TestStageUnstage(t *testing.T) {
 	}
 	tr.commitAll("a")
 	tr.write("a", "b\n")
-	tr.write("*", "literal star\n")
-	if err := tr.r.Stage(ctx, "a", "*"); err != nil {
+	// A file name that is a glob pathspec must be taken literally. "*" is
+	// not a valid file name on Windows, "[a]" is (and would match "a").
+	magic := "*"
+	if runtime.GOOS == "windows" {
+		magic = "[a]"
+	}
+	tr.write(magic, "literal magic\n")
+	if err := tr.r.Stage(ctx, "a", magic); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.r.Unstage(ctx, "a"); err != nil {
 		t.Fatal(err)
 	}
-	if out := tr.git("diff", "--cached", "--name-only"); out != "*" {
+	if out := tr.git("diff", "--cached", "--name-only"); out != magic {
 		t.Errorf("staged after unstage: %q", out)
 	}
 	if err := tr.r.Stage(ctx); err != nil {

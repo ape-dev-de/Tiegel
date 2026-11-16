@@ -81,14 +81,22 @@ Nach dem Binden schreibt der Server eine Zeile JSON auf stdout: `{"listen":"tcp:
 |---|---|
 | `internal/syntax` (Tree-sitter-Grammatiken in C) | ja, sonst Stub ohne Tree-sitter (`syntax.TreeSitter == false`, D80) |
 | `internal/ui/...`, `cmd/tiegel-catalog` (Gio) | unter macOS/Linux ja, unter Windows nein |
-| alles andere (`internal/api/...`, `interp`, `headless`, `modules`, `cmd/tiegel`) | nein |
+| `cmd/tiegel` | unter macOS/Linux ja (bindet die Gio-GUI ein), mit `-tags headless` nein (D84) |
+| alles andere (`internal/api/...`, `interp`, `headless`, `modules`, `app/gui/controller`) | nein |
 
 - **macOS/Linux** (Release): nativ mit cgo – volle Funktion inkl. Tree-sitter.
 - **Linux-Backend für WSL:** nativer Linux-Build mit cgo (CI-Linux-Job) und in die Distro installiert.
 - **Windows-GUI:** `CGO_ENABLED=0 GOOS=windows go build ./cmd/tiegel` – ohne Tree-sitter; Highlighting über das Backend.
-- **Cross-Prüfung:** `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./cmd/tiegel` und `GOOS=windows GOARCH=amd64 go vet ./internal/...` laufen von jedem Host aus. Ein Cross-Build *mit* Tree-sitter bräuchte einen C-Cross-Compiler (z.B. zig cc) und ist bewusst nicht Teil der CI.
+- **Headless-only (D84):** `go build -tags headless ./cmd/tiegel` lässt die GUI weg (kein Gio). So baut `cmd/tiegel` auch unter macOS/Linux ohne cgo, z.B. als Backend in Container/Server ohne X11/Wayland-Bibliotheken (dann ohne Tree-sitter; für das WSL-Backend mit cgo bauen). `tiegel` ohne `--headless` endet dort mit Exit 2 und dem Hinweis `use tiegel --headless <command>`.
+- **Cross-Prüfung:** `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags headless ./cmd/tiegel` und `GOOS=windows GOARCH=amd64 go vet ./...` laufen von jedem Host aus. Ein Cross-Build *mit* Tree-sitter oder Gio für macOS/Linux bräuchte einen C-Cross-Compiler (z.B. zig cc) und ist bewusst nicht Teil der CI.
 
-CI (`.github/workflows/ci.yml`): macOS und Linux mit `make check` (cgo, `-race`); Windows mit `CGO_ENABLED=0` (`go build ./...`, `go vet ./...`, `go test` ohne UI-Pakete, Bau von `tiegel.exe` und `tiegel-catalog.exe`); ein Cross-Build-Job für linux/amd64, linux/arm64, windows/amd64, windows/arm64 und darwin/arm64 ohne cgo.
+CI (`.github/workflows/ci.yml`, läuft auf `main`, `ci-*`-Branches, Pull Requests und per `workflow_dispatch`): macOS und Linux mit `make check` (cgo, `-race`); Windows mit `CGO_ENABLED=0` (`go build ./...`, `go vet ./...`, `go test` ohne `internal/ui` und `cmd/tiegel-catalog` – `internal/app/gui` läuft mit, Tree-sitter-abhängige Teile werden dort übersprungen –, Bau von `tiegel.exe` und `tiegel-catalog.exe`); ein Cross-Job ohne cgo: windows/amd64 und windows/arm64 bauen das volle Binary inkl. GUI und `go vet ./...`, linux/amd64, linux/arm64 und darwin/arm64 das Headless-only-Binary und `go vet -tags headless` für alle Nicht-Gio-Pakete.
+
+### Windows-Besonderheiten (D85)
+
+- **Absolute Pfade:** `/x` bzw. `\x` gilt als absolut (Wurzel des aktuellen Laufwerks) und wird nie an die Projektwurzel gehängt (`internal/core/fspath`). API-Clients sollten unter Windows vollständige Pfade (`C:\…`) oder projektrelative Pfade senden.
+- **Zeilenenden:** Das Repository ist per `.gitattributes` LF-only. Tiegel selbst lässt `core.autocrlf` des Nutzers unangetastet: Gutter und Diffs vergleichen mit der Arbeitsbaum-Form (`git cat-file --filters`), die bei `autocrlf=true` CRLF hat – genau wie die ausgecheckten Dateien.
+- **Tests:** Git-Testrepos setzen `core.autocrlf=false`; Fake-Programme als Shell-Skript laufen unter Windows nicht und sind dort mit Begründung übersprungen; selbst gebaute Test-Binaries bekommen `.exe`.
 
 ## Offene Punkte
 

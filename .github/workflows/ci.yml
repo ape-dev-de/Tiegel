@@ -1,8 +1,9 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [main, 'ci-*']
   pull_request:
+  workflow_dispatch:
 jobs:
   check:
     strategy:
@@ -44,8 +45,10 @@ jobs:
           go build -o bin/tiegel.exe ./cmd/tiegel
           go build -o bin/tiegel-catalog.exe ./cmd/tiegel-catalog
 
-  # Cross-compilation check from Linux: every target must at least build
-  # without cgo (backend without Tree-sitter, see docs/plattformen.md).
+  # Cross-compilation check from Linux without cgo (backend without
+  # Tree-sitter, see docs/plattformen.md). Gio needs cgo on macOS/Linux, so
+  # those targets build the headless-only binary (-tags headless, D84);
+  # Windows builds the full binary including the GUI.
   cross:
     runs-on: ubuntu-latest
     env:
@@ -62,8 +65,14 @@ jobs:
       - name: Build ${{ matrix.target }}
         run: |
           export GOOS=${TARGET%/*} GOARCH=${TARGET#*/}
-          go build -o /dev/null ./cmd/tiegel
-          go vet ./internal/api/... ./internal/interp/... ./internal/syntax/... ./internal/headless/...
-          if [ "$GOOS" = windows ]; then go build -o /dev/null ./cmd/tiegel-catalog; fi
+          if [ "$GOOS" = windows ]; then
+            go build -o /dev/null ./cmd/tiegel
+            go build -o /dev/null ./cmd/tiegel-catalog
+            go vet ./...
+          else
+            go build -tags headless -o /dev/null ./cmd/tiegel
+            # Everything except the Gio packages (they need cgo here).
+            go vet -tags headless $(go list -e ./... | grep -v -e /internal/ui -e "/internal/app/gui$" -e /cmd/tiegel-catalog)
+          fi
         env:
           TARGET: ${{ matrix.target }}

@@ -1,3 +1,5 @@
+//go:build !headless
+
 package main
 
 import (
@@ -6,6 +8,10 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/app/gui"
 )
+
+// guiAvailable reports whether this build contains the Gio GUI (see
+// gui_headless.go for headless-only builds).
+const guiAvailable = true
 
 // runGUI starts the graphical shell (internal/app/gui). The GUI is only a
 // client of app (D41); Gio is initialised nowhere else, so the headless

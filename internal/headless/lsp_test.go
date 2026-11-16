@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,7 @@ func buildFakeLSP(t *testing.T) string {
 	if err != nil {
 		t.Skip("go toolchain not found")
 	}
-	bin := filepath.Join(t.TempDir(), "fakelsp")
+	bin := filepath.Join(t.TempDir(), exeName("fakelsp"))
 	if out, err := exec.Command(goBin, "build", "-o", bin, "github.com/ape-dev-de/tiegel/internal/lsp/fakeserver/fakelsp").CombinedOutput(); err != nil {
 		t.Fatalf("go build fakelsp: %v\n%s", err, out)
 	}
@@ -48,8 +49,10 @@ func TestLSPCheckCommand(t *testing.T) {
 		t.Fatalf("no server: %d %q", code, errs)
 	}
 	// A server that never publishes diagnostics: timeout.
-	if code, _, errs := run(t, "", "lsp-check", "ok.php", "--command", "/bin/cat", "--timeout", "300ms", "--project", dir); code != ExitError || errs == "" {
-		t.Fatalf("timeout: %d %q", code, errs)
+	if runtime.GOOS != "windows" { // no /bin/cat there
+		if code, _, errs := run(t, "", "lsp-check", "ok.php", "--command", "/bin/cat", "--timeout", "300ms", "--project", dir); code != ExitError || errs == "" {
+			t.Fatalf("timeout: %d %q", code, errs)
+		}
 	}
 }
 

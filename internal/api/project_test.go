@@ -202,9 +202,11 @@ func TestFilesReadAndLanguage(t *testing.T) {
 	if lr.Language != "xml" {
 		t.Fatalf("by content %+v", lr)
 	}
-	// Outside the project the absolute path is shown.
+	// Outside the project the absolute path is shown. A rooted path counts
+	// as absolute on Windows too (current drive), it is never joined with
+	// the project root.
 	call(t, a, "files.detectLanguage", PathParams{Path: "/elsewhere/x.json"}, &lr)
-	if lr.Path != "/elsewhere/x.json" || lr.Language != "json" {
+	if lr.Path != filepath.FromSlash("/elsewhere/x.json") || lr.Language != "json" {
 		t.Fatalf("outside %+v", lr)
 	}
 }
