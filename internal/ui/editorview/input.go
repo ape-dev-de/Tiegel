@@ -251,6 +251,8 @@ func (e *Editor) processPointer(gtx layout.Context) {
 		case pointer.Press:
 			if pe.Buttons.Contain(pointer.ButtonPrimary) || pe.Source != pointer.Mouse {
 				e.press(gtx, pe)
+			} else if pe.Buttons.Contain(pointer.ButtonSecondary) {
+				e.secondaryPress(pe)
 			}
 		case pointer.Drag:
 			e.drag(gtx, pe)
@@ -369,6 +371,28 @@ func (e *Editor) gutterPress(pe pointer.Event, pt image.Point) {
 	}
 	e.emit(GutterClickEvent{Line: line, Area: area, Mods: mods(pe.Modifiers), Clicks: e.ptr.clicks})
 	e.ptr.mode = dragGutter
+}
+
+// secondaryPress reports a right click into the gutter (e.g. to edit a
+// breakpoint); right clicks into the text are ignored.
+func (e *Editor) secondaryPress(pe pointer.Event) {
+	g := &e.geo
+	pt := image.Pt(int(pe.Position.X), int(pe.Position.Y))
+	if pt.X >= g.gutterW || pt.X >= g.foldX {
+		return
+	}
+	row := (pt.Y + e.scroll.Y) / max(1, g.lineH)
+	if pt.Y+e.scroll.Y < 0 || row >= g.rows {
+		return
+	}
+	area := GutterIcons
+	switch {
+	case pt.X >= g.chgX:
+		area = GutterChanges
+	case pt.X >= g.iconX+g.iconW:
+		area = GutterNumbers
+	}
+	e.emit(GutterClickEvent{Line: e.folds.VisibleToDoc(row), Area: area, Mods: mods(pe.Modifiers), Clicks: 1, Secondary: true})
 }
 
 func (e *Editor) drag(gtx layout.Context, pe pointer.Event) {

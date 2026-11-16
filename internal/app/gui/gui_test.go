@@ -51,11 +51,21 @@ type env struct {
 
 func newEnv(t *testing.T, withProject bool) *env {
 	t.Helper()
+	return newEnvWith(t, withProject, nil, nil)
+}
+
+// newEnvWith is newEnv with extra project files and a preparation step
+// (e.g. git init) before the backend starts.
+func newEnvWith(t *testing.T, withProject bool, extra map[string]string, prep func(root string)) *env {
+	t.Helper()
 	root := t.TempDir()
 	files := map[string]string{
 		"src/Shop.php":  samplePHP,
 		"index.php":     "<?php\necho 1;\n",
 		"composer.json": `{"require": {"php": "^8.0"}}`,
+	}
+	for name, content := range extra {
+		files[name] = content
 	}
 	for name, content := range files {
 		p := filepath.Join(root, name)
@@ -65,6 +75,9 @@ func newEnv(t *testing.T, withProject bool) *env {
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if prep != nil {
+		prep(root)
 	}
 	home := t.TempDir()
 	opts := api.Options{
@@ -321,7 +334,9 @@ func TestShortcutsAndRegistry(t *testing.T) {
 	e.h.Router.Queue(key.Event{Name: "F9", State: key.Press})
 	e.frame()
 	e.frame()
-	if !opened || !ran || len(e.v.bench.ToolTabs) != 2 {
+	// Problems, the test window and Debug (the project is no repository,
+	// so the git windows are not installed).
+	if !opened || !ran || len(e.v.bench.ToolTabs) != 3 {
 		t.Fatalf("registry: opened %v ran %v tabs %d", opened, ran, len(e.v.bench.ToolTabs))
 	}
 	r.AddStatusProvider(func() []statusbar.Item { return []statusbar.Item{{ID: "debug", Text: "Listening"}} })

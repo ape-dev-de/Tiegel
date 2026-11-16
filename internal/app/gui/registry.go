@@ -43,6 +43,9 @@ type ToolWindow struct {
 	Layout func(gtx layout.Context, th *tokens.Theme) layout.Dimensions
 	// OnOpen is called when the window is shown (may be nil).
 	OnOpen func()
+	// Share is the minimum share of the editor column the tool area takes
+	// when this window opens (0: keep the current size).
+	Share float32
 }
 
 // GutterProvider returns the gutter markers of an open file (absolute
@@ -79,6 +82,16 @@ type Action struct {
 // StatusProvider returns extra status bar items (right side).
 type StatusProvider func() []statusbar.Item
 
+// StatusClickHandler handles a click on a (clickable) status item; it
+// returns true if it consumed the click.
+type StatusClickHandler func(v *View, id string) bool
+
+// FrameHandler runs at the start of every workbench frame (after the
+// controller results were applied, before layout). Features use it to
+// follow controller state, e.g. to add or remove their tool windows when a
+// module is enabled or disabled.
+type FrameHandler func(v *View, gtx layout.Context)
+
 // Registry collects the extension points of the window.
 type Registry struct {
 	tools        []ToolWindow
@@ -87,6 +100,8 @@ type Registry struct {
 	actions      map[keymap.Action]Action
 	order        []keymap.Action
 	status       []StatusProvider
+	statusClicks []StatusClickHandler
+	frames       []FrameHandler
 	version      uint64
 }
 
@@ -105,6 +120,18 @@ func (r *Registry) AddToolWindow(t ToolWindow) {
 	r.tools = append(r.tools, t)
 	sort.SliceStable(r.tools, func(i, j int) bool { return r.tools[i].Order < r.tools[j].Order })
 	r.version++
+}
+
+// RemoveToolWindow removes a tool window (e.g. when its module is
+// disabled).
+func (r *Registry) RemoveToolWindow(id string) {
+	for i := range r.tools {
+		if r.tools[i].ID == id {
+			r.tools = append(r.tools[:i], r.tools[i+1:]...)
+			r.version++
+			return
+		}
+	}
 }
 
 // ToolWindows returns the tool windows of a side in order.
@@ -146,6 +173,21 @@ func (r *Registry) AddAction(a Action) {
 	r.version++
 }
 
+// RemoveAction removes an action and its shortcuts.
+func (r *Registry) RemoveAction(id keymap.Action) {
+	if _, ok := r.actions[id]; !ok {
+		return
+	}
+	delete(r.actions, id)
+	for i, a := range r.order {
+		if a == id {
+			r.order = append(r.order[:i], r.order[i+1:]...)
+			break
+		}
+	}
+	r.version++
+}
+
 // Action returns a registered action.
 func (r *Registry) Action(id keymap.Action) (Action, bool) {
 	a, ok := r.actions[id]
@@ -163,6 +205,14 @@ func (r *Registry) Actions() []Action {
 
 // AddStatusProvider registers extra status bar items.
 func (r *Registry) AddStatusProvider(p StatusProvider) { r.status = append(r.status, p) }
+
+// AddStatusClickHandler registers a handler for status item clicks.
+func (r *Registry) AddStatusClickHandler(h StatusClickHandler) {
+	r.statusClicks = append(r.statusClicks, h)
+}
+
+// AddFrameHandler registers a per-frame handler.
+func (r *Registry) AddFrameHandler(h FrameHandler) { r.frames = append(r.frames, h) }
 
 // markers combines the gutter providers for file.
 func (r *Registry) markers(file string) editorview.MarkerProvider {

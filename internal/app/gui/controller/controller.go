@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
@@ -67,7 +69,9 @@ type Controller struct {
 
 	mu    sync.Mutex
 	queue []func()
-	jobs  sync.WaitGroup
+	// jobs counts running background work (Settle polls it; a WaitGroup
+	// must not be reused while a timed-out Wait is still pending).
+	jobs atomic.Int64
 
 	// Project is the open project (Open false: welcome screen).
 	Project ProjectInfo
@@ -126,6 +130,12 @@ type Controller struct {
 	Now func() time.Time
 
 	gitPending bool
+
+	// Vcs is the git state (commit window, log, branches, gutter, merge).
+	Vcs *Git
+	// Debug is the debugger state (listener, sessions, stack, variables,
+	// breakpoints).
+	Debug *Debug
 }
 
 // New returns a controller for be. Call Close when done.
@@ -136,8 +146,10 @@ func New(be Backend) *Controller {
 		diags: map[string]*fileDiags{}, Git: map[string]GitFile{},
 		Prefs: Prefs{Theme: "dark", TabWidth: 4}, Now: time.Now,
 	}
+	c.Vcs = newGit(c)
+	c.Debug = newDebug(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
-		"git.changed", "git.committed", "file.saved", "doc.changed", "modules.changed"}, func(e api.Event) {
+		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*"}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
 	})
 	if err != nil {
@@ -194,7 +206,7 @@ func (c *Controller) Drain() bool {
 func (c *Controller) Go(work func(ctx context.Context) func()) {
 	c.jobs.Add(1)
 	go func() {
-		defer c.jobs.Done()
+		defer c.jobs.Add(-1)
 		if apply := work(c.ctx); apply != nil {
 			c.post(apply)
 		}
@@ -206,11 +218,8 @@ func (c *Controller) Go(work func(ctx context.Context) func()) {
 func (c *Controller) Settle(timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		done := make(chan struct{})
-		go func() { c.jobs.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(time.Until(deadline)):
+		for c.jobs.Load() > 0 && time.Now().Before(deadline) {
+			time.Sleep(2 * time.Millisecond)
 		}
 		// Events from the bus arrive asynchronously; give them a moment.
 		time.Sleep(10 * time.Millisecond)
@@ -378,6 +387,9 @@ func (c *Controller) projectOpened(info ProjectInfo) {
 	c.LoadDir("")
 	c.refreshGit()
 	c.refreshRuntime()
+	c.Vcs.reset()
+	c.Debug.reset()
+	c.Debug.refresh()
 	c.startLSP()
 	c.Go(func(ctx context.Context) func() {
 		rel := getSetting[[]string](ctx, c.be, KeyRecentFiles, "project", nil)
@@ -424,6 +436,14 @@ func (c *Controller) Rel(abs string) string {
 // ---- events ---------------------------------------------------------------
 
 func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
+	if strings.HasPrefix(topic, "debug.") {
+		c.Debug.handleEvent(topic, payload)
+		return
+	}
+	switch topic {
+	case "git.changed", "git.committed", api.TopicDocEdited:
+		c.Vcs.handleEvent(topic, payload)
+	}
 	switch topic {
 	case "lsp.diagnostics", "php.diagnostics":
 		var ev diagEvent
@@ -455,6 +475,7 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 		if c.Project.Open {
 			c.refreshGit()
 			c.refreshRuntime()
+			c.Debug.refresh()
 		}
 	}
 }
@@ -505,15 +526,16 @@ func (c *Controller) refreshGit() {
 	}
 	c.gitPending = true
 	c.Go(func(ctx context.Context) func() {
-		var st gitStatus
+		var st fullStatus
 		err := c.call(ctx, "git.status", nil, &st)
 		return func() {
 			c.gitPending = false
 			c.Git = map[string]GitFile{}
 			c.Status.Branch = ""
+			c.Vcs.setStatus(st, err)
 			if err == nil {
 				for _, f := range st.Files {
-					c.Git[f.Path] = f
+					c.Git[f.Path] = GitFile{Path: f.Path, Kind: f.Kind, Index: f.Index, Worktree: f.Worktree, Conflict: f.Conflict}
 				}
 				c.Status.Branch = st.Branch
 				if st.Detached && len(st.Head) >= 7 {

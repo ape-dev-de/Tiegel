@@ -333,6 +333,9 @@ type GutterClickEvent struct {
 	Area   GutterArea
 	Mods   keymap.Mods
 	Clicks int
+	// Secondary marks a right click (context action, e.g. edit a
+	// breakpoint condition).
+	Secondary bool
 }
 
 // ActionEvent reports an action the editor does not execute itself (see
