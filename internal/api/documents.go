@@ -29,12 +29,16 @@ import (
 // buffer.OnEdit, so edits made through any path are seen by everyone.
 // Listeners run while the lock is held and must not block.
 type Doc struct {
-	mu   sync.Mutex
-	app  *App
-	gen  uint64 // generation: unique per opened instance, see DocState
-	path string // absolute
-	lang langdetect.Language
-	buf  *buffer.Buffer
+	mu  sync.Mutex
+	app *App
+	gen uint64 // generation: unique per opened instance, see DocState
+	buf *buffer.Buffer
+
+	// path (absolute) and lang change when the file is renamed: written
+	// with mu, App.mu and nameMu held; read with any of them held.
+	nameMu sync.RWMutex
+	path   string
+	lang   langdetect.Language
 
 	// External changes (external.go), guarded by mu: the file state as
 	// last read or written by Tiegel, a counter of its updates, and the
@@ -55,11 +59,27 @@ func (d *Doc) Unlock() { d.mu.Unlock() }
 // Buffer returns the shared buffer. Only use it while holding the lock.
 func (d *Doc) Buffer() *buffer.Buffer { return d.buf }
 
-// Path returns the absolute file path.
-func (d *Doc) Path() string { return d.path }
+// Path returns the absolute file path. It changes when the file is
+// renamed or moved (files.rename, files.move; see doc.renamed).
+func (d *Doc) Path() string {
+	d.nameMu.RLock()
+	defer d.nameMu.RUnlock()
+	return d.path
+}
 
-// Language returns the detected language.
-func (d *Doc) Language() langdetect.Language { return d.lang }
+// Language returns the detected language (it may change on rename).
+func (d *Doc) Language() langdetect.Language {
+	d.nameMu.RLock()
+	defer d.nameMu.RUnlock()
+	return d.lang
+}
+
+// setName changes path and language; the caller holds d.mu.
+func (d *Doc) setName(path string, lang langdetect.Language) {
+	d.nameMu.Lock()
+	d.path, d.lang = path, lang
+	d.nameMu.Unlock()
+}
 
 // Generation returns the document's generation: a number unique per opened
 // instance. Closing and reopening a path yields a new generation.
@@ -291,6 +311,10 @@ type DocCloseResult struct {
 	Generation uint64 `json:"generation,omitempty"`
 	// Discarded is true if unsaved changes were thrown away.
 	Discarded bool `json:"discarded"`
+	// RenamedTo is set when the document was not closed but renamed or
+	// moved (files.rename, files.move): it lives on under this path (see
+	// doc.renamed).
+	RenamedTo string `json:"renamedTo,omitempty"`
 }
 
 func (a *App) docClose(_ context.Context, p DocCloseParams) (DocCloseResult, error) {
@@ -584,7 +608,7 @@ func (a *App) saveDoc(ctx context.Context, path string, force bool) (DocSaveResu
 	var ext *externalChangeError
 	if errors.As(err, &ext) {
 		return DocSaveResult{}, Errorf(CodeConflict, "save %s: %w (save with force, or doc.resolveExternal)", path, err).
-			WithData(ExternalChangeData{Reason: "externalChange", Path: a.displayPath(d.path), Kind: ext.kind, Generation: d.gen})
+			WithData(ExternalChangeData{Reason: "externalChange", Path: a.displayPath(d.Path()), Kind: ext.kind, Generation: d.gen})
 	}
 	if err != nil {
 		return DocSaveResult{}, Errorf(CodeFailed, "save %s: %w", path, err)

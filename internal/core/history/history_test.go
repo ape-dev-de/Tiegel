@@ -49,6 +49,67 @@ func countObjects(t *testing.T, s *Store) int {
 	return n
 }
 
+func TestMove(t *testing.T) {
+	s, clk := newStore(t)
+	root := t.TempDir()
+	p := func(rel string) string { return filepath.Join(root, filepath.FromSlash(rel)) }
+	save := func(path, content string) {
+		t.Helper()
+		clk.advance(time.Minute)
+		if _, _, err := s.Save(path, []byte(content), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(p("a.php"), "a1")
+	save(p("a.php"), "a2")
+	save(p("src/x.php"), "x1")
+	save(p("src/sub/y.php"), "y1")
+	save(p("srcfile.php"), "other")
+	save(p("b.php"), "b1")
+
+	if n, err := s.Move(p("a.php"), p("a.php")); n != 0 || err != nil {
+		t.Fatal("self move", n, err)
+	}
+	if n, err := s.Move(p("a.php"), p("renamed.php")); n != 1 || err != nil {
+		t.Fatal(n, err)
+	}
+	if revs, _ := s.List(p("a.php")); len(revs) != 0 {
+		t.Fatal("old history left")
+	}
+	revs, _ := s.List(p("renamed.php"))
+	if len(revs) != 2 || revs[0].ID != 2 || revs[0].Path != p("renamed.php") {
+		t.Fatalf("moved revs %+v", revs)
+	}
+	if data, err := s.Content(revs[0]); err != nil || string(data) != "a2" {
+		t.Fatal(string(data), err)
+	}
+	// Directory: everything below moves, a sibling with the same prefix not.
+	if n, err := s.Move(p("src"), p("lib")); n != 2 || err != nil {
+		t.Fatal(n, err)
+	}
+	if revs, _ := s.List(p("lib/sub/y.php")); len(revs) != 1 {
+		t.Fatal("nested not moved")
+	}
+	if revs, _ := s.List(p("srcfile.php")); len(revs) != 1 {
+		t.Fatal("sibling moved")
+	}
+	// Merge into an existing history: ordered by time and renumbered.
+	if n, err := s.Move(p("b.php"), p("renamed.php")); n != 1 || err != nil {
+		t.Fatal(n, err)
+	}
+	revs, _ = s.List(p("renamed.php"))
+	if len(revs) != 3 || revs[0].ID != 3 || revs[2].ID != 1 {
+		t.Fatalf("merged %+v", revs)
+	}
+	if data, _ := s.Content(revs[0]); string(data) != "b1" {
+		t.Fatalf("newest %q", data)
+	}
+	files, _ := s.Files()
+	if len(files) != 4 {
+		t.Fatalf("files %v", files)
+	}
+}
+
 func TestSaveListContentDedup(t *testing.T) {
 	s, clk := newStore(t)
 	path := filepath.Join(t.TempDir(), "a.php")

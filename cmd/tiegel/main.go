@@ -69,7 +69,7 @@ func run(ctx context.Context, args []string) int {
 			return headless.ExitError
 		}
 	}
-	if err := runGUI(ctx, app, project); err != nil {
+	if err := runGUI(ctx, app, opts, project); err != nil {
 		fmt.Fprintf(os.Stderr, "tiegel: %v\n", err)
 		return headless.ExitError
 	}

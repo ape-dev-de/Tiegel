@@ -1,10 +1,12 @@
 package gui
 
 import (
+	"image"
 	"sort"
 
 	"gioui.org/layout"
 
+	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
@@ -15,37 +17,71 @@ import (
 // The registries are the docking points for GUI features beyond the core
 // shell (git tool window, commit dialog, gutter change markers, debug
 // panel and breakpoints): they register tool windows, gutter marker
-// providers, gutter click handlers, actions with shortcuts and status bar
-// items instead of editing the window code.
+// providers, gutter click handlers, actions with shortcuts and menu
+// places, status bar items, context menu entries and virtual tab types
+// instead of editing the window code. See doc.go for an overview.
 
-// Side selects where a tool window is shown.
+// Side selects where a tool window is docked by default. The user can
+// move it (stripe button menu, "Move to"); the current side is part of
+// the project's tool layout (controller.ToolLayout).
 type Side uint8
 
 // Tool window sides.
 const (
-	// Bottom tool windows share the collapsible area below the editor.
+	// Bottom tool windows share the panel below the editor.
 	Bottom Side = iota
-	// Right tool windows are shown in the optional right panel.
+	// Right tool windows are shown in the panel right of the editor.
 	Right
+	// Left tool windows are shown in the panel left of the editor (the
+	// project tree).
+	Left
 )
 
-// ToolWindow is a panel of the tool window area.
+// toolSide converts a Side.
+func (s Side) toolSide() controller.ToolSide {
+	switch s {
+	case Left:
+		return controller.SideLeft
+	case Right:
+		return controller.SideRight
+	}
+	return controller.SideBottom
+}
+
+// ToolWindow is a panel docked at a side of the workbench, toggled by
+// its stripe button or shortcut.
 type ToolWindow struct {
 	ID    string
 	Title string
+	// Glyph is the stripe button icon.
 	Glyph *atoms.Glyph
-	Side  Side
-	// Order sorts the tabs (lower first).
+	// Side is the default side (the user may move it).
+	Side Side
+	// Order sorts the stripe buttons (lower first).
 	Order int
-	// Badge returns a short counter/state for the tab (may be nil).
+	// Mac and PC are the chords toggling the window ("Cmd+9"); the
+	// registry adds an action (ActionID, default "toolwindow.<ID>") in
+	// the View → Tool Windows menu.
+	Mac, PC string
+	// ActionID overrides the ID of the toggle action.
+	ActionID keymap.Action
+	// Badge returns a short counter/state for the button (may be nil).
 	Badge func() (string, atoms.BadgeKind)
 	// Layout draws the content; it fills the given constraints.
 	Layout func(gtx layout.Context, th *tokens.Theme) layout.Dimensions
 	// OnOpen is called when the window is shown (may be nil).
 	OnOpen func()
-	// Share is the minimum share of the editor column the tool area takes
-	// when this window opens (0: keep the current size).
+	// Share is the minimum share of the editor column a bottom panel
+	// takes when this window opens (0: keep the current size).
 	Share float32
+}
+
+// toggleAction returns the ID of the window's toggle action.
+func (t ToolWindow) toggleAction() keymap.Action {
+	if t.ActionID != "" {
+		return t.ActionID
+	}
+	return keymap.Action("toolwindow." + t.ID)
 }
 
 // GutterProvider returns the gutter markers of an open file (absolute
@@ -64,17 +100,29 @@ type ActionScope uint8
 const (
 	// ScopeGlobal shortcuts work regardless of the focus.
 	ScopeGlobal ActionScope = iota
-	// ScopeEditor shortcuts work while the editor has the focus.
+	// ScopeEditor shortcuts work while the editor has the focus. Run is
+	// called with the active editor's document locked.
 	ScopeEditor
 )
 
-// Action is a command with optional shortcuts (menu, palette, keys).
+// Action is a command with optional shortcuts (menu, Find Action, keys).
 type Action struct {
 	ID    keymap.Action
 	Title string
 	// Mac and PC are the default chords ("Cmd+Shift+O"); empty: none.
 	Mac, PC string
 	Scope   ActionScope
+	// Menu places the action in the menu bar: a top-level menu name
+	// ("File", "Edit", "View", "Navigate", "Git", "Run", "Window",
+	// "Help"), optionally with a submenu ("View/Tool Windows"). Empty:
+	// only in Find Action.
+	Menu string
+	// Section groups entries of a menu; a separator is drawn between
+	// different sections (in registration order).
+	Section string
+	// KeyHint is a shortcut shown in menus that is handled elsewhere
+	// (e.g. by the editor keymap); it is not bound by the window.
+	KeyHint string
 	// Run executes the action on the UI goroutine.
 	Run func(v *View)
 }
@@ -92,6 +140,78 @@ type StatusClickHandler func(v *View, id string) bool
 // module is enabled or disabled.
 type FrameHandler func(v *View, gtx layout.Context)
 
+// ContextID names a place with a context menu.
+type ContextID string
+
+// Context menu places (docking points for AP10.4).
+const (
+	// ContextEditor: right click into the editor text.
+	ContextEditor ContextID = "editor"
+	// ContextEditorGutter: right click into the gutter.
+	ContextEditorGutter ContextID = "editorGutter"
+	// ContextProjectTree: right click on project tree entries.
+	ContextProjectTree ContextID = "projectTree"
+	// ContextTab: right click on an editor tab.
+	ContextTab ContextID = "tab"
+	// ContextToolWindow: right click on a stripe button or the options
+	// button of a tool window header.
+	ContextToolWindow ContextID = "toolWindow"
+)
+
+// ContextTarget describes what a context menu was opened on. Only the
+// fields of the place are set.
+type ContextTarget struct {
+	// File is the absolute file (editor, gutter, tab, tree).
+	File string
+	// Paths are the selected tree entries (absolute).
+	Paths []string
+	// Line is the 1-based line (editor, gutter); Offset the byte offset
+	// in the document (editor).
+	Line, Offset int
+	// Tab is the tab (tab context).
+	Tab *controller.Tab
+	// Group is the editor group of the tab or editor.
+	Group *controller.EditorGroup
+	// ToolID is the tool window (toolWindow context).
+	ToolID string
+	// Pos is the pointer position in window coordinates.
+	Pos image.Point
+}
+
+// MenuItem is an entry of a context menu (or of a menu built for the
+// menu presenters).
+type MenuItem struct {
+	Title string
+	// Action runs a registered action (its shortcut is shown); Run is
+	// used when Action is empty.
+	Action keymap.Action
+	Run    func()
+	// Shortcut is shown right-aligned (filled from Action if empty).
+	Shortcut  string
+	Disabled  bool
+	Checked   bool
+	Separator bool
+	Children  []MenuItem
+}
+
+// ContextMenuProvider returns the entries a feature adds to a context
+// menu (nil: none). Entries of all providers are joined with separators
+// in registration order.
+type ContextMenuProvider func(v *View, t ContextTarget) []MenuItem
+
+// TabType draws virtual editor tabs of one kind (tabs without a file,
+// e.g. a diff): controller.Controller.OpenVirtual / View.OpenVirtualTab
+// open them, the tab bar shows Title and Glyph, and the editor area of
+// the group shows Layout.
+type TabType struct {
+	Kind  string
+	Glyph *atoms.Glyph
+	// Layout draws the tab content filling the constraints.
+	Layout func(gtx layout.Context, th *tokens.Theme, tab *controller.Tab) layout.Dimensions
+	// OnClose runs after the tab was closed (may be nil).
+	OnClose func(tab *controller.Tab)
+}
+
 // Registry collects the extension points of the window.
 type Registry struct {
 	tools        []ToolWindow
@@ -102,14 +222,23 @@ type Registry struct {
 	status       []StatusProvider
 	statusClicks []StatusClickHandler
 	frames       []FrameHandler
+	contexts     map[ContextID][]ContextMenuProvider
+	tabTypes     map[string]TabType
 	version      uint64
 }
 
 // NewRegistry returns an empty registry.
-func NewRegistry() *Registry { return &Registry{actions: map[keymap.Action]Action{}} }
+func NewRegistry() *Registry {
+	return &Registry{actions: map[keymap.Action]Action{}, contexts: map[ContextID][]ContextMenuProvider{}, tabTypes: map[string]TabType{}}
+}
 
-// AddToolWindow registers (or replaces, by ID) a tool window.
+// Version changes whenever tool windows or actions change.
+func (r *Registry) Version() uint64 { return r.version }
+
+// AddToolWindow registers (or replaces, by ID) a tool window. With a
+// shortcut it also registers the toggle action.
 func (r *Registry) AddToolWindow(t ToolWindow) {
+	r.addToggle(t)
 	for i := range r.tools {
 		if r.tools[i].ID == t.ID {
 			r.tools[i] = t
@@ -122,28 +251,33 @@ func (r *Registry) AddToolWindow(t ToolWindow) {
 	r.version++
 }
 
+func (r *Registry) addToggle(t ToolWindow) {
+	if t.Mac == "" && t.PC == "" && t.ActionID == "" {
+		return
+	}
+	id := t.ID
+	r.AddAction(Action{ID: t.toggleAction(), Title: t.Title, Mac: t.Mac, PC: t.PC, Menu: "View/Tool Windows",
+		Run: func(v *View) { v.ToggleTool(id) }})
+}
+
 // RemoveToolWindow removes a tool window (e.g. when its module is
-// disabled).
+// disabled) and its toggle action.
 func (r *Registry) RemoveToolWindow(id string) {
 	for i := range r.tools {
 		if r.tools[i].ID == id {
+			t := r.tools[i]
 			r.tools = append(r.tools[:i], r.tools[i+1:]...)
+			if t.Mac != "" || t.PC != "" || t.ActionID != "" {
+				r.RemoveAction(t.toggleAction())
+			}
 			r.version++
 			return
 		}
 	}
 }
 
-// ToolWindows returns the tool windows of a side in order.
-func (r *Registry) ToolWindows(side Side) []ToolWindow {
-	var out []ToolWindow
-	for _, t := range r.tools {
-		if t.Side == side {
-			out = append(out, t)
-		}
-	}
-	return out
-}
+// AllToolWindows returns all tool windows in order.
+func (r *Registry) AllToolWindows() []ToolWindow { return r.tools }
 
 // ToolWindow returns the tool window with id.
 func (r *Registry) ToolWindow(id string) (ToolWindow, bool) {
@@ -153,6 +287,14 @@ func (r *Registry) ToolWindow(id string) (ToolWindow, bool) {
 		}
 	}
 	return ToolWindow{}, false
+}
+
+// order returns the Order of tool window id.
+func (r *Registry) toolOrder(id string) int {
+	if t, ok := r.ToolWindow(id); ok {
+		return t.Order
+	}
+	return 1 << 20
 }
 
 // AddGutterProvider registers a marker provider; markers of all providers
@@ -213,6 +355,39 @@ func (r *Registry) AddStatusClickHandler(h StatusClickHandler) {
 
 // AddFrameHandler registers a per-frame handler.
 func (r *Registry) AddFrameHandler(h FrameHandler) { r.frames = append(r.frames, h) }
+
+// AddContextMenu registers entries for the context menu at ctx.
+func (r *Registry) AddContextMenu(ctx ContextID, p ContextMenuProvider) {
+	r.contexts[ctx] = append(r.contexts[ctx], p)
+}
+
+// ContextMenu collects the entries of all providers for ctx.
+func (r *Registry) ContextMenu(v *View, ctx ContextID, t ContextTarget) []MenuItem {
+	var out []MenuItem
+	for _, p := range r.contexts[ctx] {
+		items := p(v, t)
+		if len(items) == 0 {
+			continue
+		}
+		if len(out) > 0 {
+			out = append(out, MenuItem{Separator: true})
+		}
+		out = append(out, items...)
+	}
+	return out
+}
+
+// AddTabType registers (or replaces) the virtual tab type t.Kind.
+func (r *Registry) AddTabType(t TabType) { r.tabTypes[t.Kind] = t }
+
+// RemoveTabType removes a virtual tab type.
+func (r *Registry) RemoveTabType(kind string) { delete(r.tabTypes, kind) }
+
+// TabType returns the virtual tab type of kind.
+func (r *Registry) TabType(kind string) (TabType, bool) {
+	t, ok := r.tabTypes[kind]
+	return t, ok
+}
 
 // markers combines the gutter providers for file.
 func (r *Registry) markers(file string) editorview.MarkerProvider {

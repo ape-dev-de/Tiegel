@@ -1,18 +1,3 @@
-// Package gui is Tiegel's graphical shell: the Gio window with the main
-// workbench (project tree, editor tabs, editor, tool windows, status bar),
-// the welcome screen, choosers and the settings dialog.
-//
-// The GUI is a client of the API (D41): all state and logic live in the
-// Gio-free package controller, which calls API methods by name through a
-// Backend and reacts to bus events; the View only lays out organisms from
-// internal/ui and turns their events into controller calls. Editors edit
-// the shared document buffers in-process (api.App.Document) under the
-// document lock.
-//
-// Extension points for features (tool windows, gutter markers, actions,
-// status items, per-frame handlers) are collected in Registry; the git
-// feature (gitdock.go) and the debugger (debugdock.go) dock onto the shell
-// only through them and live in controller.Git / controller.Debug.
 package gui
 
 import (
@@ -20,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,27 +24,128 @@ import (
 // processStart approximates the process start (package initialisation).
 var processStart = time.Now()
 
-// Run opens the main window for app and runs until it is closed or ctx is
-// cancelled. With projectPath the project is shown (it may already be open
-// in app); without it the welcome screen appears.
+// Run opens the first window for app and runs until all windows are
+// closed or ctx is cancelled. With projectPath the project is shown (it
+// may already be open in app); without it the welcome screen appears.
+//
+// Every window shows one project and has its own api.App (an App holds
+// one project); newApp creates the App of further windows ("New Window",
+// "open in new window"). Their global settings are shared with app (see
+// api.Options.GlobalSettings). newApp may be nil: then projects always
+// open in the current window.
 //
 // Gio's app.Main must own the main goroutine and never returns, so the
-// window loop runs on a goroutine; when it ends (modified documents are
-// saved on close), Run closes app and exits the process (exit code 1 on
-// error).
-func Run(ctx context.Context, a *api.App, projectPath string) error {
+// window loops run on goroutines; when the last window closed (modified
+// documents are saved on close, each App is closed), Run exits the
+// process (exit code 1 on error).
+func Run(ctx context.Context, a *api.App, projectPath string, newApp func() (*api.App, error)) error {
 	if os.Getenv("TIEGEL_STARTUP_TRACE") != "" {
 		fmt.Fprintf(os.Stderr, "tiegel: backend ready after %v\n", time.Since(processStart).Round(time.Millisecond))
 	}
-	go func() {
-		w := new(app.Window)
-		w.Option(app.Title("Tiegel"), app.Size(unit.Dp(1280), unit.Dp(820)), app.MinSize(unit.Dp(640), unit.Dp(400)))
-		err := loop(ctx, w, controller.NewInProcess(a), projectPath)
-		_ = a.Close()
-		os.Exit(exitCode(err))
-	}()
+	m := &windows{ctx: ctx, newApp: newApp, wins: map[*window]bool{}}
+	m.open(a, projectPath)
 	app.Main()
 	return nil
+}
+
+// windows manages the project windows of the process.
+type windows struct {
+	ctx    context.Context
+	newApp func() (*api.App, error)
+
+	mu      sync.Mutex
+	wins    map[*window]bool
+	focused *window
+	lastErr error
+}
+
+// window is one project window.
+type window struct {
+	m    *windows
+	w    *app.Window
+	view *View
+	root string // project root (guarded by windows.mu)
+}
+
+// open starts a window for a showing project (may be "").
+func (m *windows) open(a *api.App, project string) {
+	win := &window{m: m, w: new(app.Window)}
+	m.mu.Lock()
+	m.wins[win] = true
+	m.mu.Unlock()
+	go func() {
+		win.w.Option(app.Title("Tiegel"), app.Size(unit.Dp(1280), unit.Dp(820)), app.MinSize(unit.Dp(640), unit.Dp(400)))
+		err := win.loop(controller.NewInProcess(a), project)
+		if cerr := a.Close(); err == nil && cerr != nil {
+			fmt.Fprintf(os.Stderr, "tiegel: %v\n", cerr)
+		}
+		m.closed(win, err)
+	}()
+}
+
+// closed removes win; the process ends with the last window.
+func (m *windows) closed(win *window, err error) {
+	m.mu.Lock()
+	delete(m.wins, win)
+	if m.focused == win {
+		m.focused = nil
+	}
+	if err != nil {
+		m.lastErr = err
+	}
+	left := len(m.wins)
+	last := m.lastErr
+	m.mu.Unlock()
+	if left == 0 {
+		os.Exit(exitCode(last))
+	}
+}
+
+// OpenWindow implements WindowHost.
+func (m *windows) OpenWindow(path string) {
+	if m.newApp == nil {
+		return
+	}
+	go func() {
+		a, err := m.newApp()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "tiegel: new window: %v\n", err)
+			return
+		}
+		m.open(a, path)
+	}()
+}
+
+// FocusProject implements WindowHost.
+func (m *windows) FocusProject(v *View, root string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for win := range m.wins {
+		if win.view != v && win.root == root && root != "" {
+			win.w.Perform(system.ActionRaise)
+			return true
+		}
+	}
+	return false
+}
+
+// quit closes all windows (each saves its documents).
+func (m *windows) quit() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for win := range m.wins {
+		win.w.Perform(system.ActionClose)
+	}
+}
+
+// route delivers a native menu item to the window with the focus.
+func (m *windows) route(id string) {
+	m.mu.Lock()
+	win := m.focused
+	m.mu.Unlock()
+	if win != nil && win.view != nil {
+		win.view.Post(func() { win.view.runMenuID(id) })
+	}
 }
 
 func exitCode(err error) int {
@@ -69,7 +157,8 @@ func exitCode(err error) int {
 }
 
 // loop runs the window event loop.
-func loop(ctx context.Context, w *app.Window, be controller.Backend, projectPath string) error {
+func (win *window) loop(be controller.Backend, projectPath string) error {
+	w, m, ctx := win.w, win.m, win.m.ctx
 	// Background work may finish before the native window exists; Gio's
 	// window must not be poked (Invalidate) before its first event – the
 	// first frame draws everything anyway.
@@ -89,6 +178,10 @@ func loop(ctx context.Context, w *app.Window, be controller.Backend, projectPath
 			w.Perform(system.ActionRaise)
 		}
 	}
+	v.Host, v.Quit = m, m.quit
+	m.mu.Lock()
+	win.view = v
+	m.mu.Unlock()
 	defer v.Close()
 	ctl.Start(projectPath)
 	go func() {
@@ -112,6 +205,12 @@ func loop(ctx context.Context, w *app.Window, be controller.Backend, projectPath
 				ctl.Autosave("focusLost")
 			}
 			focused = e.Config.Focused
+			if focused {
+				m.mu.Lock()
+				m.focused = win
+				m.mu.Unlock()
+				ctl.ReloadRecentProjects()
+			}
 		case app.FrameEvent:
 			if ctx.Err() != nil {
 				saveOnClose(ctl)
@@ -127,6 +226,10 @@ func loop(ctx context.Context, w *app.Window, be controller.Backend, projectPath
 					frameStart.Sub(processStart).Round(time.Millisecond), layoutDone.Sub(frameStart).Round(time.Millisecond),
 					time.Since(layoutDone).Round(time.Millisecond))
 			}
+			v.syncNativeMenu(focused, m.route)
+			m.mu.Lock()
+			win.root = ctl.Project.Root
+			m.mu.Unlock()
 			if t := windowTitle(ctl); t != title {
 				title = t
 				w.Option(app.Title(t))
@@ -153,15 +256,30 @@ func saveOnClose(ctl *controller.Controller) {
 	}
 }
 
+// windowTitle is "project [~/path] – file" (the project name and its
+// path, then the active file).
 func windowTitle(c *controller.Controller) string {
 	if !c.Project.Open {
 		return "Tiegel"
 	}
-	t := c.Project.Name + " – Tiegel"
+	t := c.Project.Name + " [" + tildePath(c.Project.Root) + "]"
 	if tab := c.ActiveTab(); tab != nil {
-		t = c.Project.Name + " – " + tab.Path + " – Tiegel"
+		t += " – " + tab.Path
 	}
 	return t
+}
+
+// tildePath abbreviates the home directory as ~.
+func tildePath(p string) string {
+	if h := homeDir(); h != "" {
+		if r, err := filepath.Rel(h, p); err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			if r == "." {
+				return "~"
+			}
+			return "~" + string(filepath.Separator) + r
+		}
+	}
+	return p
 }
 
 // systemDarkMode reports the OS appearance for the "system" theme. Only

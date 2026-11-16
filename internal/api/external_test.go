@@ -533,3 +533,50 @@ func TestReplaceMinimal(t *testing.T) {
 }
 
 func utf8Valid(s string) bool { return strings.ToValidUTF8(s, "�") == s }
+
+// Tiegel's own file operations (files.rename with open documents, also
+// a modified one, and a directory move) are no external changes.
+func TestFileOpsAreNotExternal(t *testing.T) {
+	for _, be := range extBackends() {
+		t.Run(be, func(t *testing.T) {
+			a, root := newWatchApp(t, be, map[string]string{"a.php": "<?php // a\n", "src/b.php": "<?php // b\n"})
+			events := logEvents(t, a, "*")
+			call(t, a, "doc.open", DocOpenParams{Path: "a.php"}, nil)
+			call(t, a, "doc.open", DocOpenParams{Path: "src/b.php"}, nil)
+			call(t, a, "doc.replace", DocReplaceParams{Path: "src/b.php", Text: "<?php // b unsaved\n"}, nil)
+			call(t, a, "files.rename", RenameParams{Path: "a.php", NewName: "renamed.php"}, nil)
+			call(t, a, "files.rename", RenameParams{Path: "src", NewName: "lib"}, nil)
+			writeExt(t, filepath.Join(root, "marker"), "m")
+			waitUntil(t, "marker from the watcher", func() bool {
+				for _, p := range events.all(TopicFilesChanged) {
+					for _, c := range p.(FilesChangedEvent).Changes {
+						if c.Path == "marker" && c.Source == FileSourceWatcher {
+							return true
+						}
+					}
+				}
+				return false
+			})
+			for _, topic := range []string{TopicDocDeletedOnDisk, TopicDocExternalConflict} {
+				if n := len(events.all(topic)); n != 0 {
+					t.Fatalf("%s after own file operations: %+v", topic, events.all(topic))
+				}
+			}
+			var sawTiegel bool
+			for _, p := range events.all(TopicFilesChanged) {
+				for _, c := range p.(FilesChangedEvent).Changes {
+					sawTiegel = sawTiegel || c.Source == FileSourceTiegel && c.Kind == FileRenamed && c.Path == "renamed.php"
+				}
+			}
+			if !sawTiegel {
+				t.Fatal("files.rename did not publish a tiegel-sourced rename")
+			}
+			if st := docState(t, a, "lib/b.php"); st.External != "" || !st.Modified {
+				t.Fatalf("moved document %+v", st)
+			}
+			call(t, a, "doc.save", DocSaveParams{Path: "lib/b.php"}, nil)
+			call(t, a, "doc.replace", DocReplaceParams{Path: "renamed.php", Text: "<?php // a2\n"}, nil)
+			call(t, a, "doc.save", DocSaveParams{Path: "renamed.php"}, nil)
+		})
+	}
+}

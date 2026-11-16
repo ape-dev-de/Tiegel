@@ -376,3 +376,75 @@ func (s *Store) Prune(p Policy) (PruneStats, error) {
 	}
 	return st, nil
 }
+
+// Move transfers the history of oldPath to newPath, e.g. after a rename:
+// the revisions of oldPath itself and, if it was a directory, of every file
+// below it now belong to the corresponding path under newPath. If the new
+// path already has revisions, both lists are merged by time and the IDs of
+// the merged file are renumbered. It returns the number of files moved.
+func (s *Store) Move(oldPath, newPath string) (int, error) {
+	oldPath, err := normPath(oldPath)
+	if err != nil {
+		return 0, err
+	}
+	newPath, err = normPath(newPath)
+	if err != nil {
+		return 0, err
+	}
+	if oldPath == newPath {
+		return 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idxDir := filepath.Join(s.dir, "index")
+	entries, err := os.ReadDir(idxDir)
+	if err != nil {
+		return 0, fmt.Errorf("history: move: %w", err)
+	}
+	prefix := oldPath + string(filepath.Separator)
+	moved := 0
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		file := filepath.Join(idxDir, e.Name())
+		revs, err := readIndex(file)
+		if err != nil {
+			return moved, err
+		}
+		if len(revs) == 0 {
+			continue
+		}
+		from := revs[0].Path
+		var to string
+		switch {
+		case from == oldPath:
+			to = newPath
+		case strings.HasPrefix(from, prefix):
+			to = newPath + string(filepath.Separator) + from[len(prefix):]
+		default:
+			continue
+		}
+		target := s.indexPath(to)
+		existing, err := readIndex(target)
+		if err != nil {
+			return moved, err
+		}
+		merged := append(existing, revs...)
+		sort.SliceStable(merged, func(i, j int) bool { return merged[i].Time.Before(merged[j].Time) })
+		for i := range merged {
+			merged[i].Path = to
+			if len(existing) > 0 {
+				merged[i].ID = uint64(i + 1)
+			}
+		}
+		if err := atomicfile.Write(target, encodeIndex(merged), 0o600); err != nil {
+			return moved, fmt.Errorf("history: move: %w", err)
+		}
+		if err := os.Remove(file); err != nil {
+			return moved, fmt.Errorf("history: move: %w", err)
+		}
+		moved++
+	}
+	return moved, nil
+}

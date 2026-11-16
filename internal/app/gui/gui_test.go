@@ -20,6 +20,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/syntax"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/statusbar"
+	"github.com/ape-dev-de/tiegel/internal/ui/templates"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 	"github.com/ape-dev-de/tiegel/internal/ui/uitest"
 )
@@ -202,7 +203,7 @@ func TestEditTypeAutosaveDiagnostics(t *testing.T) {
 	e.ctl.OpenFile("src/Shop.php", nil)
 	e.waitFor("tab", func() bool { return e.ctl.ActiveTab() != nil })
 	file := filepath.Join(e.root, "src", "Shop.php")
-	s := e.v.editors[file]
+	s := e.v.editors[sessionKey{e.ctl.ActiveGroup(), file}]
 	if s == nil {
 		t.Fatal("no editor session")
 	}
@@ -343,8 +344,8 @@ func TestShortcutsAndRegistry(t *testing.T) {
 	e.frame()
 	// Problems, the test window and Debug (the project is no repository,
 	// so the git windows are not installed).
-	if !opened || !ran || len(e.v.bench.ToolTabs) != 3 {
-		t.Fatalf("registry: opened %v ran %v tabs %d", opened, ran, len(e.v.bench.ToolTabs))
+	if !opened || !ran || len(e.v.bench.Stripes[templates.SideBottom]) != 3 {
+		t.Fatalf("registry: opened %v ran %v tabs %+v", opened, ran, e.v.bench.Stripes)
 	}
 	r.AddStatusProvider(func() []statusbar.Item { return []statusbar.Item{{ID: "debug", Text: "Listening"}} })
 	e.frame()

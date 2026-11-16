@@ -16,6 +16,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
+	"github.com/ape-dev-de/tiegel/internal/core/trash"
 	"github.com/ape-dev-de/tiegel/internal/core/watch"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
@@ -65,6 +66,12 @@ type Options struct {
 	// WatchPollInterval is the rescan interval of the polling backend
 	// (0: watch.DefaultPollInterval).
 	WatchPollInterval time.Duration
+	// GlobalSettings, if set, is the global settings store to use instead
+	// of opening one from ConfigDir. Several App instances in one process
+	// (one per project window) share it so that writes of one App are not
+	// overwritten by another's stale copy; change events are published on
+	// every sharing App's bus. Use App.Settings of the first App.
+	GlobalSettings *settings.Store
 }
 
 // App is the headless core of Tiegel: it owns the kernel services (bus,
@@ -79,6 +86,8 @@ type App struct {
 	modules *module.Registry
 	saver   *autosave.Manager
 	methods *registry
+	// detachGlobal detaches the bus from a shared global store.
+	detachGlobal func()
 
 	initErrs []error
 
@@ -92,6 +101,10 @@ type App struct {
 	watcher *watch.Watcher
 	closing chan struct{} // closed by Close
 	closeMu sync.Once
+	// trash moves a path to the trash (files.delete); start launches a
+	// detached program (files.reveal). Tests replace both.
+	trash func(path string) error
+	start func(name string, args ...string) error
 }
 
 // New creates an App with the built-in namespaces and the extensions from
@@ -121,6 +134,8 @@ func New(opts Options) (*App, error) {
 		bus:     b,
 		methods: newRegistry(),
 		docs:    make(map[string]*Doc),
+		trash:   trash.Move,
+		start:   startDetached,
 		closing: make(chan struct{}),
 	}
 	if _, err := watch.ParseBackend(opts.WatchBackend); err != nil {
@@ -129,9 +144,15 @@ func New(opts Options) (*App, error) {
 	a.hooks = hooks.New(hooks.WithErrorHandler(func(e *hooks.HookError) {
 		log.Warn("hook failed", "hook", e.Hook, "owner", e.Owner, "err", e.Err)
 	}))
-	global, err := settings.OpenGlobal(opts.ConfigDir, b)
-	if err != nil {
-		return nil, fmt.Errorf("api: global settings: %w", err)
+	global := opts.GlobalSettings
+	if global != nil {
+		a.detachGlobal = global.AttachBus(b)
+	} else {
+		g, err := settings.OpenGlobal(opts.ConfigDir, b)
+		if err != nil {
+			return nil, fmt.Errorf("api: global settings: %w", err)
+		}
+		global = g
 	}
 	a.global = global
 	a.modules = module.NewRegistry(module.Env{
@@ -160,6 +181,7 @@ func New(opts Options) (*App, error) {
 	a.registerProject()
 	a.registerDocs()
 	a.registerWatch()
+	a.registerFileOps()
 	a.registerSearch()
 	a.registerModules()
 	a.registerVersion()
@@ -189,6 +211,9 @@ func (a *App) Close() error {
 	a.preserveUnsaved("unsaved on exit", nil)
 	if err := a.modules.Stop(); err != nil {
 		errs = append(errs, err)
+	}
+	if a.detachGlobal != nil {
+		a.detachGlobal()
 	}
 	a.mu.Lock()
 	a.project = nil

@@ -94,6 +94,7 @@ func (d *debugDock) install() {
 	r := d.v.Registry
 	r.AddToolWindow(ToolWindow{
 		ID: ToolDebug, Title: "Debug", Glyph: atoms.GlyphDebug, Order: 25, Share: 0.45,
+		Mac: "Cmd+5", PC: "Alt+5", ActionID: ActDebugView,
 		Badge: func() (string, atoms.BadgeKind) {
 			switch {
 			case d.dbg().Paused():
@@ -131,7 +132,7 @@ func (d *debugDock) actions() []Action {
 		return ""
 	}
 	step := func(id keymap.Action, title, cmd string) Action {
-		return Action{ID: id, Title: title, Mac: chord("darwin", id), PC: chord("linux", id), Run: func(*View) { d.dbg().Step(cmd) }}
+		return Action{ID: id, Title: title, Mac: chord("darwin", id), PC: chord("linux", id), Menu: "Run", Section: "step", Run: func(*View) { d.dbg().Step(cmd) }}
 	}
 	return []Action{
 		step(debugui.ActionResume, "Resume", "run"),
@@ -139,13 +140,12 @@ func (d *debugDock) actions() []Action {
 		step(debugui.ActionStepInto, "Step Into", "stepInto"),
 		step(debugui.ActionStepOut, "Step Out", "stepOut"),
 		step(debugui.ActionStop, "Stop", "stopSession"),
-		{ID: debugui.ActionToggleListen, Title: "Start/Stop Listening for Xdebug", Run: func(*View) { d.dbg().ToggleListen() }},
-		{ID: ActToggleBreakpoint, Title: "Toggle Breakpoint", Mac: "Cmd+F8", PC: "Ctrl+F8", Run: func(v *View) {
+		{ID: debugui.ActionToggleListen, Title: "Start/Stop Listening for Xdebug", Menu: "Run", Section: "listen", Run: func(*View) { d.dbg().ToggleListen() }},
+		{ID: ActToggleBreakpoint, Title: "Toggle Breakpoint", Mac: "Cmd+F8", PC: "Ctrl+F8", Menu: "Run", Section: "breakpoints", Run: func(v *View) {
 			if file, line := v.CaretLine(); file != "" {
 				d.dbg().ToggleBreakpoint(file, line)
 			}
 		}},
-		{ID: ActDebugView, Title: "Debug", Mac: "Cmd+5", PC: "Alt+5", Run: func(v *View) { v.ToggleTool(ToolDebug) }},
 	}
 }
 

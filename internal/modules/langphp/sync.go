@@ -113,6 +113,29 @@ func (m *Module) resyncLocked(ctx context.Context, s *server, d api.DocSnapshot)
 	}
 }
 
+// onFilesChanged forwards renames and moves to the server
+// (workspace/didRenameFiles, if it registered for them). The open
+// documents are re-synchronised by the doc.closed/doc.opened events of the
+// rename.
+func (m *Module) onFilesChanged(e bus.Event) {
+	ev, ok := e.Payload.(api.FilesChangedEvent)
+	s := m.current()
+	if !ok || s == nil {
+		return
+	}
+	var files []protocol.FileRename
+	for _, c := range ev.Changes {
+		if c.Kind == api.FileRenamed && c.Source == api.FileSourceTiegel {
+			files = append(files, protocol.FileRename{OldURI: protocol.URIFromPath(c.OldFile), NewURI: protocol.URIFromPath(c.File)})
+		}
+	}
+	ctx, cancel := syncCtx()
+	defer cancel()
+	if _, err := s.client.DidRenameFiles(ctx, files); err != nil {
+		m.app.Logger().Warn("lang-php: didRenameFiles", "err", err)
+	}
+}
+
 func (m *Module) onSaved(e bus.Event) {
 	ev, ok := e.Payload.(api.FileSavedEvent)
 	s := m.current()

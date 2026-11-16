@@ -194,7 +194,12 @@ func Run(ctx context.Context, args []string, env Env) int {
 
 	opts := env.Options
 	opts.Watch = opts.Watch || cmd.watch
-	opts.Extensions = append(append([]func(*api.App) error(nil), opts.Extensions...), modules.Installer(env.Modules))
+	mods := env.Modules
+	// One-shot commands index the project only when they navigate
+	// (php-index starts on the first index.*/nav.* call); serve indexes in
+	// the background like the GUI.
+	mods.Index.Lazy = mods.Index.Lazy || cmd.name != "serve"
+	opts.Extensions = append(append([]func(*api.App) error(nil), opts.Extensions...), modules.Installer(mods))
 	if dir := p.value("config-dir"); dir != "" {
 		opts.ConfigDir = dir
 	} else if dir := env.Getenv("TIEGEL_CONFIG_DIR"); dir != "" {

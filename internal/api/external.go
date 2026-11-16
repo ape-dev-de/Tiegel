@@ -30,9 +30,6 @@ import (
 
 // Topics of the file watcher and external changes.
 const (
-	// TopicFilesChanged: files or directories of the project were
-	// created, modified, deleted or renamed (FilesChangedEvent).
-	TopicFilesChanged = "files.changed"
 	// TopicDocReloaded: an open document was replaced with the file on
 	// disk (DocReloadedEvent).
 	TopicDocReloaded = "doc.reloaded"
@@ -57,22 +54,6 @@ const (
 // SettingWatchExclude (project or global settings): directory names or
 // project-relative paths the watcher skips (default ["node_modules"]).
 const SettingWatchExclude = "watch.exclude"
-
-// FileChange is one entry of files.changed. Path/OldPath are display
-// paths (project relative), File/OldFile absolute.
-type FileChange struct {
-	Path    string `json:"path"`
-	File    string `json:"file"`
-	Kind    string `json:"kind"` // created, modified, deleted, renamed
-	OldPath string `json:"oldPath,omitempty"`
-	OldFile string `json:"oldFile,omitempty"`
-	Dir     bool   `json:"dir,omitempty"`
-}
-
-// FilesChangedEvent is the payload of files.changed.
-type FilesChangedEvent struct {
-	Changes []FileChange `json:"changes"`
-}
 
 // DocReloadedEvent is the payload of doc.reloaded.
 type DocReloadedEvent struct {
@@ -338,17 +319,20 @@ func (a *App) reconcile(d *Doc, source, renamedTo string) {
 		if !a.isCurrent(d) {
 			return nil
 		}
+		// The path is read here, under the save lock: files.rename moves
+		// documents under the same lock, so a rename reported by the
+		// watcher finds the document at its new path (no false delete).
 		d.mu.Lock()
-		known, seq := d.disk, d.diskSeq
+		known, seq, path := d.disk, d.diskSeq, d.path
 		d.mu.Unlock()
-		changed, cur, data, err := checkDisk(d.path, known)
+		changed, cur, data, err := checkDisk(path, known)
 		if err != nil {
-			a.log.Warn("external change check", "file", d.path, "err", err)
+			a.log.Warn("external change check", "file", path, "err", err)
 			return nil
 		}
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		if d.diskSeq != seq {
+		if d.diskSeq != seq || d.path != path {
 			return nil // a reload or save in between already handled it
 		}
 		if !changed {
@@ -408,7 +392,7 @@ func (a *App) ReloadDocument(path string) bool {
 	if err != nil {
 		return false
 	}
-	st, data, err := readDisk(d.path)
+	st, data, err := readDisk(d.Path())
 	if err != nil {
 		return false
 	}
@@ -456,7 +440,7 @@ func (a *App) takeDisk(path string) (DocState, error) {
 	}
 	var state DocState
 	err = a.saver.Exclusive(func() error {
-		st, data, err := readDisk(d.path)
+		st, data, err := readDisk(d.Path())
 		if errors.Is(err, fs.ErrNotExist) {
 			return Errorf(CodeNotFound, "%s no longer exists on disk: keep your version (keepMine) or close the document", path)
 		}
@@ -631,7 +615,7 @@ func (a *App) onWatchBatch(b watch.Batch) {
 	if len(b.Changes) > 0 {
 		ev := FilesChangedEvent{Changes: make([]FileChange, 0, len(b.Changes))}
 		for _, c := range b.Changes {
-			fc := FileChange{Path: a.displayPath(c.Path), File: c.Path, Kind: string(c.Kind), Dir: c.Dir}
+			fc := FileChange{Kind: string(c.Kind), Path: a.displayPath(c.Path), File: c.Path, Dir: c.Dir, Source: FileSourceWatcher}
 			if c.OldPath != "" {
 				fc.OldPath, fc.OldFile = a.displayPath(c.OldPath), c.OldPath
 			}

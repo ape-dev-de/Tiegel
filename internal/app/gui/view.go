@@ -2,13 +2,12 @@ package gui
 
 import (
 	"fmt"
-	"io"
 	"path"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
-	"gioui.org/io/clipboard"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/text"
@@ -16,6 +15,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
+	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/completion"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/filetree"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/findbar"
@@ -24,7 +24,6 @@ import (
 	rtui "github.com/ape-dev-de/tiegel/internal/ui/organisms/runtime"
 	settingsui "github.com/ape-dev-de/tiegel/internal/ui/organisms/settings"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/statusbar"
-	"github.com/ape-dev-de/tiegel/internal/ui/organisms/tabs"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/welcome"
 	"github.com/ape-dev-de/tiegel/internal/ui/templates"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
@@ -33,6 +32,15 @@ import (
 
 // toolProblems is the ID of the built-in Problems tool window.
 const toolProblems = "problems"
+
+// Status bar item IDs.
+const (
+	statusCaret = "caret"
+	statusEOL   = "eol"
+	statusLang  = "lang"
+	statusLSP   = "lsp"
+	statusMsg   = "notice"
+)
 
 // chooser modes.
 const (
@@ -65,11 +73,40 @@ type View struct {
 	systemAt     time.Time
 	systemIsDark bool
 
-	bench    templates.Workbench
-	tree     filetree.Tree
-	treeSeen [2]uint64 // tree and git versions applied to the organism
-	tabBar   tabs.Bar
-	status   statusbar.Bar
+	bench        templates.Workbench
+	tree         filetree.Tree
+	treeSeen     [2]uint64 // tree and git versions applied to the organism
+	tabBars      map[*controller.EditorGroup]*groupView
+	splitViews   map[*controller.SplitNode]*molecules.Split
+	status       statusbar.Bar
+	menuBar      menuBar
+	toolsFor     *controller.ToolLayout
+	toolsSeen    uint64
+	toolIDs      map[string]bool
+	toolsVersion uint64
+	// activeTool is the tool window the user worked with last
+	// (Shift+Escape hides it).
+	activeTool string
+	// pendingEdit is an editor keymap action chosen in the Edit menu; the
+	// active editor runs it in its next layout.
+	pendingEdit keymap.Action
+	// zoomDelta is the temporary editor font size change (Cmd+=/Cmd+-).
+	zoomDelta float32
+	fontKey   tokens.FontPrefs
+	escKeys   [2]key.Filter
+
+	// Host opens other project windows (nil: single window).
+	Host WindowHost
+	// Quit closes all windows (native app menu); nil: unsupported.
+	Quit func()
+	// MenuPresenter replaces the default menu presentation (a context
+	// menu component, AP10.4).
+	MenuPresenter MenuPresenter
+	// noNativeDialog forces the Gio folder browser (tests).
+	noNativeDialog bool
+
+	postMu   sync.Mutex
+	posted   []func()
 	php      rtui.StatusbarVersion
 	find     findbar.Bar
 	findOpen bool
@@ -89,7 +126,7 @@ type View struct {
 
 	welcome welcome.View
 
-	editors map[string]*editorSession
+	editors map[sessionKey]*editorSession
 
 	global, editorKeys shortcuts
 	lastActive         string
@@ -119,15 +156,19 @@ func NewView(ctl *controller.Controller, goos string) *View {
 		goos = runtime.GOOS
 	}
 	v := &View{
-		ctl: ctl, goos: goos, Registry: NewRegistry(), shaper: tokens.NewShaper(),
-		editors: map[string]*editorSession{}, Invalidate: func() {},
+		ctl: ctl, goos: goos, Registry: NewRegistry(), shaper: newShaper(),
+		editors: map[sessionKey]*editorSession{}, Invalidate: func() {},
 		systemDark: systemDarkMode, Raise: func() {}, recovery: newRecoveryBar(),
+		tabBars: map[*controller.EditorGroup]*groupView{}, splitViews: map[*controller.SplitNode]*molecules.Split{},
+		toolIDs: map[string]bool{},
 	}
 	for _, a := range defaultActions() {
 		v.Registry.AddAction(a)
 	}
+	v.installProjectTool()
 	v.Registry.AddToolWindow(ToolWindow{
 		ID: toolProblems, Title: "Problems", Glyph: atoms.GlyphWarning, Order: 10,
+		Mac: "Cmd+6", PC: "Alt+6", ActionID: ActProblemsView,
 		Badge: func() (string, atoms.BadgeKind) {
 			e, w := ctl.ProblemCounts()
 			switch {
@@ -140,8 +181,6 @@ func NewView(ctl *controller.Controller, goos string) *View {
 		},
 		Layout: v.layoutProblems,
 	})
-	v.bench.SidebarVisible = true
-	v.bench.ActiveTool = toolProblems
 	v.welcome.Version = version.Version
 	v.applyTheme()
 	v.gitd = installGit(v)
@@ -155,11 +194,53 @@ func (v *View) Controller() *controller.Controller { return v.ctl }
 // Theme returns the current theme.
 func (v *View) Theme() *tokens.Theme { return v.th }
 
-// RunAction runs a registered action.
+// RunAction runs a registered action (shortcut processing; editor-scope
+// actions are run by the editor with its document locked).
 func (v *View) RunAction(id keymap.Action) {
 	if a, ok := v.Registry.Action(id); ok && a.Run != nil {
 		a.Run(v)
 	}
+}
+
+// Post runs fn on the UI goroutine during the next frame (from any
+// goroutine) and requests that frame.
+func (v *View) Post(fn func()) {
+	v.postMu.Lock()
+	v.posted = append(v.posted, fn)
+	v.postMu.Unlock()
+	if v.Invalidate != nil {
+		v.Invalidate()
+	}
+}
+
+func (v *View) runPosted() {
+	v.postMu.Lock()
+	q := v.posted
+	v.posted = nil
+	v.postMu.Unlock()
+	for _, fn := range q {
+		fn()
+	}
+}
+
+// fontPrefs returns the font preferences with the zoom applied.
+func (v *View) fontPrefs() tokens.FontPrefs {
+	p := v.ctl.Prefs
+	fp := tokens.FontPrefs{EditorFamily: p.EditorFont, EditorSize: p.EditorFontSize, LineHeight: p.LineHeight, UISize: p.UIFontSize}.Normalized()
+	if v.zoomDelta != 0 {
+		fp.EditorSize = min(max(fp.EditorSize+v.zoomDelta, 6), 48)
+	}
+	return fp
+}
+
+// zoom changes the editor font size temporarily (delta 0 resets).
+func (v *View) zoom(delta int) {
+	if delta == 0 {
+		v.zoomDelta = 0
+		return
+	}
+	base := tokens.FontPrefs{EditorSize: v.ctl.Prefs.EditorFontSize}.Normalized().EditorSize
+	v.zoomDelta = min(max(v.zoomDelta+float32(delta), 6-base), 48-base)
 }
 
 // applyTheme rebuilds the theme when the preference changed.
@@ -177,86 +258,12 @@ func (v *View) applyTheme() {
 			mode = tokens.ModeLight
 		}
 	}
-	if v.th != nil && v.theme == pref && v.th.Mode == mode {
+	fp := v.fontPrefs()
+	if v.th != nil && v.theme == pref && v.th.Mode == mode && v.fontKey == fp {
 		return
 	}
-	v.theme = pref
-	v.th = tokens.New(mode, v.shaper)
-}
-
-// Frame lays out one frame of the window filling gtx.
-func (v *View) Frame(gtx layout.Context) layout.Dimensions {
-	v.ctl.Drain()
-	v.applyTheme()
-	th := v.th
-	if !v.ctl.Project.Open {
-		v.welcome.Recent = v.ctl.RecentProjects
-		v.welcome.Error = v.ctl.Status.Notice
-		for _, e := range v.welcome.Update(gtx) {
-			if o, ok := e.(welcome.OpenEvent); ok {
-				v.ctl.Status.Notice = ""
-				v.ctl.OpenProject(expandHome(o.Path))
-			}
-		}
-		v.global.build(v.Registry, v.goos, ScopeGlobal, nil)
-		v.global.process(gtx, v)
-		return v.welcome.Layout(gtx, th)
-	}
-
-	for _, h := range v.Registry.frames {
-		h(v, gtx)
-	}
-	if v.clipboard != nil {
-		gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(*v.clipboard))})
-		v.clipboard = nil
-	}
-	v.global.build(v.Registry, v.goos, ScopeGlobal, nil)
-	v.global.process(gtx, v)
-	v.handleWorkbench(gtx)
-	v.handleTree(gtx)
-	v.handleTabs(gtx)
-	v.handleStatus(gtx)
-	v.handleProblems(gtx)
-	v.handleRecovery(gtx)
-	v.handleOverlay(gtx)
-	v.closeStaleEditors()
-
-	slots := templates.Slots{
-		Sidebar: func(gtx layout.Context) layout.Dimensions { return v.tree.Layout(gtx, th) },
-		Tabs:    v.layoutTabs,
-		Editor:  v.layoutEditorArea,
-		Status:  func(gtx layout.Context) layout.Dimensions { return v.status.Layout(gtx, th) },
-	}
-	if v.findOpen && v.activeSession() != nil {
-		slots.Find = v.layoutFind
-	}
-	if tw := v.Registry.ToolWindows(Bottom); len(tw) > 0 {
-		v.bench.ToolTabs = v.bench.ToolTabs[:0]
-		for _, t := range tw {
-			tt := templates.ToolTab{ID: t.ID, Title: t.Title, Glyph: t.Glyph}
-			if t.Badge != nil {
-				tt.Badge, tt.BadgeKind = t.Badge()
-			}
-			v.bench.ToolTabs = append(v.bench.ToolTabs, tt)
-		}
-		if t, ok := v.Registry.ToolWindow(v.bench.ActiveTool); ok {
-			slots.Tool = func(gtx layout.Context) layout.Dimensions { return t.Layout(gtx, th) }
-		}
-	}
-	if rw := v.Registry.ToolWindows(Right); len(rw) > 0 {
-		t := rw[0]
-		slots.Right = func(gtx layout.Context) layout.Dimensions { return t.Layout(gtx, th) }
-	}
-	switch {
-	case v.settingsOpen:
-		slots.Overlay, slots.OverlayCentered = func(gtx layout.Context) layout.Dimensions { return v.settings.Layout(gtx, th) }, true
-	case v.popup != nil:
-		p := v.popup
-		slots.Overlay, slots.OverlayCentered = func(gtx layout.Context) layout.Dimensions { return p.Layout(gtx, th) }, p.Centered
-	case v.chooseMode != chooseNone:
-		slots.Overlay = func(gtx layout.Context) layout.Dimensions { return v.chooser.Layout(gtx, th) }
-	}
-	return v.bench.Layout(gtx, th, slots)
+	v.theme, v.fontKey = pref, fp
+	v.th = tokens.New(mode, v.shaper).WithFonts(fp)
 }
 
 // expandHome replaces a leading ~ with the home directory.
@@ -268,56 +275,6 @@ func expandHome(p string) string {
 		}
 	}
 	return p
-}
-
-// ---- workbench, tree, tabs, status ------------------------------------------
-
-// ShowTool opens the tool window id and brings it to the front.
-func (v *View) ShowTool(id string) {
-	if v.bench.ToolOpen && v.bench.ActiveTool == id {
-		return
-	}
-	v.toggleTool(id)
-}
-
-// ToolShown reports whether tool window id is open and in front.
-func (v *View) ToolShown(id string) bool { return v.bench.ToolOpen && v.bench.ActiveTool == id }
-
-// HideTool closes the tool area if id is in front.
-func (v *View) HideTool(id string) {
-	if v.bench.ActiveTool == id {
-		v.bench.ToolOpen = false
-		v.bench.ActiveTool = toolProblems
-	}
-}
-
-// ToggleTool shows or hides tool window id.
-func (v *View) ToggleTool(id string) { v.toggleTool(id) }
-
-func (v *View) toggleTool(id string) {
-	if v.bench.ToolOpen && v.bench.ActiveTool == id {
-		v.bench.ToolOpen = false
-		return
-	}
-	v.bench.ActiveTool, v.bench.ToolOpen = id, true
-	t, ok := v.Registry.ToolWindow(id)
-	if ok && t.Share > 0 && v.bench.ToolShare() < t.Share {
-		v.bench.SetToolShare(t.Share)
-	}
-	if ok && t.OnOpen != nil {
-		t.OnOpen()
-	}
-}
-
-func (v *View) handleWorkbench(gtx layout.Context) {
-	for _, e := range v.bench.Update(gtx) {
-		switch e := e.(type) {
-		case templates.ToolEvent:
-			v.toggleTool(e.ID)
-		case templates.DismissEvent:
-			v.closeOverlay()
-		}
-	}
 }
 
 func (v *View) handleTree(gtx layout.Context) {
@@ -353,58 +310,6 @@ func (v *View) convertNode(n *controller.Node) *filetree.Node {
 	}
 	return fn
 }
-
-func (v *View) handleTabs(gtx layout.Context) {
-	v.tabBar.Items = v.tabBar.Items[:0]
-	for _, t := range v.ctl.Tabs {
-		v.tabBar.Items = append(v.tabBar.Items, tabs.Item{ID: t.File, Title: t.Title(), Tooltip: t.Path, Modified: t.Modified, Glyph: filetree.Glyph(&filetree.Node{Name: t.Title()})})
-	}
-	v.tabBar.Active = ""
-	if t := v.ctl.ActiveTab(); t != nil {
-		v.tabBar.Active = t.File
-	}
-	if v.tabBar.Active != v.lastActive {
-		v.lastActive = v.tabBar.Active
-		v.tabBar.ScrollToActive()
-		if t := v.ctl.ActiveTab(); t != nil {
-			v.tree.Select(t.Path)
-			v.ctl.LoadAncestors(t.Path)
-		}
-	}
-	for _, e := range v.tabBar.Update(gtx) {
-		switch e := e.(type) {
-		case tabs.SelectEvent:
-			for i, t := range v.ctl.Tabs {
-				if t.File == e.ID {
-					v.ctl.Activate(i)
-				}
-			}
-		case tabs.CloseEvent:
-			for i, t := range v.ctl.Tabs {
-				if t.File == e.ID {
-					v.ctl.CloseTab(i)
-					break
-				}
-			}
-		}
-	}
-}
-
-func (v *View) layoutTabs(gtx layout.Context) layout.Dimensions {
-	if len(v.tabBar.Items) == 0 {
-		return layout.Dimensions{}
-	}
-	return v.tabBar.Layout(gtx, v.th)
-}
-
-// Status bar item IDs.
-const (
-	statusCaret = "caret"
-	statusEOL   = "eol"
-	statusLang  = "lang"
-	statusLSP   = "lsp"
-	statusMsg   = "notice"
-)
 
 func (v *View) handleStatus(gtx layout.Context) {
 	st := v.ctl.Status
@@ -602,6 +507,7 @@ func (v *View) openSettings() {
 	v.chooseMode = chooseNone
 	v.settingsOpen = true
 	v.ctl.LoadSettingsData()
+	v.ctl.LoadMonoFonts(tokens.MonospaceFamilies)
 	v.mappings = nil
 }
 
@@ -724,6 +630,8 @@ func (v *View) handleSettings(gtx layout.Context) {
 		p.Modules = append(p.Modules, settingsui.Module{ID: m.ID, DependsOn: m.DependsOn, Dependents: c.Dependents(m.ID), Enabled: m.Enabled, Running: m.Running, Error: m.Error})
 	}
 	p.TabWidth, p.Theme, p.IdleSeconds, p.UpdateCheck = c.Prefs.TabWidth, c.Prefs.Theme, c.Prefs.IdleSeconds, c.Prefs.UpdateCheck
+	fp := tokens.FontPrefs{EditorFamily: c.Prefs.EditorFont, EditorSize: c.Prefs.EditorFontSize, LineHeight: c.Prefs.LineHeight, UISize: c.Prefs.UIFontSize}.Normalized()
+	p.EditorFont, p.EditorFonts, p.EditorFontSize, p.LineHeight, p.UIFontSize = c.Prefs.EditorFont, c.MonoFonts, fp.EditorSize, fp.LineHeight, fp.UISize
 	p.UpdateStatus = ""
 	if strings.Contains(c.Status.Notice, "pdate") {
 		p.UpdateStatus = c.Status.Notice
@@ -776,6 +684,15 @@ func (v *View) handleSettings(gtx layout.Context) {
 			c.SetTheme(e.Theme)
 		case settingsui.IdleEvent:
 			c.SetIdleSeconds(e.Seconds)
+		case settingsui.FontFamilyEvent:
+			c.SetEditorFont(e.Family)
+		case settingsui.FontSizeEvent:
+			v.zoomDelta = 0
+			c.SetEditorFontSize(e.Size)
+		case settingsui.LineHeightEvent:
+			c.SetLineHeight(e.Value)
+		case settingsui.UIFontSizeEvent:
+			c.SetUIFontSize(e.Size)
 		case settingsui.UpdateCheckEvent:
 			c.SetUpdateCheck(e.On)
 		case settingsui.CheckNowEvent:
