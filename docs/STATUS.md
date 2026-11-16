@@ -18,7 +18,7 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 | 4.2–4.3 | lang-php Modul + UI | ⬜ | |
 | 5.1–5.4 | Interpreter, Compose, PHP-Version, Features | 🟡 | 5.1–5.2 ✅ (interp, compose); 5.3–5.4 in Arbeit |
 | 5.5 | Runtime-UI | ⬜ | |
-| 6.1 | Git-CLI-Wrapper | 🟡 | Welle 1 |
+| 6.1 | Git-CLI-Wrapper | ✅ | 95 %; Teil-Commit über temporären Index, Myers-Diff, Merge3; git ≥ 2.28 |
 | 6.2–6.5 | Git-UI, Commit-Dialog, Merge | ⬜ | |
 | 7.1 | DBGp-Server | ✅ | 93 %; Test mit echtem Xdebug offen (lokal nicht installiert) |
 | 7.2–7.3 | Debug-Modul + UI | ⬜ | |
