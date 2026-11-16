@@ -358,6 +358,8 @@ func (e *Editor) gutterPress(pe pointer.Event, pt image.Point) {
 	line := e.folds.VisibleToDoc(row)
 	area := GutterIcons
 	switch {
+	case pt.X < g.annotW:
+		area = GutterAnnotation
 	case pt.X >= g.foldX:
 		area = GutterFold
 		if r, ok := e.folds.RangeAt(line); ok && r.EndLine > r.StartLine {
@@ -387,6 +389,8 @@ func (e *Editor) secondaryPress(pe pointer.Event) {
 	}
 	area := GutterIcons
 	switch {
+	case pt.X < g.annotW:
+		area = GutterAnnotation
 	case pt.X >= g.chgX:
 		area = GutterChanges
 	case pt.X >= g.iconX+g.iconW:

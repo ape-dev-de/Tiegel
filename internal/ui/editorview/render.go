@@ -38,6 +38,7 @@ type geometry struct {
 	valid     bool
 	size      image.Point
 	gutterW   int
+	annotW    int
 	iconX     int
 	iconW     int
 	numRight  int
@@ -103,7 +104,7 @@ func (e *Editor) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions 
 	e.updateMetrics(gtx, th)
 	e.cur.TabWidth = e.tabWidth()
 	e.cur.AutoClose = e.AutoClose
-	e.computeGeometry(gtx, size)
+	e.computeGeometry(gtx, th, size)
 	e.cur.PageLines = max(1, size.Y/e.met.lineH-1)
 	if e.scrollCare {
 		e.scrollToCaret()
@@ -126,17 +127,23 @@ func (e *Editor) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions 
 	return layout.Dimensions{Size: size}
 }
 
-func (e *Editor) computeGeometry(gtx layout.Context, size image.Point) {
+func (e *Editor) computeGeometry(gtx layout.Context, th *tokens.Theme, size image.Point) {
 	g := &e.geo
 	g.valid = true
 	g.size = size
 	g.lineH = e.met.lineH
 	g.rows = e.folds.VisibleCount()
 	digits := max(3, numDigits(e.buf.LineCount()))
-	x := gtx.Dp(6)
+	g.annotW = 0
+	if e.annot != nil {
+		g.annotW = max(0, e.annot.GutterWidth(gtx, th))
+	}
+	x := g.annotW + gtx.Dp(6)
 	g.iconX, g.iconW = x, gtx.Dp(16)
 	x += g.iconW + gtx.Dp(4)
-	x += e.met.colX(digits)
+	if !e.HideLineNumbers {
+		x += e.met.colX(digits)
+	}
 	g.numRight = x
 	x += gtx.Dp(6)
 	g.chgX, g.chgW = x, gtx.Dp(3)
@@ -274,12 +281,13 @@ func (e *Editor) paint(gtx layout.Context, th *tokens.Theme) {
 	textArea := image.Rect(g.gutterW, 0, g.size.X, g.size.Y)
 	area := clip.Rect(textArea).Push(ops)
 	ox := g.textX - e.scroll.X
+	decorated := e.paintDecorations(ops, th, vis, ox)
 	for _, v := range vis {
 		row := image.Rect(g.gutterW, v.y, g.size.X, v.y+g.lineH)
 		switch {
 		case execLines[v.line]:
 			draw.Rect(ops, row, tokens.WithAlpha(th.Color.Warning, 0x24))
-		case caretLines[v.line] && e.focused:
+		case caretLines[v.line] && e.focused && !decorated[v.line]:
 			draw.Rect(ops, row, th.Editor.CurrentLine)
 		}
 	}
@@ -309,7 +317,9 @@ func (e *Editor) paint(gtx layout.Context, th *tokens.Theme) {
 	e.paintCarets(gtx, th, vis, sels, ox)
 	area.Pop()
 
-	e.paintGutter(gtx, th, vis, markers, caretLines)
+	e.paintGutter(gtx, th, vis, markers, caretLines, decorated)
+	e.paintSeparators(gtx, th)
+	e.paintDecorationMarks(gtx, th)
 	e.paintScrollbars(gtx, th, s, sels)
 }
 
@@ -595,7 +605,7 @@ func toneColor(th *tokens.Theme, t Tone) color.NRGBA {
 	return th.Color.TextMuted
 }
 
-func (e *Editor) paintGutter(gtx layout.Context, th *tokens.Theme, vis []visLine, markers [][]Marker, caretLines map[int]bool) {
+func (e *Editor) paintGutter(gtx layout.Context, th *tokens.Theme, vis []visLine, markers [][]Marker, caretLines, decorated map[int]bool) {
 	g := &e.geo
 	ops := gtx.Ops
 	gr := image.Rect(0, 0, g.gutterW, g.size.Y)
@@ -605,14 +615,21 @@ func (e *Editor) paintGutter(gtx layout.Context, th *tokens.Theme, vis []visLine
 	lineH := g.lineH
 	for i, v := range vis {
 		active := caretLines[v.line] && e.focused
-		if active {
+		if decorated[v.line] {
+			if d, ok := e.decorationAt(v.line); ok {
+				lc, _, _ := decorationColors(th, d.Kind)
+				draw.Rect(ops, image.Rect(g.annotW, v.y, g.gutterW, v.y+lineH), tokens.Mix(lc, th.Editor.Gutter, 0.35))
+			}
+		} else if active {
 			draw.Rect(ops, image.Rect(0, v.y, g.gutterW, v.y+lineH), th.Editor.CurrentLine)
 		}
 		nc := th.Editor.LineNumber
 		if caretLines[v.line] {
 			nc = th.Editor.LineNumberActive
 		}
-		e.paintNumber(ops, th.Shaper, v.line+1, g.numRight, v.y, nc)
+		if !e.HideLineNumbers {
+			e.paintNumber(ops, th.Shaper, v.line+1, g.numRight, v.y, nc)
+		}
 
 		cy := v.y + lineH/2
 		for _, m := range markers[i] {
@@ -629,6 +646,7 @@ func (e *Editor) paintGutter(gtx layout.Context, th *tokens.Theme, vis []visLine
 			t.Pop()
 		}
 	}
+	e.paintGutterColumn(gtx, th, vis, caretLines)
 }
 
 func (e *Editor) paintMarker(gtx layout.Context, th *tokens.Theme, m Marker, v visLine, cy int) {

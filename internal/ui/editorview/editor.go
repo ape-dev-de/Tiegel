@@ -66,6 +66,9 @@ type Editor struct {
 	ReadOnly bool
 	// AutoClose inserts closing brackets and quotes (default true).
 	AutoClose bool
+	// HideLineNumbers removes the line number column (e.g. when a
+	// GutterColumn shows its own numbers).
+	HideLineNumbers bool
 
 	buf   *buffer.Buffer
 	cur   *cursor.Model
@@ -73,6 +76,8 @@ type Editor struct {
 	unsub func()
 
 	markers MarkerProvider
+	annot   GutterColumn
+	decos   []LineDecoration
 	diags   []Diagnostic
 	query   *search.Query
 
@@ -253,6 +258,7 @@ func (e *Editor) onEdit(ed buffer.Edit) {
 		e.folds.SetLineCount(e.buf.LineCount())
 	}
 	e.cache.applyEdit(ed)
+	e.shiftDecorations(ed)
 	for i := range e.diags {
 		e.diags[i].Start = mapOffset(e.diags[i].Start, ed)
 		e.diags[i].End = mapOffset(e.diags[i].End, ed)
@@ -323,6 +329,8 @@ const (
 	GutterNumbers
 	GutterChanges
 	GutterFold
+	// GutterAnnotation is the extra column of SetGutterColumn.
+	GutterAnnotation
 )
 
 // GutterClickEvent reports a click into the gutter (e.g. to toggle a
