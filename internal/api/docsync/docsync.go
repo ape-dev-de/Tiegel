@@ -123,8 +123,13 @@ func (m *Mirror) onBufferEdit(e buffer.Edit) {
 	}
 }
 
-// Path returns the document path as the server reports it.
-func (m *Mirror) Path() string { return m.path }
+// Path returns the document path as the server reports it. It follows
+// renames and moves (doc.renamed).
+func (m *Mirror) Path() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.path
+}
 
 // Version returns the server version the local buffer corresponds to.
 func (m *Mirror) Version() uint64 {
@@ -225,7 +230,7 @@ func (m *Mirror) history(ctx context.Context, method string) (bool, error) {
 	if err := m.checkOpen(); err != nil {
 		return false, err
 	}
-	res, err := api.Call[api.UndoResult](ctx, m.c, method, api.PathParams{Path: m.path})
+	res, err := api.Call[api.UndoResult](ctx, m.c, method, api.PathParams{Path: m.Path()})
 	if err != nil {
 		return false, err
 	}
@@ -237,7 +242,7 @@ func (m *Mirror) Save(ctx context.Context) (api.DocSaveResult, error) {
 	if err := m.checkOpen(); err != nil {
 		return api.DocSaveResult{}, err
 	}
-	res, err := api.Call[api.DocSaveResult](ctx, m.c, "doc.save", api.PathParams{Path: m.path})
+	res, err := api.Call[api.DocSaveResult](ctx, m.c, "doc.save", api.PathParams{Path: m.Path()})
 	if err != nil {
 		return res, err
 	}
@@ -328,6 +333,17 @@ func (m *Mirror) onEvent(e api.Event) {
 		m.mu.Lock()
 		if st.Path == m.path && st.Version == m.version {
 			m.state = st
+		}
+		m.mu.Unlock()
+	case api.TopicDocRenamed:
+		var ev api.DocRenamedEvent
+		if json.Unmarshal(e.Payload, &ev) != nil {
+			return
+		}
+		m.mu.Lock()
+		if ev.From == m.path && ev.Generation == m.state.Generation && !m.closed {
+			m.path = ev.To
+			m.state.Path = ev.To
 		}
 		m.mu.Unlock()
 	case api.TopicDocClosed:

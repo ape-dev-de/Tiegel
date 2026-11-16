@@ -25,6 +25,10 @@
 //   - history: Local History. Every save becomes a content-addressed,
 //     deduplicated, gzip-compressed revision that can be listed, restored
 //     and pruned. Stored per project below the settings project directory.
+//   - trash: moves files to the desktop trash (macOS NSFileManager via
+//     cgo, freedesktop.org trash on Linux) for files.delete.
+//   - fspath: OS-aware path helpers (absolute/rooted paths, containment,
+//     valid new file names incl. Windows rules).
 //   - autosave: PhpStorm-style autosave (focus lost, before run/debug/commit,
 //     optional idle timer) over an editor abstraction (DirtyDocs). Each save
 //     runs filter "file.beforeSave", writes the file, records Local History

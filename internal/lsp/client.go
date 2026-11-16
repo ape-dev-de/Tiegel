@@ -286,9 +286,10 @@ var standardTokenModifiers = []string{
 func clientCapabilities() protocol.ClientCapabilities {
 	md := []string{protocol.Markdown, protocol.PlainText}
 	return protocol.ClientCapabilities{
-		General:   &protocol.GeneralClientCapabilities{PositionEncodings: []string{"utf-16"}},
-		Workspace: &protocol.WorkspaceClientCapabilities{Configuration: true, WorkspaceFolders: true},
-		Window:    &protocol.WindowClientCapabilities{WorkDoneProgress: true},
+		General: &protocol.GeneralClientCapabilities{PositionEncodings: []string{"utf-16"}},
+		Workspace: &protocol.WorkspaceClientCapabilities{Configuration: true, WorkspaceFolders: true,
+			FileOperations: &protocol.FileOperationClientCapabilities{DidRename: true}},
+		Window: &protocol.WindowClientCapabilities{WorkDoneProgress: true},
 		TextDocument: &protocol.TextDocumentClientCapabilities{
 			Synchronization: &protocol.SyncClientCapabilities{DidSave: true},
 			Completion: &protocol.CompletionClientCapabilities{
@@ -461,6 +462,21 @@ func (c *Client) DidChange(ctx context.Context, uri protocol.DocumentURI, versio
 		TextDocument:   protocol.VersionedTextDocumentIdentifier{URI: uri, Version: version},
 		ContentChanges: send,
 	})
+}
+
+// DidRenameFiles tells the server about renamed files or folders
+// (workspace/didRenameFiles) if it registered for them; sent reports
+// whether the notification went out. The open documents themselves are
+// re-synchronised separately (didClose/didOpen).
+func (c *Client) DidRenameFiles(ctx context.Context, files []protocol.FileRename) (sent bool, err error) {
+	ws := c.caps.Workspace
+	if len(files) == 0 || ws == nil || ws.FileOperations == nil || ws.FileOperations.DidRename == nil {
+		return false, nil
+	}
+	if err := c.notify(ctx, protocol.MethodDidRenameFiles, protocol.RenameFilesParams{Files: files}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // DidSave notifies the server that the document was saved, including its
