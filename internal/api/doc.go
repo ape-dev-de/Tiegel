@@ -10,7 +10,8 @@
 //	events.*   subscribe, unsubscribe, publish
 //	project.*  open, info, close
 //	files.*    list, read, detectLanguage
-//	doc.*      open, close, list, text, insert, delete, replace, undo, redo, save, saveAll
+//	doc.*      open, close, list, text, insert, delete, replace, undo, redo, save, saveAll, resolveExternal
+//	watch.*    start, stop, status, refresh (project file watcher, external changes)
 //	history.*  list, content, restore
 //	search.*   inDoc, replaceInDoc
 //	modules.*  list, enable, disable

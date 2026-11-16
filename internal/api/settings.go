@@ -24,7 +24,7 @@ const SettingAutosaveIdle = "autosave.idleSeconds"
 // clientSettingPrefixes are the key namespaces clients may write with
 // "settings.set". Module-owned keys (interpreter, overrides, mappings) are
 // changed through their own methods so that the matching events fire.
-var clientSettingPrefixes = []string{"ui.", "editor.", "update."}
+var clientSettingPrefixes = []string{"ui.", "editor.", "update.", "watch."}
 
 // SettingsParams address a setting. Scope is "global" (default) or
 // "project".
@@ -66,7 +66,7 @@ type AutosaveConfig struct {
 
 func (a *App) registerSettings() {
 	mustHandle(a, "settings.get", "Read an internal setting (scope global or project)", a.settingsGet)
-	mustHandle(a, "settings.set", "Write a client setting (keys ui.*, editor.*, update.*; null deletes)", a.settingsSet)
+	mustHandle(a, "settings.set", "Write a client setting (keys ui.*, editor.*, update.*, watch.*; null deletes)", a.settingsSet)
 	mustHandle(a, "autosave.trigger", "Save all modified documents now (trigger focusLost, idle, beforeRun, …)", a.autosaveTrigger)
 	mustHandle(a, "autosave.config", "Read or set the autosave idle delay (idleSeconds, 0 = off)", a.autosaveConfig)
 	if secs := settings.Get(a.global, SettingAutosaveIdle, 0); secs > 0 {

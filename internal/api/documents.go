@@ -35,6 +35,15 @@ type Doc struct {
 	path string // absolute
 	lang langdetect.Language
 	buf  *buffer.Buffer
+
+	// External changes (external.go), guarded by mu: the file state as
+	// last read or written by Tiegel, a counter of its updates, and the
+	// pending external change ("" or External*) with the hash it was
+	// reported for.
+	disk     diskStamp
+	diskSeq  uint64
+	external string
+	extHash  [32]byte
 }
 
 // Lock acquires the document lock.
@@ -57,12 +66,12 @@ func (d *Doc) Language() langdetect.Language { return d.lang }
 func (d *Doc) Generation() uint64 { return d.gen }
 
 // newDoc creates a document and wires buffer.OnEdit to the bus.
-func (a *App) newDoc(abs string, data []byte) *Doc {
+func (a *App) newDoc(abs string, data []byte, disk diskStamp) *Doc {
 	a.mu.Lock()
 	a.docSeq++
 	gen := a.docSeq
 	a.mu.Unlock()
-	d := &Doc{app: a, gen: gen, path: abs, lang: langdetect.Detect(abs, head(data)), buf: buffer.New(data)}
+	d := &Doc{app: a, gen: gen, path: abs, lang: langdetect.Detect(abs, head(data)), buf: buffer.New(data), disk: disk}
 	d.buf.OnEdit(func(e buffer.Edit) { a.onEdit(d, e) })
 	return d
 }
@@ -149,6 +158,10 @@ type DocState struct {
 	EOL        string `json:"eol"`
 	CanUndo    bool   `json:"canUndo"`
 	CanRedo    bool   `json:"canRedo"`
+	// External is set while the file has an unresolved change by another
+	// program: "modified", "created" or "deleted" (deleted on disk; the
+	// document stays open). See doc.resolveExternal.
+	External string `json:"external,omitempty"`
 }
 
 func (a *App) stateLocked(d *Doc) DocState {
@@ -167,6 +180,7 @@ func (a *App) stateLocked(d *Doc) DocState {
 		EOL:        eol,
 		CanUndo:    d.buf.CanUndo(),
 		CanRedo:    d.buf.CanRedo(),
+		External:   d.external,
 	}
 }
 
@@ -180,7 +194,7 @@ func (a *App) registerDocs() {
 	mustHandle(a, "doc.replace", "Replace a range (or the whole document) with text", a.docReplace)
 	mustHandle(a, "doc.undo", "Undo the last change", a.docUndo)
 	mustHandle(a, "doc.redo", "Redo the last undone change", a.docRedo)
-	mustHandle(a, "doc.save", "Save a document (file.beforeSave hooks, Local History, file.saved)", a.docSave)
+	mustHandle(a, "doc.save", "Save a document (file.beforeSave hooks, Local History, file.saved); refuses to overwrite external changes unless force", a.docSave)
 	mustHandle(a, "doc.saveAll", "Save all modified documents", a.docSaveAll)
 	mustHandle(a, "history.list", "Local History revisions of a file, newest first", a.historyList)
 	mustHandle(a, "history.content", "Content of a Local History revision", a.historyContent)
@@ -230,14 +244,14 @@ func (a *App) docOpen(_ context.Context, p DocOpenParams) (DocOpenResult, error)
 	d, already := a.docs[abs]
 	a.mu.Unlock()
 	if !already {
-		data, err := os.ReadFile(abs)
+		disk, data, err := readDisk(abs)
 		switch {
 		case errors.Is(err, fs.ErrNotExist) && p.Create:
 			data = nil
 		case err != nil:
 			return DocOpenResult{}, notFoundOr(err, "doc.open")
 		}
-		d = a.newDoc(abs, data)
+		d = a.newDoc(abs, data, disk)
 		a.mu.Lock()
 		if existing, ok := a.docs[abs]; ok {
 			d, already = existing, true
@@ -512,6 +526,18 @@ func (a *App) docRedo(_ context.Context, p PathParams) (UndoResult, error) {
 	return UndoResult{DocState: st, Done: done}, err
 }
 
+// DocSaveParams are the params of "doc.save".
+type DocSaveParams struct {
+	Path string `json:"path"`
+	// Force overwrites the file even if another program changed it since
+	// it was read or written (otherwise -32004, data.reason
+	// "externalChange").
+	Force bool `json:"force,omitempty"`
+	// Reload discards the buffer and takes the file from disk instead of
+	// saving (same as doc.resolveExternal takeDisk).
+	Reload bool `json:"reload,omitempty"`
+}
+
 // DocSaveResult is the result of "doc.save".
 type DocSaveResult struct {
 	DocState
@@ -520,8 +546,28 @@ type DocSaveResult struct {
 	Revision uint64 `json:"revision,omitempty"`
 }
 
-func (a *App) docSave(ctx context.Context, p PathParams) (DocSaveResult, error) {
-	d, err := a.doc(p.Path)
+// ExternalChangeData is the error data of a save refused because of an
+// external change (-32004).
+type ExternalChangeData struct {
+	Reason     string `json:"reason"` // "externalChange"
+	Path       string `json:"path"`
+	Kind       string `json:"kind"` // modified, created, deleted
+	Generation uint64 `json:"generation"`
+}
+
+func (a *App) docSave(ctx context.Context, p DocSaveParams) (DocSaveResult, error) {
+	switch {
+	case p.Force && p.Reload:
+		return DocSaveResult{}, Errorf(CodeInvalidParams, "force and reload exclude each other")
+	case p.Reload:
+		st, err := a.takeDisk(p.Path)
+		return DocSaveResult{DocState: st}, err
+	}
+	return a.saveDoc(ctx, p.Path, p.Force)
+}
+
+func (a *App) saveDoc(ctx context.Context, path string, force bool) (DocSaveResult, error) {
+	d, err := a.doc(path)
 	if err != nil {
 		return DocSaveResult{}, err
 	}
@@ -530,13 +576,18 @@ func (a *App) docSave(ctx context.Context, p PathParams) (DocSaveResult, error) 
 	ev, err := a.saver.SaveWith(ctx, autosave.TriggerManual, func() (autosave.Doc, error) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		return autosave.Doc{Path: d.path, Content: d.buf.Bytes(), Version: d.buf.Version(), Instance: d.gen}, nil
+		return autosave.Doc{Path: d.path, Content: d.buf.Bytes(), Version: d.buf.Version(), Instance: d.gen, Force: force}, nil
 	})
 	if errors.Is(err, autosave.ErrDocGone) {
-		return DocSaveResult{}, Errorf(CodeNotFound, "save %s: document was closed", p.Path)
+		return DocSaveResult{}, Errorf(CodeNotFound, "save %s: document was closed", path)
+	}
+	var ext *externalChangeError
+	if errors.As(err, &ext) {
+		return DocSaveResult{}, Errorf(CodeConflict, "save %s: %w (save with force, or doc.resolveExternal)", path, err).
+			WithData(ExternalChangeData{Reason: "externalChange", Path: a.displayPath(d.path), Kind: ext.kind, Generation: d.gen})
 	}
 	if err != nil {
-		return DocSaveResult{}, Errorf(CodeFailed, "save %s: %w", p.Path, err)
+		return DocSaveResult{}, Errorf(CodeFailed, "save %s: %w", path, err)
 	}
 	d.mu.Lock()
 	res := DocSaveResult{DocState: a.stateLocked(d), Size: ev.Size, Revision: ev.Revision.ID}
@@ -553,7 +604,7 @@ type SaveAllResult struct {
 func (a *App) docSaveAll(ctx context.Context, _ struct{}) (SaveAllResult, error) {
 	res := SaveAllResult{Saved: []string{}}
 	for _, d := range (docSet{a}).Dirty() {
-		r, err := a.docSave(ctx, PathParams{Path: d.Path})
+		r, err := a.saveDoc(ctx, d.Path, false)
 		if err != nil {
 			return res, err
 		}
@@ -594,7 +645,27 @@ func (s docSet) Save(_ context.Context, doc autosave.Doc) error {
 	if doc.Instance != 0 && (d == nil || d.gen != doc.Instance) {
 		return autosave.ErrDocGone
 	}
-	if err := writeFileAtomic(doc.Path, doc.Content); err != nil {
+	if d != nil && !doc.Force {
+		// Never overwrite a change made by another program (D141). This
+		// runs under the save lock, like every other Tiegel writer of
+		// document files, so the stamp cannot be stale here.
+		d.mu.Lock()
+		known := d.disk
+		d.mu.Unlock()
+		changed, cur, data, err := checkDisk(doc.Path, known)
+		if err != nil {
+			return fmt.Errorf("check %s: %w", doc.Path, err)
+		}
+		if changed && !(cur.exists && bytes.Equal(data, doc.Content)) {
+			kind := externalKind(known, cur)
+			d.mu.Lock()
+			s.a.flagExternalLocked(d, kind, cur, data, "save", "")
+			d.mu.Unlock()
+			return &externalChangeError{path: s.a.displayPath(doc.Path), kind: kind}
+		}
+	}
+	fi, err := writeFileAtomic(doc.Path, doc.Content)
+	if err != nil {
 		return err
 	}
 	if d == nil {
@@ -602,6 +673,7 @@ func (s docSet) Save(_ context.Context, doc autosave.Doc) error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	s.a.setDiskLocked(d, stampOf(fi, doc.Content))
 	if d.buf.Version() != doc.Version {
 		return nil // changed while saving: stays modified
 	}
@@ -616,36 +688,38 @@ func (s docSet) Save(_ context.Context, doc autosave.Doc) error {
 	return nil
 }
 
-// reload replaces the content of an open document with data and marks it
-// saved (used after history.restore).
-func (a *App) reload(abs string, data []byte) {
+// reload replaces the content of an open document with its file (also
+// when modified) and marks it saved (used after history.restore, under
+// the save lock).
+func (a *App) reload(abs string) {
 	a.mu.Lock()
 	d := a.docs[abs]
 	a.mu.Unlock()
 	if d == nil {
 		return
 	}
-	d.mu.Lock()
-	if !bytes.Equal(d.buf.Bytes(), data) {
-		d.buf.BreakUndo()
-		_, _ = d.buf.Replace(0, d.buf.Len(), data)
+	st, data, err := readDisk(abs)
+	if err != nil {
+		return
 	}
-	d.buf.MarkSaved()
-	st := a.stateLocked(d)
-	a.bus.Publish(TopicDocChanged, st)
+	d.mu.Lock()
+	a.reloadLocked(d, data, st, "api")
 	d.mu.Unlock()
 }
 
 // writeFileAtomic writes data to a temporary file next to path and renames
-// it over path, keeping the permissions of an existing file.
-func writeFileAtomic(path string, data []byte) error {
+// it over path, keeping the permissions of an existing file. It returns
+// the file info of the written file, taken before the rename so that it
+// describes exactly this content (a later stat could already see another
+// program's write).
+func writeFileAtomic(path string, data []byte) (os.FileInfo, error) {
 	mode := os.FileMode(0o644)
 	if st, err := os.Stat(path); err == nil {
 		mode = st.Mode().Perm()
 	}
 	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tiegel-*")
 	if err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+		return nil, fmt.Errorf("write %s: %w", path, err)
 	}
 	tmp := f.Name()
 	_, werr := f.Write(data)
@@ -659,14 +733,18 @@ func writeFileAtomic(path string, data []byte) error {
 	if werr == nil {
 		werr = os.Chmod(tmp, mode)
 	}
+	var fi os.FileInfo
+	if werr == nil {
+		fi, werr = os.Lstat(tmp)
+	}
 	if werr == nil {
 		werr = os.Rename(tmp, path)
 	}
 	if werr != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("write %s: %w", path, werr)
+		return nil, fmt.Errorf("write %s: %w", path, werr)
 	}
-	return nil
+	return fi, nil
 }
 
 // historySink records saves in the Local History of the open project; without
@@ -760,9 +838,7 @@ func (a *App) historyRestore(_ context.Context, p RevisionParams) (history.Revis
 		if rev, err = st.Restore(abs, p.ID); err != nil {
 			return Errorf(CodeFailed, "restore: %w", err)
 		}
-		if data, err := st.Content(rev); err == nil {
-			a.reload(abs, data)
-		}
+		a.reload(abs)
 		return nil
 	})
 	return rev, err

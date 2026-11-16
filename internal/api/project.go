@@ -18,6 +18,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/history"
 	"github.com/ape-dev-de/tiegel/internal/core/langdetect"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
+	"github.com/ape-dev-de/tiegel/internal/core/watch"
 )
 
 // project is the open project. Its history store is opened lazily so that
@@ -85,10 +86,17 @@ func (a *App) projectOpen(ctx context.Context, p PathParams) (ProjectInfo, error
 	if err != nil {
 		return ProjectInfo{}, Errorf(CodeFailed, "project settings: %w", err)
 	}
+	a.stopWatch()
 	a.mu.Lock()
 	a.project = &project{root: root, settings: ps}
 	a.mu.Unlock()
 	a.bus.Publish(TopicProjectOpened, ProjectEvent{Root: root, Name: filepath.Base(root)})
+	if a.opts.Watch {
+		be, _ := watch.ParseBackend(a.opts.WatchBackend) // validated in New
+		if err := a.startWatch(root, be, nil); err != nil {
+			a.log.Warn("watch", "root", root, "err", err)
+		}
+	}
 	return a.projectInfo(ctx, struct{}{})
 }
 
@@ -117,6 +125,7 @@ func (a *App) projectInfo(_ context.Context, _ struct{}) (ProjectInfo, error) {
 }
 
 func (a *App) projectClose(_ context.Context, _ struct{}) (ProjectInfo, error) {
+	a.stopWatch()
 	a.preserveUnsaved("unsaved on project close", nil)
 	a.mu.Lock()
 	pr := a.project

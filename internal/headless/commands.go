@@ -33,7 +33,7 @@ func init() {
 		&command{name: "lsp-servers", usage: "lsp-servers [--all]", summary: "installed PHP language servers", maxArgs: 0, cwdProject: true, run: runLSPServers},
 		&command{name: "modules", usage: "modules [enable ID | disable ID]", summary: "list, enable or disable modules", maxArgs: 2, run: runModules},
 		&command{name: "history", usage: "history FILE [--show ID | --restore ID]", summary: "Local History of a file", minArgs: 1, maxArgs: 1, cwdProject: true, run: runHistory},
-		&command{name: "serve", usage: "serve [--framing ndjson|lsp] [--concurrent] [--listen unix:PATH|tcp:HOST:PORT [--token-file F] [--token T] [--allow-remote]]", summary: "JSON-RPC 2.0 over stdin/stdout or a socket", maxArgs: 0, run: runServe},
+		&command{name: "serve", usage: "serve [--framing ndjson|lsp] [--concurrent] [--listen unix:PATH|tcp:HOST:PORT [--token-file F] [--token T] [--allow-remote]]", summary: "JSON-RPC 2.0 over stdin/stdout or a socket", maxArgs: 0, watch: true, run: runServe},
 		&command{name: "call", usage: "call METHOD [JSON-PARAMS | -]", summary: "call any API method (\"-\" reads params from stdin)", minArgs: 1, maxArgs: 2, run: runCall},
 		&command{name: "version", usage: "version", summary: "print the version", maxArgs: 0, run: runVersion},
 		&command{name: "update-check", usage: "update-check [--prereleases]", summary: "check for a newer release (network access, only when run)", maxArgs: 0, run: runUpdateCheck},

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -272,33 +271,14 @@ func (m *Module) gitDiscard(ctx context.Context, p DiscardParams) (DiscardResult
 }
 
 // reload replaces the content of an open, unmodified document with the
-// file on disk as one undo step and marks it saved. It reports whether the
-// document was updated. Callers hold the save lock (api.App.Exclusive)
-// together with the write that changed the file.
+// file on disk as one undo step and marks it saved; the new file state is
+// recorded, so the watcher does not report Git's write as an external
+// change. It reports whether the document was updated. Callers hold the
+// save lock (api.App.Exclusive) together with the write that changed the
+// file. A modified document is left alone: the watcher reports the
+// change as doc.externalConflict.
 func (m *Module) reload(path string) bool {
-	d, err := m.app.Document(path)
-	if err != nil {
-		return false
-	}
-	data, err := os.ReadFile(d.Path())
-	if err != nil {
-		return false
-	}
-	d.Lock()
-	defer d.Unlock()
-	b := d.Buffer()
-	if b.Modified() {
-		return false
-	}
-	if string(b.Bytes()) != string(data) {
-		b.BreakUndo()
-		if _, err := b.Replace(0, b.Len(), data); err != nil {
-			return false
-		}
-		b.BreakUndo()
-	}
-	b.MarkSaved()
-	return true
+	return m.app.ReloadDocument(path)
 }
 
 // FileHunks selects hunks of one file for git.commitSelection. Hunk

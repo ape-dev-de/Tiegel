@@ -74,7 +74,8 @@ func writeRecovery(file string, pts []RecoveryPoint) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		return err
 	}
-	return writeFileAtomic(file, data)
+	_, err = writeFileAtomic(file, data)
+	return err
 }
 
 // preserveUnsaved records the content of every modified document as a

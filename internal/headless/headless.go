@@ -193,6 +193,7 @@ func Run(ctx context.Context, args []string, env Env) int {
 	}
 
 	opts := env.Options
+	opts.Watch = opts.Watch || cmd.watch
 	opts.Extensions = append(append([]func(*api.App) error(nil), opts.Extensions...), modules.Installer(env.Modules))
 	if dir := p.value("config-dir"); dir != "" {
 		opts.ConfigDir = dir
@@ -294,7 +295,9 @@ type command struct {
 	// cwdProject opens the working directory as project unless --project
 	// is given.
 	cwdProject bool
-	run        func(c *cli) error
+	// watch starts the project file watcher (long-running commands).
+	watch bool
+	run   func(c *cli) error
 }
 
 var commands = map[string]*command{}

@@ -16,6 +16,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
+	"github.com/ape-dev-de/tiegel/internal/core/watch"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
 	"github.com/ape-dev-de/tiegel/internal/update"
@@ -55,6 +56,15 @@ type Options struct {
 	// Extensions register additional namespaces after the built-in ones
 	// (see the package documentation).
 	Extensions []func(a *App) error
+	// Watch starts the project file watcher on project.open (GUI and
+	// serve; one-shot CLI commands leave it off). See watch.start.
+	Watch bool
+	// WatchBackend selects the watcher backend (auto, fsevents, fsnotify,
+	// poll); empty means auto.
+	WatchBackend string
+	// WatchPollInterval is the rescan interval of the polling backend
+	// (0: watch.DefaultPollInterval).
+	WatchPollInterval time.Duration
 }
 
 // App is the headless core of Tiegel: it owns the kernel services (bus,
@@ -77,6 +87,11 @@ type App struct {
 	docs    map[string]*Doc
 	claims  map[string][]string
 	docSeq  uint64 // last document generation, guarded by mu
+
+	watchMu sync.Mutex
+	watcher *watch.Watcher
+	closing chan struct{} // closed by Close
+	closeMu sync.Once
 }
 
 // New creates an App with the built-in namespaces and the extensions from
@@ -106,6 +121,10 @@ func New(opts Options) (*App, error) {
 		bus:     b,
 		methods: newRegistry(),
 		docs:    make(map[string]*Doc),
+		closing: make(chan struct{}),
+	}
+	if _, err := watch.ParseBackend(opts.WatchBackend); err != nil {
+		return nil, fmt.Errorf("api: %w", err)
 	}
 	a.hooks = hooks.New(hooks.WithErrorHandler(func(e *hooks.HookError) {
 		log.Warn("hook failed", "hook", e.Hook, "owner", e.Owner, "err", e.Err)
@@ -140,6 +159,7 @@ func New(opts Options) (*App, error) {
 	a.registerApp()
 	a.registerProject()
 	a.registerDocs()
+	a.registerWatch()
 	a.registerSearch()
 	a.registerModules()
 	a.registerVersion()
@@ -163,6 +183,8 @@ func New(opts Options) (*App, error) {
 // points in Local History (see "history.recovery").
 func (a *App) Close() error {
 	var errs []error
+	a.closeMu.Do(func() { close(a.closing) })
+	a.stopWatch()
 	a.saver.Close()
 	a.preserveUnsaved("unsaved on exit", nil)
 	if err := a.modules.Stop(); err != nil {
