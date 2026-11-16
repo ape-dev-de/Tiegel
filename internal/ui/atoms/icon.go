@@ -132,6 +132,14 @@ var (
 	GlyphDropDown      = NewGlyph("drop-down", icons.NavigationArrowDropDown)
 	GlyphList          = NewGlyph("list", icons.ActionList)
 	GlyphSwap          = NewGlyph("swap", icons.ActionSwapHoriz)
+	GlyphChevronUp     = NewGlyph("chevron-up", icons.NavigationExpandLess)
+	GlyphArrowLeft     = NewGlyph("arrow-left", icons.NavigationArrowBack)
+	GlyphArrowRight    = NewGlyph("arrow-right", icons.NavigationArrowForward)
+	GlyphUpload        = NewGlyph("upload", icons.FileFileUpload)
+	GlyphDelete        = NewGlyph("delete", icons.ActionDelete)
+	GlyphCommit        = NewGlyph("commit", icons.ActionCheckCircle)
+	GlyphCloud         = NewGlyph("cloud", icons.FileCloud)
+	GlyphTag           = NewGlyph("tag", icons.ActionLabel)
 )
 
 // Glyphs lists all built-in glyphs (for the catalog and tests).
@@ -140,9 +148,11 @@ var Glyphs = []*Glyph{
 	GlyphChevronRight, GlyphChevronDown, GlyphClose, GlyphCheck, GlyphSearch,
 	GlyphAdd, GlyphRemove, GlyphSettings, GlyphRun, GlyphDebug, GlyphRefresh,
 	GlyphHistory, GlyphBranch, GlyphInfo, GlyphWarning, GlyphError, GlyphDone,
-	GlyphThemeDark, GlyphThemeLight, GlyphIndeterminate,
+	GlyphThemeDark, GlyphThemeLight, GlyphIndeterminate, GlyphChevronUp,
+	GlyphArrowLeft, GlyphArrowRight, GlyphUpload, GlyphEdit, GlyphDelete,
+	GlyphCommit, GlyphCloud, GlyphTag,
 	GlyphStop, GlyphPause, GlyphStepOver, GlyphStepInto, GlyphStepOut, GlyphMute,
-	GlyphListen, GlyphCopy, GlyphEdit, GlyphComputer, GlyphContainer, GlyphMore,
+	GlyphListen, GlyphCopy, GlyphComputer, GlyphContainer, GlyphMore,
 	GlyphDropDown, GlyphList, GlyphSwap,
 }
 

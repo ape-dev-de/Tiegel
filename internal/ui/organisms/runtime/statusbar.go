@@ -90,7 +90,7 @@ func (s *StatusbarVersion) Layout(gtx layout.Context, th *tokens.Theme) layout.D
 			call := m.Stop()
 			size := gtx.Constraints.Constrain(image.Pt(d.Size.X+2*pad, max(h, d.Size.Y)))
 			if s.click.Hovered() {
-				atoms.Surface{Color: th.Color.SurfaceHover}.Layout(withExact(gtx, size), th)
+				atoms.Surface{Kind: atoms.SurfaceHover}.Paint(withExact(gtx, size), th)
 			}
 			t := op.Offset(image.Pt(pad, (size.Y-d.Size.Y)/2)).Push(gtx.Ops)
 			call.Add(gtx.Ops)

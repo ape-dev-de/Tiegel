@@ -1,0 +1,138 @@
+diff --git a/config/services.yaml b/config/services.yaml
+index 3b18e51..9a1c2f0 100644
+--- a/config/services.yaml
++++ b/config/services.yaml
+@@ -4,7 +4,9 @@ parameters:
+ services:
+     _defaults:
+         autowire: true
+-        autoconfigure: false
++        autoconfigure: true
++        bind:
++            $invoicePrefix: '%env(INVOICE_PREFIX)%'
+
+     App\:
+         resource: '../src/'
+diff --git a/public/logo.png b/public/logo.png
+index 6772730..8d0cd2a 100644
+Binary files a/public/logo.png and b/public/logo.png differ
+diff --git a/src/Domain/Invoice.php b/src/Domain/Invoice.php
+new file mode 100644
+index 0000000..e69c3a1
+--- /dev/null
++++ b/src/Domain/Invoice.php
+@@ -0,0 +1,25 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Domain;
++
++final readonly class Invoice
++{
++    /** @param list<InvoiceLine> $lines */
++    public function __construct(
++        public InvoiceNumber $number,
++        public \DateTimeImmutable $issuedAt,
++        public array $lines = [],
++    ) {
++    }
++
++    public function total(): Money
++    {
++        return array_reduce(
++            $this->lines,
++            static fn (Money $sum, InvoiceLine $line): Money => $sum->add($line->amount()),
++            Money::zero(),
++        );
++    }
++}
+diff --git a/src/Http/Controller/UserController.php b/src/Http/Controller/UserController.php
+index 51c0a2e..7d4b9f3 100644
+--- a/src/Http/Controller/UserController.php
++++ b/src/Http/Controller/UserController.php
+@@ -12,14 +12,16 @@ use Symfony\Component\Routing\Attribute\Route;
+ final class UserController extends AbstractController
+ {
+     public function __construct(
+-        private UserRepository $users,
++        private readonly UserRepository $users,
++        private readonly Mailer $mailer,
+     ) {
+     }
+
+-    #[Route('/users/{id}', methods: ['GET'])]
+-    public function show(int $id): Response
++    #[Route('/users/{id}', name: 'user_show', methods: ['GET'])]
++    public function show(int $id): JsonResponse
+     {
+-        $user = $this->users->find($id);
++        $user = $this->users->find($id)
++            ?? throw $this->createNotFoundException();
+
+         return $this->json($user);
+     }
+@@ -40,8 +42,9 @@ final class UserController extends AbstractController
+         $user = User::register($request->get('email'));
+         $this->users->save($user);
+
+-        return $this->redirectToRoute('user_list');
++        $this->mailer->sendWelcome($user);
++
++        return $this->redirectToRoute('user_show', ['id' => $user->id()]);
+     }
+
+-    // TODO: delete action
+ }
+diff --git a/src/Mail/Mailer.php b/src/Mail/Mailer.php
+index c9e9e05..c61fe5e 100644
+--- a/src/Mail/Mailer.php
++++ b/src/Mail/Mailer.php
+@@ -55,4 +55,7 @@ final class Mailer
+     public function send(Message $message): void
+     {
+-        $this->transport->send($message);
++        $envelope = Envelope::create($message);
++        $this->logger->info('Sending mail', ['to' => $envelope->recipients()]);
++
++        $this->transport->send($message, $envelope);
+     }
+@@ -88,3 +91,8 @@ final class Mailer
+     {
+         return $this->transport instanceof NullTransport;
+     }
++
++    public function sendWelcome(User $user): void
++    {
++        $this->send(Message::welcome($user->email()));
++    }
+diff --git a/src/Util/Str.php b/src/Support/Str.php
+similarity index 91%
+rename from src/Util/Str.php
+rename to src/Support/Str.php
+index a3fb829..fad0933 100644
+--- a/src/Util/Str.php
++++ b/src/Support/Str.php
+@@ -1,6 +1,6 @@
+ <?php
+
+-namespace App\Util;
++namespace App\Support;
+
+ final class Str
+ {
+diff --git a/tests/Legacy/LegacyMailerTest.php b/tests/Legacy/LegacyMailerTest.php
+deleted file mode 100644
+index b8962c3..0000000
+--- a/tests/Legacy/LegacyMailerTest.php
++++ /dev/null
+@@ -1,9 +0,0 @@
+-<?php
+-
+-final class LegacyMailerTest extends TestCase
+-{
+-    public function testSends(): void
+-    {
+-        $this->markTestSkipped('replaced by MailerTest');
+-    }
+-}

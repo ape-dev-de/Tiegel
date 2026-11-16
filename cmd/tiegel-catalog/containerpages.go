@@ -101,36 +101,6 @@ func toolbarPage() *page {
 	}
 }
 
-func dropdownPage() *page {
-	dd := molecules.NewDropdown("Choose a PHP interpreter",
-		molecules.DropdownOption{Label: "php 8.3 (Homebrew)", Detail: "/opt/homebrew/bin/php", Glyph: atoms.GlyphComputer, Badge: "8.3.4", BadgeKind: atoms.BadgeInfo},
-		molecules.DropdownOption{Label: "compose:php", Detail: "php:8.3-fpm", Glyph: atoms.GlyphContainer, Badge: "score 115", BadgeKind: atoms.BadgeAccent},
-		molecules.DropdownOption{Label: "compose:worker", Detail: "shop/worker", Glyph: atoms.GlyphContainer, Badge: "score 40"},
-	)
-	disabled := molecules.NewDropdown("Disabled")
-	disabled.Disabled = true
-	return &page{
-		Level: "Molecules", Name: "Dropdown", Glyph: atoms.GlyphDropDown,
-		Summary: "Select field with a menu drawn above everything else; click outside to close.",
-		Variants: func(th *tokens.Theme) []variant {
-			sel := "none"
-			if dd.Selected >= 0 {
-				sel = dd.Options[dd.Selected].Label
-			}
-			return []variant{
-				{"Interactive – selected: " + sel, fixedWidth(380, func(gtx layout.Context) layout.Dimensions {
-					d := dd.Layout(gtx, th)
-					if dd.IsOpen() {
-						d.Size.Y += gtx.Dp(110) // room for the menu
-					}
-					return d
-				})},
-				{"Disabled", fixedWidth(380, func(gtx layout.Context) layout.Dimensions { return disabled.Layout(gtx, th) })},
-			}
-		},
-	}
-}
-
 func tablePage() *page {
 	tb := &molecules.Table{Columns: []molecules.TableColumn{{Title: "Host path", Weight: 2}, {Title: "Container path", Weight: 2}, {Title: "Source", Width: 120}}}
 	data := [][3]string{
@@ -138,12 +108,12 @@ func tablePage() *page {
 		{"~/projects/shop/vendor", "/var/www/html/vendor", "volume"},
 		{"~/.composer", "/root/.composer", "manual"},
 	}
-	split := &molecules.SplitPane{Ratio: 0.35}
-	vsplit := &molecules.SplitPane{Axis: layout.Vertical}
+	split := &molecules.Split{Ratio: 0.35}
+	vsplit := &molecules.Split{Vertical: true}
 	var list molecules.ScrollList
 	return &page{
-		Level: "Molecules", Name: "Table & SplitPane", Glyph: atoms.GlyphSwap,
-		Summary: "Table: header + scrolling rows with caller-drawn cells. SplitPane: draggable divider. ScrollList: virtual list with indicator.",
+		Level: "Molecules", Name: "Table", Glyph: atoms.GlyphSwap,
+		Summary: "Header + scrolling rows (ScrollList) with caller-drawn cells; fixed or weighted columns. Shown inside a Split.",
 		Variants: func(th *tokens.Theme) []variant {
 			pane := func(title string, w layout.Widget) layout.Widget {
 				return func(gtx layout.Context) layout.Dimensions {
@@ -152,6 +122,9 @@ func tablePage() *page {
 						layout.Flexed(1, w),
 					)
 				}
+			}
+			fill := func(k atoms.SurfaceKind) layout.Widget {
+				return func(gtx layout.Context) layout.Dimensions { return atoms.Surface{Kind: k}.Paint(gtx, th) }
 			}
 			rows := func(gtx layout.Context) layout.Dimensions {
 				return list.Layout(gtx, th, 200, func(gtx layout.Context, i int) layout.Dimensions {
@@ -168,9 +141,9 @@ func tablePage() *page {
 						return atoms.Code(data[r][c]).SingleLine().Layout(gtx, th)
 					})
 				})},
-				{"SplitPane (drag the dividers) with ScrollList", sized(260, func(gtx layout.Context) layout.Dimensions {
+				{"Inside Splits with a ScrollList (drag the dividers)", sized(260, func(gtx layout.Context) layout.Dimensions {
 					return split.Layout(gtx, th, pane("Left – 200 rows", rows), func(gtx layout.Context) layout.Dimensions {
-						return vsplit.Layout(gtx, th, pane("Top", atoms.Surface{}.Fn(th)), pane("Bottom", atoms.Surface{Color: th.Color.SurfaceAlt}.Fn(th)))
+						return vsplit.Layout(gtx, th, pane("Top", fill(atoms.SurfacePanel)), pane("Bottom", fill(atoms.SurfaceAlt)))
 					})
 				})},
 			}

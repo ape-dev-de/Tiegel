@@ -17,10 +17,13 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
 
-// DropdownOption is one entry of a Dropdown.
+// dropdownMaxRows bounds the visible rows of the popup; more items scroll.
+const dropdownMaxRows = 8
+
+// DropdownOption is one entry of a select-style Dropdown (Options).
 type DropdownOption struct {
 	Label string
-	// Detail is shown muted after the label in the menu.
+	// Detail is shown muted after the label in the popup.
 	Detail string
 	Glyph  *atoms.Glyph
 	// Badge is an optional short text at the right end (e.g. a version).
@@ -28,91 +31,218 @@ type DropdownOption struct {
 	BadgeKind atoms.BadgeKind
 }
 
-// dropdownMaxRows bounds the menu height; longer menus scroll.
-const dropdownMaxRows = 10
-
-// Dropdown is a select field: it shows the selected option and opens a menu
-// of all options below itself on click. Clicking outside closes the menu.
-// The field fills the available width like a TextField.
+// Dropdown opens a popup list and reports the chosen entry. It has two
+// forms:
+//
+//   - Menu button (Items): an icon button opening a list of text items
+//     (e.g. recent commit messages).
+//   - Select field (Options non-nil): a full-width field showing the
+//     Selected option (or Placeholder); the popup lists rich options with
+//     glyph, detail and badge, and choosing one updates Selected. Use
+//     NewSelect for an initially empty selection.
+//
+// Choosing an entry closes the popup and is reported by Update; a click
+// outside closes it as well. The popup is drawn with op.Defer on top of
+// everything else, below the trigger (or above it with Up). It is a
+// stateful component.
 type Dropdown struct {
-	Options []DropdownOption
-	// Selected is the index of the selected option, -1 for none.
-	Selected int
-	// Placeholder is shown when nothing is selected.
-	Placeholder string
+	Glyph       *atoms.Glyph
+	Description string
+	Items       []string
 	Disabled    bool
+	// Up opens the popup above the trigger.
+	Up bool
+	// Width of the popup (default 320dp for the menu button, the field
+	// width for the select field).
+	Width unit.Dp
+	// Open reports whether the popup is shown; set it to open or close
+	// programmatically.
+	Open bool
 
-	open  bool
+	// Options switches to the select field form.
+	Options []DropdownOption
+	// Selected is the selected option index (-1 for none).
+	Selected int
+	// Placeholder is shown in the select field when nothing is selected.
+	Placeholder string
+
+	btn   atoms.IconButton
 	field widget.Clickable
-	rows  []widget.Clickable
+	rows  []ListRow
 	list  ScrollList
-	scrim int // event tag of the click-outside area
+	scrim int // address used as pointer tag of the outside area
+	// pending is the item chosen during Layout, reported by the next Update
+	// (+1, so the zero value means none).
+	pending int
 }
 
-// NewDropdown returns a dropdown without selection.
-func NewDropdown(placeholder string, opts ...DropdownOption) *Dropdown {
+// NewSelect returns a select-style dropdown without selection.
+func NewSelect(placeholder string, opts ...DropdownOption) *Dropdown {
 	return &Dropdown{Options: opts, Selected: -1, Placeholder: placeholder}
 }
 
-// IsOpen reports whether the menu is shown.
-func (d *Dropdown) IsOpen() bool { return d.open }
+// isSelect reports the select field form.
+func (d *Dropdown) isSelect() bool { return d.Options != nil }
 
-// SetOpen opens or closes the menu.
-func (d *Dropdown) SetOpen(open bool) { d.open = open && !d.Disabled }
-
-// Update processes input and reports whether the user picked a different
-// option (Selected has been updated).
-func (d *Dropdown) Update(gtx layout.Context) (changed bool) {
-	if len(d.rows) != len(d.Options) {
-		d.rows = make([]widget.Clickable, len(d.Options))
+func (d *Dropdown) count() int {
+	if d.isSelect() {
+		return len(d.Options)
 	}
-	if d.Disabled {
-		d.open = false
+	return len(d.Items)
+}
+
+// Update processes input and returns the index of an entry chosen since
+// the last call (also when the click was processed by Layout).
+func (d *Dropdown) Update(gtx layout.Context) (index int, chosen bool) {
+	d.process(gtx)
+	index, chosen = d.pending-1, d.pending > 0
+	d.pending = 0
+	return index, chosen
+}
+
+func (d *Dropdown) process(gtx layout.Context) {
+	disabled := d.Disabled || d.count() == 0
+	d.btn.Disabled = disabled
+	if d.btn.Clicked(gtx) {
+		d.Open = !d.Open
 	}
 	for d.field.Clicked(gtx) {
-		if !d.Disabled {
-			d.open = !d.open
+		if !disabled {
+			d.Open = !d.Open
 		}
 	}
+	if disabled {
+		d.Open = false
+	}
+	if !d.Open {
+		return
+	}
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &d.scrim, Kinds: pointer.Press})
+		e, ok := gtx.Event(pointer.Filter{Target: &d.scrim, Kinds: pointer.Press})
 		if !ok {
 			break
 		}
-		if _, ok := ev.(pointer.Event); ok {
-			d.open = false
+		if _, ok := e.(pointer.Event); ok {
+			d.Open = false
+		}
+	}
+	// Presses on the popup background are swallowed so they do not reach
+	// the outside area.
+	for {
+		if _, ok := gtx.Event(pointer.Filter{Target: &d.list, Kinds: pointer.Press}); !ok {
+			break
 		}
 	}
 	for i := range d.rows {
-		for d.rows[i].Clicked(gtx) {
-			if d.open {
-				changed = changed || d.Selected != i
+		if i >= d.count() {
+			break
+		}
+		if c, _ := d.rows[i].Update(gtx); c {
+			d.pending = i + 1
+			d.Open = false
+			if d.isSelect() {
 				d.Selected = i
-				d.open = false
 			}
 		}
 	}
-	return changed
 }
 
-// Layout draws the field and, when open, the menu on top of everything.
+// Layout draws the trigger and, when open, the popup. Call Update first
+// to observe choices; a choice processed here is reported by the next
+// Update.
 func (d *Dropdown) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
-	d.Update(gtx)
-	if d.Disabled {
+	d.process(gtx)
+	var bd layout.Dimensions
+	pw := gtx.Dp(320)
+	if d.isSelect() {
+		bd = d.layoutField(gtx, th)
+		pw = bd.Size.X
+	} else {
+		d.btn.Glyph = d.Glyph
+		if d.btn.Glyph == nil {
+			d.btn.Glyph = atoms.GlyphChevronDown
+		}
+		d.btn.Description = d.Description
+		d.btn.Disabled = d.Disabled || len(d.Items) == 0
+		bd = d.btn.Layout(gtx, th)
+	}
+	if d.Width > 0 {
+		pw = gtx.Dp(d.Width)
+	}
+	if !d.Open {
+		return bd
+	}
+	n := d.count()
+	for len(d.rows) < n {
+		d.rows = append(d.rows, ListRow{})
+	}
+
+	rowH := gtx.Dp(th.Size.RowH)
+	pad := gtx.Dp(th.Space.XS)
+	ph := min(n, dropdownMaxRows)*rowH + 2*pad
+
+	pg := gtx
+	pg.Constraints = layout.Exact(image.Pt(pw, ph))
+	m := op.Record(gtx.Ops)
+	// Outside area: a huge rectangle below the popup that closes it.
+	const far = 1 << 16
+	sc := clip.Rect{Min: image.Pt(-far, -far), Max: image.Pt(far, far)}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &d.scrim)
+	sc.Pop()
+
+	off := image.Pt(0, bd.Size.Y+pad)
+	if d.Up {
+		off.Y = -ph - pad
+	}
+	t := op.Offset(off).Push(gtx.Ops)
+	r := image.Rectangle{Max: image.Pt(pw, ph)}
+	rad := gtx.Dp(th.Radius.M)
+	draw.RRect(gtx.Ops, r.Add(image.Pt(0, gtx.Dp(2))), rad, tokens.WithAlpha(th.Color.Background, 0x90))
+	draw.RRect(gtx.Ops, r, rad, th.Color.Surface)
+	draw.Border(gtx.Ops, r, rad, gtx.Dp(th.Size.BorderWidth), th.Color.BorderStrong)
+	// Block clicks from reaching the outside area.
+	pc := clip.Rect(r).Push(gtx.Ops)
+	event.Op(gtx.Ops, &d.list)
+	pc.Pop()
+	lt := op.Offset(image.Pt(0, pad)).Push(gtx.Ops)
+	lg := pg
+	lg.Constraints = layout.Exact(image.Pt(pw, ph-2*pad))
+	d.list.Layout(lg, th, n, func(gtx layout.Context, i int) layout.Dimensions {
+		if d.isSelect() {
+			d.rows[i].Selected = i == d.Selected
+			return d.rows[i].Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
+				return d.layoutOption(gtx, th, d.Options[i], true)
+			})
+		}
+		return d.rows[i].Layout(gtx, th, atoms.Text(firstLine(d.Items[i])).SingleLine().Fn(th))
+	})
+	lt.Pop()
+	t.Pop()
+	op.Defer(gtx.Ops, m.Stop())
+	return bd
+}
+
+// fallbackSelectWidth is the field width when the width is unbounded.
+const fallbackSelectWidth = unit.Dp(240)
+
+// layoutField draws the select field across the available width.
+func (d *Dropdown) layoutField(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	disabled := d.Disabled || len(d.Options) == 0
+	if disabled {
 		gtx = gtx.Disabled()
 	}
-	w := draw.Width(gtx, gtx.Dp(fallbackDropdownWidth))
+	w := draw.Width(gtx, gtx.Dp(fallbackSelectWidth))
 	h := gtx.Dp(th.Size.ControlH)
 	size := image.Pt(w, h)
-	dims := d.field.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return d.field.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		c := th.Color
 		r := image.Rectangle{Max: size}
 		rad := gtx.Dp(th.Radius.M)
 		bg, border := c.Surface, c.BorderStrong
 		switch {
-		case d.Disabled:
+		case disabled:
 			bg, border = c.SurfaceAlt, c.Border
-		case d.open || gtx.Focused(&d.field):
+		case d.Open || gtx.Focused(&d.field):
 			border = c.Focus
 		case d.field.Hovered():
 			bg = c.SurfaceHover
@@ -125,7 +255,7 @@ func (d *Dropdown) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimension
 		m := op.Record(gtx.Ops)
 		cd := layout.Flex{Alignment: layout.Middle}.Layout(cgtx,
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				w := gtx.Constraints.Max.X
+				fw := gtx.Constraints.Max.X
 				gtx.Constraints.Min.X = 0
 				var ld layout.Dimensions
 				if d.Selected < 0 || d.Selected >= len(d.Options) {
@@ -133,7 +263,7 @@ func (d *Dropdown) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimension
 				} else {
 					ld = d.layoutOption(gtx, th, d.Options[d.Selected], false)
 				}
-				ld.Size.X = w
+				ld.Size.X = fw
 				return ld
 			}),
 			layout.Rigid(atoms.Icon{Glyph: atoms.GlyphDropDown, Color: c.TextMuted}.Fn(th)),
@@ -148,15 +278,9 @@ func (d *Dropdown) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimension
 		semantic.Button.Add(gtx.Ops)
 		return layout.Dimensions{Size: size, Baseline: (h-cd.Size.Y)/2 + cd.Baseline}
 	})
-	if d.open {
-		d.layoutMenu(gtx, th, w, h)
-	}
-	return dims
 }
 
-// fallbackDropdownWidth is used when the width is unbounded.
-const fallbackDropdownWidth = unit.Dp(240)
-
+// layoutOption draws glyph, label, (detail) and badge of an option.
 func (d *Dropdown) layoutOption(gtx layout.Context, th *tokens.Theme, o DropdownOption, detail bool) layout.Dimensions {
 	return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -185,55 +309,12 @@ func (d *Dropdown) layoutOption(gtx layout.Context, th *tokens.Theme, o Dropdown
 	)
 }
 
-// layoutMenu records the menu (and a full-window click catcher behind it)
-// as a deferred op so it is drawn above everything else.
-func (d *Dropdown) layoutMenu(gtx layout.Context, th *tokens.Theme, w, fieldH int) {
-	m := op.Record(gtx.Ops)
-	// Click-outside catcher: a huge area below the menu.
-	const big = 1 << 16
-	sc := clip.Rect(image.Rect(-big, -big, big, big)).Push(gtx.Ops)
-	event.Op(gtx.Ops, &d.scrim)
-	sc.Pop()
-
-	rowH := gtx.Dp(th.Size.RowH) + gtx.Dp(th.Space.XS)
-	pad := gtx.Dp(th.Space.XS)
-	n := len(d.Options)
-	menuH := min(n, dropdownMaxRows)*rowH + 2*pad
-	off := op.Offset(image.Pt(0, fieldH+gtx.Dp(th.Space.XXS))).Push(gtx.Ops)
-	r := image.Rectangle{Max: image.Pt(w, menuH)}
-	rad := gtx.Dp(th.Radius.M)
-	draw.RRect(gtx.Ops, r, rad, th.Color.Surface)
-	draw.Border(gtx.Ops, r, rad, gtx.Dp(th.Size.BorderWidth), th.Color.BorderStrong)
-	// Swallow clicks on the menu background.
-	bg := clip.Rect(r).Push(gtx.Ops)
-	event.Op(gtx.Ops, &d.rows)
-	bg.Pop()
-	lgtx := gtx
-	lgtx.Constraints = layout.Exact(image.Pt(w-2*pad, menuH-2*pad))
-	t := op.Offset(image.Pt(pad, pad)).Push(gtx.Ops)
-	d.list.Layout(lgtx, th, n, func(gtx layout.Context, i int) layout.Dimensions {
-		return d.rows[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			sz := image.Pt(gtx.Constraints.Max.X, rowH)
-			switch {
-			case d.rows[i].Hovered():
-				draw.RRect(gtx.Ops, image.Rectangle{Max: sz}, gtx.Dp(th.Radius.S), th.Color.SurfaceHover)
-			case i == d.Selected:
-				draw.RRect(gtx.Ops, image.Rectangle{Max: sz}, gtx.Dp(th.Radius.S), th.Color.Selection)
-			}
-			p := gtx.Dp(th.Space.S)
-			cgtx := gtx
-			cgtx.Constraints = layout.Constraints{Min: image.Pt(sz.X-2*p, 0), Max: image.Pt(sz.X-2*p, rowH)}
-			mm := op.Record(gtx.Ops)
-			cd := d.layoutOption(cgtx, th, d.Options[i], true)
-			call := mm.Stop()
-			tt := op.Offset(image.Pt(p, (rowH-cd.Size.Y)/2)).Push(gtx.Ops)
-			call.Add(gtx.Ops)
-			tt.Pop()
-			pointer.CursorPointer.Add(gtx.Ops)
-			return layout.Dimensions{Size: sz}
-		})
-	})
-	t.Pop()
-	off.Pop()
-	op.Defer(gtx.Ops, m.Stop())
+// firstLine returns s up to the first line break.
+func firstLine(s string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' || s[i] == '\r' {
+			return s[:i]
+		}
+	}
+	return s
 }

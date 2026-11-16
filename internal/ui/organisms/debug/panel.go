@@ -23,16 +23,16 @@ type DebugPanel struct {
 	Watches     WatchesList
 	Breakpoints BreakpointsList
 
-	main, left, right, top molecules.SplitPane
+	main, left, right, top molecules.Split
 }
 
 // NewDebugPanel returns a panel with default split ratios.
 func NewDebugPanel() *DebugPanel {
 	p := &DebugPanel{}
-	p.main = molecules.SplitPane{Axis: layout.Horizontal, Ratio: 0.38}
-	p.left = molecules.SplitPane{Axis: layout.Vertical, Ratio: 0.6}
-	p.right = molecules.SplitPane{Axis: layout.Vertical, Ratio: 0.65}
-	p.top = molecules.SplitPane{Axis: layout.Vertical, Ratio: 0.3}
+	p.main = molecules.Split{Ratio: 0.38}
+	p.left = molecules.Split{Vertical: true, Ratio: 0.6, MinPane: 48}
+	p.right = molecules.Split{Vertical: true, Ratio: 0.65, MinPane: 48}
+	p.top = molecules.Split{Vertical: true, Ratio: 0.3, MinPane: 48}
 	return p
 }
 
@@ -59,14 +59,14 @@ func (p *DebugPanel) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensi
 		size.Y = gtx.Dp(420)
 	}
 	gtx.Constraints = layout.Exact(size)
-	atoms.Surface{}.Layout(gtx, th)
+	atoms.Surface{}.Paint(gtx, th)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			h := gtx.Dp(th.Size.ControlH) + gtx.Dp(th.Space.S)
 			sz := image.Pt(gtx.Constraints.Max.X, h)
 			cgtx := gtx
 			cgtx.Constraints = layout.Exact(sz)
-			atoms.Surface{Color: th.Color.SurfaceAlt}.Layout(cgtx, th)
+			atoms.Surface{Kind: atoms.SurfaceAlt}.Paint(cgtx, th)
 			cgtx.Constraints = layout.Constraints{Max: sz}
 			layout.Inset{Left: th.Space.XS, Top: th.Space.XS}.Layout(cgtx, func(gtx layout.Context) layout.Dimensions {
 				return p.Toolbar.Layout(gtx, th)

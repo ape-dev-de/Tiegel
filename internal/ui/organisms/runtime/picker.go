@@ -62,7 +62,7 @@ func (p *InterpreterPicker) Best() int {
 func (p *InterpreterPicker) sync() {
 	best := p.Best()
 	p.dd.Placeholder = "Choose a PHP interpreter"
-	p.dd.Options = p.dd.Options[:0]
+	p.dd.Options = make([]molecules.DropdownOption, 0, len(p.Items))
 	p.dd.Selected = -1
 	for i, it := range p.Items {
 		o := molecules.DropdownOption{Label: it.Label, Detail: it.Detail, Glyph: kindGlyph(it.Kind), Badge: it.Version, BadgeKind: atoms.BadgeInfo}
@@ -90,15 +90,15 @@ func kindGlyph(k Kind) *atoms.Glyph {
 // interpreter.
 func (p *InterpreterPicker) Update(gtx layout.Context) []Event {
 	p.sync()
-	if p.dd.Update(gtx) && p.dd.Selected >= 0 {
-		p.Selected = p.Items[p.dd.Selected].ID
+	if i, ok := p.dd.Update(gtx); ok && i < len(p.Items) && p.Items[i].ID != p.Selected {
+		p.Selected = p.Items[i].ID
 		return []Event{SelectInterpreterEvent{ID: p.Selected}}
 	}
 	return nil
 }
 
 // Open opens or closes the dropdown menu.
-func (p *InterpreterPicker) Open(open bool) { p.dd.SetOpen(open) }
+func (p *InterpreterPicker) Open(open bool) { p.dd.Open = open }
 
 // Layout draws the picker across the available width.
 func (p *InterpreterPicker) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {

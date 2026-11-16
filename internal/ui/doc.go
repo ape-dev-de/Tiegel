@@ -9,12 +9,14 @@
 //     toggle), TextField, Checkbox, Badge, Tooltip/TooltipBubble, Divider,
 //     Surface.
 //   - molecules: SearchField, FileRow, Tab, BreakpointRow, DiffBlock,
-//     TreeRow, ScrollList, Toolbar, SectionHeader, Dropdown, Table,
-//     SplitPane.
-//   - organisms: debug (DebugToolbar, CallStackList, VariablesTree,
+//     CodeLine, ListRow, TreeRow, Banner, ScrollList, Split, Dropdown
+//     (menu button or select field), Toolbar, SectionHeader, Table.
+//   - organisms: git (CommitPanel, DiffView, LogView, BranchList,
+//     MergeView), debug (DebugToolbar, CallStackList, VariablesTree,
 //     WatchesList, BreakpointsList, SessionList and the DebugPanel
 //     template), runtime (InterpreterPicker, PathMappingEditor,
-//     XdebugHintsList, StatusbarVersion), …
+//     XdebugHintsList, StatusbarVersion); further ones (file tree, …)
+//     follow.
 //   - editorview: the code editor widget (virtual rendering, gutter,
 //     keymap-driven input, IME); see that package.
 //
@@ -58,8 +60,9 @@
 // back in the next frame. Purely visual state (selection, expanded nodes,
 // split ratios, inline editors) stays inside the organism.
 //
-// Wrapper components that decorate arbitrary content (currently only
-// atoms.Tooltip) take the content as an additional last parameter:
+// Wrapper components that decorate or arrange arbitrary content
+// (atoms.Tooltip, atoms.Surface, molecules.ListRow, molecules.Split,
+// molecules.ScrollList) take the content as additional last parameters:
 //
 //	Layout(gtx, th, content layout.Widget)
 //

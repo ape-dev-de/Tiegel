@@ -123,7 +123,7 @@ func (l *XdebugHintsList) Layout(gtx layout.Context, th *tokens.Theme) layout.Di
 			call := m.Stop()
 			size := image.Pt(w, d.Size.Y+2*pad)
 			if l.rows[i].Hovered() {
-				atoms.Surface{Color: th.Color.SurfaceHover}.Layout(withExact(gtx, size), th)
+				atoms.Surface{Kind: atoms.SurfaceHover}.Paint(withExact(gtx, size), th)
 			}
 			t := op.Offset(image.Pt(pad, pad)).Push(gtx.Ops)
 			call.Add(gtx.Ops)

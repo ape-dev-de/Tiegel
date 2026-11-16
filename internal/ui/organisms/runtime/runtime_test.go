@@ -77,8 +77,8 @@ func TestInterpreterPicker(t *testing.T) {
 	if evs := d.click(100, 14); len(evs) != 0 {
 		t.Fatalf("open: %v", evs)
 	}
-	// Third option: field 28 + 2 gap + 4 pad + 2 rows of 28 + half a row.
-	evs := d.click(100, 28+2+4+2*28+14)
+	// Third option: field 28 + 4 gap + 4 pad + 2 rows of 24 + half a row.
+	evs := d.click(100, 28+4+4+2*24+12)
 	if len(evs) != 1 || evs[0] != (SelectInterpreterEvent{ID: "compose:shop:worker"}) || p.Selected != "compose:shop:worker" {
 		t.Fatalf("select: %v (selected %q)", evs, p.Selected)
 	}

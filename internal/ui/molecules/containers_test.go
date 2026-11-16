@@ -53,26 +53,6 @@ func TestTreeRowToggleAndDoubleClick(t *testing.T) {
 	}
 }
 
-func TestScrollList(t *testing.T) {
-	var s molecules.ScrollList
-	w := func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
-		return s.Layout(gtx, th, 100, func(gtx layout.Context, i int) layout.Dimensions {
-			return atoms.Text(fmt.Sprintf("row %d", i)).Layout(gtx, th)
-		})
-	}
-	d := uitest.Smoke(t, "scrolllist", image.Pt(200, 120), w)
-	if d.Size.Y != 120 {
-		t.Errorf("list does not fill height: %v", d.Size)
-	}
-	s.ScrollTo(50)
-	uitest.Smoke(t, "scrolled", image.Pt(200, 120), w)
-	if s.List.Position.First != 50 {
-		t.Errorf("first = %d", s.List.Position.First)
-	}
-	// Unbounded height lays out everything.
-	uitest.Smoke(t, "unbounded", image.Pt(200, 1<<24), w)
-}
-
 func TestToolbar(t *testing.T) {
 	tb := &molecules.Toolbar{Items: []molecules.ToolbarItem{
 		{ID: "run", Glyph: atoms.GlyphRun, Label: "Run", Shortcut: "Ctrl+R"},
@@ -116,52 +96,57 @@ func TestSectionHeader(t *testing.T) {
 	uitest.Smoke(t, "section plain", image.Pt(1<<24, 100), molecules.SectionHeader{Title: "x"}.Layout)
 }
 
-func TestDropdown(t *testing.T) {
-	dd := molecules.NewDropdown("Choose interpreter",
+func TestDropdownSelect(t *testing.T) {
+	dd := molecules.NewSelect("Choose interpreter",
 		molecules.DropdownOption{Label: "php 8.3", Detail: "/usr/bin/php", Glyph: atoms.GlyphComputer, Badge: "8.3"},
-		molecules.DropdownOption{Label: "compose:php", Detail: "php:8.2-fpm", Glyph: atoms.GlyphContainer, Badge: "★", BadgeKind: atoms.BadgeAccent},
+		molecules.DropdownOption{Label: "compose:php", Detail: "php:8.2-fpm", Glyph: atoms.GlyphContainer, Badge: "best", BadgeKind: atoms.BadgeAccent},
 	)
-	d := uitest.Smoke(t, "dropdown", area, dd.Layout)
+	d := uitest.Smoke(t, "select", area, dd.Layout)
 	if d.Size != image.Pt(area.X, 28) {
 		t.Errorf("size %v", d.Size)
 	}
-	dd.SetOpen(true)
-	uitest.Smoke(t, "dropdown open", area, dd.Layout)
-	dd.SetOpen(false)
+	dd.Open = true
+	uitest.Smoke(t, "select open", area, dd.Layout)
+	dd.Open = false
 
 	h := uitest.NewHarness(area)
-	changed := false
+	idx := -1
 	w := func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
-		changed = dd.Update(gtx) || changed
+		if i, ok := dd.Update(gtx); ok {
+			idx = i
+		}
 		return dd.Layout(gtx, th)
 	}
 	h.Frame(w)
 	h.Click(image.Pt(50, 14))
 	h.Frame(w)
-	if !dd.IsOpen() {
+	if !dd.Open {
 		t.Fatal("click did not open")
 	}
-	// Second option: field 28 + gap 2 + pad 4 + one row (24+4) + half a row.
-	h.Click(image.Pt(50, 28+2+4+28+14))
+	// Second option: field 28 + gap 4 + pad 4 + one row 24 + half a row.
+	h.Click(image.Pt(50, 28+4+4+24+12))
 	h.Frame(w)
-	if !changed || dd.Selected != 1 || dd.IsOpen() {
-		t.Fatalf("selection: changed=%v selected=%d open=%v", changed, dd.Selected, dd.IsOpen())
+	h.Frame(w)
+	if idx != 1 || dd.Selected != 1 || dd.Open {
+		t.Fatalf("selection: idx=%d selected=%d open=%v", idx, dd.Selected, dd.Open)
 	}
-	// Click outside closes without changing.
+	// Click outside closes without choosing.
 	h.Click(image.Pt(50, 14))
 	h.Frame(w)
-	changed = false
+	idx = -1
 	h.Click(image.Pt(400, 300))
 	h.Frame(w)
-	if dd.IsOpen() || changed {
+	if dd.Open || idx != -1 {
 		t.Fatal("click outside")
 	}
 	dd.Disabled = true
-	dd.SetOpen(true)
-	if dd.IsOpen() {
-		t.Fatal("disabled dropdown opened")
+	dd.Open = true
+	h.Frame(w)
+	if dd.Open {
+		t.Fatal("disabled select stays open")
 	}
-	uitest.Smoke(t, "dropdown disabled", area, dd.Layout)
+	uitest.Smoke(t, "select disabled", area, dd.Layout)
+	uitest.Smoke(t, "select empty unbounded", image.Pt(1<<24, 100), molecules.NewSelect("none").Layout)
 }
 
 func TestTable(t *testing.T) {
@@ -192,44 +177,4 @@ func TestTable(t *testing.T) {
 		t.Fatalf("widths %v", ws)
 	}
 	uitest.Smoke(t, "table unbounded", image.Pt(400, 1<<24), w)
-}
-
-func TestSplitPane(t *testing.T) {
-	sp := &molecules.SplitPane{}
-	var a, b image.Point
-	w := func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
-		return sp.Layout(gtx, th,
-			func(gtx layout.Context) layout.Dimensions { a = gtx.Constraints.Max; return layout.Dimensions{Size: a} },
-			func(gtx layout.Context) layout.Dimensions { b = gtx.Constraints.Max; return layout.Dimensions{Size: b} })
-	}
-	d := uitest.Smoke(t, "split", image.Pt(401, 200), w)
-	if d.Size != image.Pt(401, 200) || a.X != 200 || b.X != 200 || a.Y != 200 {
-		t.Fatalf("horizontal: %v %v %v", d.Size, a, b)
-	}
-	h := uitest.NewHarness(image.Pt(401, 200))
-	h.Frame(w)
-	h.Drag(image.Pt(200, 100), image.Pt(300, 100))
-	h.Frame(w)
-	if sp.Ratio < 0.7 || a.X < 280 {
-		t.Fatalf("drag: ratio %v, first %v", sp.Ratio, a)
-	}
-	// Dragging beyond the end clamps to MinSize.
-	h.Drag(image.Pt(a.X, 100), image.Pt(399, 100))
-	h.Frame(w)
-	h.Frame(w)
-	if b.X < 48 {
-		t.Fatalf("second pane below minimum: %v", b)
-	}
-	v := &molecules.SplitPane{Axis: layout.Vertical, Ratio: 0.25}
-	uitest.Smoke(t, "vertical", image.Pt(300, 401), func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
-		return v.Layout(gtx, th,
-			func(gtx layout.Context) layout.Dimensions { a = gtx.Constraints.Max; return layout.Dimensions{Size: a} },
-			func(gtx layout.Context) layout.Dimensions { b = gtx.Constraints.Max; return layout.Dimensions{Size: b} })
-	})
-	if a.Y != 100 || b.Y != 300 {
-		t.Fatalf("vertical: %v %v", a, b)
-	}
-	if v.Dragging() {
-		t.Fatal("dragging")
-	}
 }

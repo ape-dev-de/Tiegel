@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"slices"
 
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -18,17 +19,21 @@ import (
 
 // buildPages creates all catalog pages with their persistent widget state.
 func buildPages() []*page {
-	return []*page{
+	pages := append([]*page{
 		colorsPage(), syntaxPage(), typographyPage(),
 		labelPage(), iconPage(), buttonPage(), textFieldPage(), checkboxPage(),
-		badgePage(), tooltipPage(), dividerPage(),
+		badgePage(), tooltipPage(), dividerPage(), surfacePage(),
 		searchFieldPage(), fileRowPage(), tabPage(), breakpointPage(), diffPage(),
-		treeRowPage(), toolbarPage(), dropdownPage(), tablePage(),
+		treeRowPage(), toolbarPage(), tablePage(),
 		editorPage(),
 		debugToolbarPage(), callStackPage(), variablesPage(), watchesPage(), breakpointsListPage(), sessionListPage(),
 		interpreterPickerPage(), pathMappingPage(), hintsPage(), statusbarVersionPage(),
 		debugPanelPage(),
-	}
+	}, gitPages()...)
+	// Group by level so the sidebar shows each level once.
+	order := map[string]int{"Tokens": 0, "Atoms": 1, "Molecules": 2, "Organisms": 3, "Templates": 4}
+	slices.SortStableFunc(pages, func(a, b *page) int { return order[a.Level] - order[b.Level] })
+	return pages
 }
 
 // ---- Tokens ----------------------------------------------------------------
