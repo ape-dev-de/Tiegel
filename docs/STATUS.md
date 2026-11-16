@@ -23,7 +23,7 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 | 7.1 | DBGp-Server | ✅ | 93 %; Test mit echtem Xdebug offen (lokal nicht installiert) |
 | 7.2–7.3 | Debug-Modul + UI | ✅ | Debug-Fenster, Breakpoint-Gutter, Ausführungspunkt, Variablen/Watches; Test mit echtem Xdebug offen |
 | M8 | Mac-Paketierung | ⚠️ | Skripte, Universal-App, DMG, release.yml, opt-in Update-Check fertig; echte Signatur/Notarisierung braucht Apple-Zertifikate + Secrets (docs/release.md) |
-| M10 | Parität & Fenster-Management | 🟡 | Nutzer-Feedback: Projektwechsel, Kontextmenüs, Schrift, Tree-sitter-Implementierung, Diff-Fenster, Fenster-Management |
+| M10 | Parität & Fenster-Management | 🟡 | ✅ Fenster-Management (Stripes, Splits, mehrere Fenster), Projekte öffnen/wechseln, native Menüleiste + Ordnerdialog (macOS), Systemschriften; Backends ✅: Tree-sitter-Index (nav.*), Diff/Historie/Blame, Kontextmenü + files.*, Dateiwatcher + externe Änderungen, Find in Files, LSP-Ausbau, Git fetch/pull/stash; GUI-Verdrahtung in Arbeit |
 | M9 | Linux/WSL | 🟡 | Backend ✅: Socket-Transport mit Token, `api.Caller` (in-process/remote), Client, docsync, WSL-Interpreter + Pfade, `syntax.*`-API, CI Windows/Cross; GUI-Umschaltung, Pakete/Installer offen |
 
 ## Log
@@ -36,6 +36,8 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-16: GUI Teil B gemergt (D100–D103) – MVP-Funktionsumfang vollständig verdrahtet. Review-Fixes in Arbeit.
 - 2026-11-16: Review-Fixes (14 Befunde, je Regressionstest) gemergt; siehe docs/reviews/2026-11-16-backend.md.
 - 2026-11-16: GUI-Nacharbeiten aus Review gemergt (Hunk-Hash, Recovery-Banner, Container-Hinweis, Dateibaum-Bug).
+
+- 2026-11-16: M10-Backends gemergt (D110–D154), Vergleich in docs/vergleich.md.
 
 ## Offen / braucht den Nutzer
 - Echte Tests mit **Phpactor** (nicht installiert) und **Xdebug** (PHP 8.5 lokal ohne Xdebug) – Abnahme M4/M7.
