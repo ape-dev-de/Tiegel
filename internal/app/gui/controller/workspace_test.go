@@ -164,7 +164,7 @@ func TestClipboardPasteAndPaths(t *testing.T) {
 	if mp.To != "src" || len(mp.Paths) != 1 || len(w.Clip.Paths) != 0 {
 		t.Fatalf("move %+v clip %+v", mp, w.Clip)
 	}
-	if got := w.PathText([]string{"src/Mailer.php", ""}, PathAbsolute); got != filepath.Join(root, "src/Mailer.php")+"\n"+root {
+	if got := w.PathText([]string{"src/Mailer.php", ""}, PathAbsolute); got != filepath.Join(root, "src/Mailer.php")+"\n"+filepath.Clean(root) {
 		t.Fatalf("absolute %q", got)
 	}
 	if got := w.PathText([]string{"src/Mailer.php"}, PathName); got != "Mailer.php" {
