@@ -298,8 +298,8 @@ func (m *Model) SelectLines() {
 // AddNextOccurrence implements "add selection for next occurrence": with
 // an empty primary selection it selects the word at the caret; otherwise
 // it adds a selection for the next occurrence of the primary selection's
-// text after the last selection, wrapping around. It returns false if
-// nothing was added.
+// text after the primary (most recently added) selection, wrapping
+// around. It returns false if nothing was added.
 func (m *Model) AddNextOccurrence() bool {
 	p := m.Primary()
 	s := m.buf.Snapshot()
@@ -314,7 +314,7 @@ func (m *Model) AddNextOccurrence() bool {
 		return true
 	}
 	needle := s.Slice(p.Start(), p.End())
-	from := m.sels[len(m.sels)-1].End()
+	from := m.sels[m.primary].End()
 	found := s.Index(from, needle)
 	if found < 0 {
 		found = s.Index(0, needle)

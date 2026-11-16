@@ -23,6 +23,7 @@ func buildPages() []*page {
 		labelPage(), iconPage(), buttonPage(), textFieldPage(), checkboxPage(),
 		badgePage(), tooltipPage(), dividerPage(),
 		searchFieldPage(), fileRowPage(), tabPage(), breakpointPage(), diffPage(),
+		editorPage(),
 	}
 }
 
