@@ -22,7 +22,7 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 | 6.2–6.5 | Git-UI, Commit-Dialog, Merge | ⬜ | |
 | 7.1 | DBGp-Server | ✅ | 93 %; Test mit echtem Xdebug offen (lokal nicht installiert) |
 | 7.2–7.3 | Debug-Modul + UI | ⬜ | |
-| M8 | Mac-Paketierung | ⬜ | |
+| M8 | Mac-Paketierung | ⚠️ | Skripte, Universal-App, DMG, release.yml, opt-in Update-Check fertig; echte Signatur/Notarisierung braucht Apple-Zertifikate + Secrets (docs/release.md) |
 | M9 | Linux/WSL | ⬜ | |
 
 ## Log
