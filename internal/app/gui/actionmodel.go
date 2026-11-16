@@ -244,8 +244,9 @@ func (v *View) ShowActionMenu(ctx ContextID, t ContextTarget, ac actions.Context
 
 // menuPresenter shows menus with the ContextMenu molecule (D135).
 type menuPresenter struct {
-	menu  molecules.ContextMenu
-	items map[string]MenuItem
+	menu   molecules.ContextMenu
+	items  map[string]MenuItem
+	source []MenuItem
 }
 
 // present is the View.MenuPresenter: a popup menu at pos (window
@@ -257,6 +258,7 @@ func (p *menuPresenter) present(v *View, _ string, items []MenuItem, pos image.P
 		return
 	}
 	p.items = map[string]MenuItem{}
+	p.source = items
 	p.menu.Items = p.convert(items, "")
 	if pos != (image.Point{}) {
 		p.menu.ShowAt(pos)
@@ -304,28 +306,48 @@ func (p *menuPresenter) frame(v *View, gtx layout.Context) {
 // Opened reports whether a context menu is shown.
 func (p *menuPresenter) Opened() bool { return p.menu.Opened() }
 
-// choose runs the item with label (tests).
+// choose runs the leaf whose label is label, or else the first leaf whose
+// menu path ("New › PHP Class…") contains label (tests).
 func (p *menuPresenter) choose(v *View, label string) bool {
 	if !p.menu.Opened() {
 		return false
 	}
-	for _, it := range p.items {
-		if it.Title == label && len(it.Children) == 0 && !it.Separator {
-			p.menu.Close()
-			v.focusEditor = true
-			if it.Disabled {
-				return true
-			}
+	var exact, partial *MenuItem
+	var walk func(prefix string, items []MenuItem)
+	walk = func(prefix string, items []MenuItem) {
+		for i := range items {
+			it := &items[i]
 			switch {
-			case it.Action != "":
-				v.runAction(it.Action)
-			case it.Run != nil:
-				it.Run()
+			case it.Separator:
+			case len(it.Children) > 0:
+				walk(prefix+it.Title+" › ", it.Children)
+			case it.Title == label && exact == nil:
+				exact = it
+			case strings.Contains(prefix+it.Title, label) && partial == nil:
+				partial = it
 			}
-			return true
 		}
 	}
-	return false
+	walk("", p.source)
+	it := exact
+	if it == nil {
+		it = partial
+	}
+	if it == nil {
+		return false
+	}
+	p.menu.Close()
+	v.focusEditor = true
+	if it.Disabled {
+		return true
+	}
+	switch {
+	case it.Action != "":
+		v.runAction(it.Action)
+	case it.Run != nil:
+		it.Run()
+	}
+	return true
 }
 
 // ---- Find Action ----------------------------------------------------------------

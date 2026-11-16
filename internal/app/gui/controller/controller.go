@@ -177,6 +177,9 @@ type Controller struct {
 	// Debug is the debugger state (listener, sessions, stack, variables,
 	// breakpoints).
 	Debug *Debug
+	// Work is the file side: file operations, external changes, diff
+	// and history tabs, annotations, remote git (workspace.go).
+	Work *Workspace
 }
 
 // New returns a controller for be. Call Close when done.
@@ -191,6 +194,7 @@ func New(be Backend) *Controller {
 	c.resetGroups()
 	c.Vcs = newGit(c)
 	c.Debug = newDebug(c)
+	c.Work = newWorkspace(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
 		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*"}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
@@ -481,6 +485,7 @@ func (c *Controller) projectOpened(info ProjectInfo) {
 	c.Vcs.reset()
 	c.Debug.reset()
 	c.Debug.refresh()
+	c.Work.reset()
 	c.startLSP()
 	c.RecoveryShown = nil
 	c.setRecovery(nil)

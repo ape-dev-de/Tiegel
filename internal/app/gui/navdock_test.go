@@ -330,7 +330,7 @@ func menuLabels(items []molecules.MenuItem) string {
 func TestEditorActionsHaveHandlers(t *testing.T) {
 	e := newEnv(t, true)
 	deferred := map[string]bool{
-		actions.EditorGitAnnotate: true, actions.EditorGitHistory: true, actions.EditorGitCompare: true, actions.EditorGitRollback: true,
+		actions.EditorGitAnnotate: true, actions.EditorGitHistory: true, actions.EditorGitCompare: true, actions.EditorGitCompareRev: true, actions.EditorGitRollback: true,
 		actions.FileReveal: true, actions.FileHistory: true, // file operations
 	}
 	r := e.v.Registry

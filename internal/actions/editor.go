@@ -26,10 +26,11 @@ const (
 	// Git actions of the editor menu. Their handlers come from the git
 	// integration (file history, diff window); without a handler they are
 	// shown disabled.
-	EditorGitAnnotate = "vcs.annotate"
-	EditorGitHistory  = "vcs.fileHistory"
-	EditorGitCompare  = "vcs.compareWithHead"
-	EditorGitRollback = "vcs.rollback"
+	EditorGitAnnotate   = "vcs.annotate"
+	EditorGitHistory    = "vcs.fileHistory"
+	EditorGitCompare    = "vcs.compareWithHead"
+	EditorGitCompareRev = "vcs.compareWithRevision"
+	EditorGitRollback   = "vcs.rollback"
 )
 
 // ValueLSP is the Context value set while a language server runs.
@@ -61,6 +62,7 @@ func editorActions() []Action {
 		{ID: EditorGitAnnotate, Label: "Annotate with Git Blame", Icon: "branch", Enabled: hasLine, Visible: hasValue("git")},
 		{ID: EditorGitHistory, Label: "Show History", Icon: "history", Visible: hasValue("git")},
 		{ID: EditorGitCompare, Label: "Compare with HEAD", Icon: "swap", Visible: hasValue("git")},
+		{ID: EditorGitCompareRev, Label: "Compare with Revision…", Visible: hasValue("git")},
 		{ID: EditorGitRollback, Label: "Rollback…", Visible: hasValue("git")},
 	}
 }
@@ -68,7 +70,7 @@ func editorActions() []Action {
 // editorMenu is the context menu of the editor text area.
 func editorMenu() []MenuItem {
 	gotoMenu := Sub("Go To", Item(NavDefinition), Item(NavImplement), Item(NavSuper), Item(NavTypeHierarchy))
-	git := Sub("Git", Item(EditorGitAnnotate), Item(EditorGitHistory), Item(EditorGitCompare), Separator(), Item(EditorGitRollback))
+	git := Sub("Git", Item(EditorGitAnnotate), Item(EditorGitHistory), Item(EditorGitCompare), Item(EditorGitCompareRev), Separator(), Item(EditorGitRollback))
 	git.Icon = "branch"
 	return []MenuItem{
 		Item(CodeContextActions), Separator(),

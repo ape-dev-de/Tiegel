@@ -140,6 +140,9 @@ type View struct {
 	gitd *gitDock
 	dbgd *debugDock
 	navd *navDock
+	// work is the file side: tree menu, external changes, diff and
+	// history tabs, remote git (filesdock.go and friends).
+	work *workDock
 
 	recovery *recoveryBar
 	// phpStart: the PHP chooser starts with "Start container & detect".
@@ -187,6 +190,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v.applyTheme()
 	v.gitd = installGit(v)
 	v.dbgd = installDebug(v)
+	v.work = installWork(v)
 	v.navd = installNav(v)
 	return v
 }
@@ -301,6 +305,8 @@ func (v *View) handleTree(gtx layout.Context) {
 			}
 		case filetree.OpenEvent:
 			v.ctl.OpenFile(e.Path, nil)
+		case filetree.ContextEvent, filetree.KeyEvent:
+			v.treeEvent(e)
 		}
 	}
 }

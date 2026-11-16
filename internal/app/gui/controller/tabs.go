@@ -305,6 +305,9 @@ func (c *Controller) Save(file string) {
 		var st DocState
 		err := c.call(ctx, "doc.save", pathParams{Path: file}, &st)
 		return func() {
+			if err != nil && c.Work.saveFailed(file, err) {
+				return
+			}
 			c.notice(err)
 			if t := c.Tab(file); t != nil && err == nil {
 				t.Modified = st.Modified
