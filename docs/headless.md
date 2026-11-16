@@ -67,6 +67,10 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `git-commit -m MSG [--amend] [--push] [DATEI...]` | Commit (offene Dokumente werden vorher gespeichert); mit DATEIEN nur diese (unabhängig vom Index), sonst der Index; `--push` pusht danach (Exit 1, wenn der Push scheitert – mit Fehlerart) | `git.commitSelection`, `git.commit`, `git.push` |
 | `git-diff [DATEI...] [--staged] [--base REV]` | Unified Diff (Arbeitsbaum ↔ Index, `--staged` Index ↔ HEAD, `--base` gegen Revision); `--json` geparst | `git.diff` |
 | `git-push [--remote R]` | aktuellen Branch pushen (Netzwerkzugriff nur hier) | `git.push` |
+| `git-file-diff DATEI [--base V] [--target V] [--base-path PFAD] [--ignore-whitespace]` | Änderungsblöcke einer Datei zwischen zwei Versionen (`V` = `HEAD`, `index`, `working`, `empty` oder Revision; Standard `HEAD` ↔ Arbeitsbaum) als `@@ art left … right … @@` mit `-`/`+`-Zeilen; `--json` mit Volltexten und Wort-Bereichen | `git.fileDiff` |
+| `git-history DATEI [--skip N] [--max N] [--rev R] [--no-follow]` | Commits, die DATEI geändert haben (folgt Umbenennungen): `hash datum autor status pfad betreff` | `git.fileHistory` |
+| `git-blame DATEI [--rev R] [--ignore-whitespace]` | jede Zeile mit Commit, Autor, Datum (`00000000 (Not committed …)` für ungespeicherte/uncommittete Zeilen) | `git.blame` |
+| `git-compare BASIS [ZIEL]` | geänderte Dateien zwischen zwei Revisionen (ohne ZIEL: Arbeitsbaum) als `status pfad` | `git.compareRevisions` |
 | `runtime-diagnose [INTERPRETER-ID]` | Xdebug-Einrichtung des (gewählten) Interpreters: INI-Werte `xdebug.mode/client_host/client_port`, Exec-Modus, Pfad-Mappings, Hinweise; Exit 1 bei Warnungen | `runtime.diagnose` |
 | `mappings [set HOST=REMOTE... \| reset] [--exec-mode auto\|exec\|run]` | Pfad-Mappings anzeigen oder dauerhaft korrigieren (`reset`: wieder aus Compose); Exec-Modus für Compose-Interpreter | `runtime.mappings.*`, `runtime.execMode` |
 | `php-override [VERSION \| clear]` | dauerhaften PHP-Versions-Override setzen/entfernen, danach Version und Quelle | `php.setVersionOverride`, `php.version` |
@@ -328,6 +332,10 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `git.conflicts` | – | Dateien mit Konflikt |
 | `git.mergeData` | `path` | `base`, `ours`, `theirs`, `has*`, `blocks[{index, kind, conflict, base, ours, theirs, *Start}]`, `merged` (mit Markern), `conflicts` |
 | `git.resolve` | `path`, `content?` oder `resolutions: [{block, resolution: ours\|theirs\|oursFirst\|theirsFirst\|base\|custom, custom?}]` | `content`, `reloaded` |
+| `git.fileDiff` | `path`, `base?` (`HEAD`), `target?` (`working`), `basePath?` (Pfad auf der Basisseite nach Umbenennung), `ignoreWhitespace?`, `noInline?`; Versionen: `working` (offenes Dokument bzw. Datei), `index`, `empty`, Revision | `left`/`right`: `{version, hash?, label, path, exists, binary?, text, open?}` (Volltexte, mit Arbeitsbaum-Filtern), `blocks[{kind: added\|deleted\|modified, leftStart, leftEnd, rightStart, rightEnd, leftInline?, rightInline?: [{line, ranges[{start, end}]}]}]` (1-basiert, Ende exklusiv; Wort-/Zeichenbereiche als Byte-Spalten der Zeile), `identical` |
+| `git.fileHistory` | `path`, `skip?`, `max?` (100), `rev?`, `noFollow?` | `commits[{hash, parents, author, authorEmail, date, subject, refs?, path, oldPath?, status}]` (Pfad der Datei im Commit, `oldPath` im Elterncommit nach Umbenennung), `more` |
+| `git.blame` | `path`, `rev?` (ohne: aktueller Inhalt, offenes Dokument inkl. ungespeicherter Änderungen), `ignoreWhitespace?` | `lines[{line, hash, origLine}]`, `commits[{hash, author, authorEmail, date, summary, path, previous?, prevPath?, boundary?, uncommitted?}]` (neueste zuerst; nicht committete Zeilen: Hash aus 40 Nullen) |
+| `git.compareRevisions` | `base?` (`HEAD`), `target?` (leer/`working` = Arbeitsbaum) | `files[{path, oldPath?, status: A\|M\|D\|R\|C\|T\|U, similarity?}]` |
 
 **debug-xdebug**
 

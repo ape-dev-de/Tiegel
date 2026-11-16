@@ -10,9 +10,10 @@
 //     Surface.
 //   - molecules: SearchField, FileRow, Tab, BreakpointRow, DiffBlock,
 //     CodeLine, ListRow, TreeRow, Banner, ScrollList, Split, Dropdown
-//     (menu button or select field), Toolbar, SectionHeader, Table.
+//     (menu button or select field), Toolbar, SectionHeader, Table,
+//     ChangeBands, AnnotationCell.
 //   - organisms: git (CommitPanel, DiffView, LogView, BranchList,
-//     MergeView), debug (DebugToolbar, CallStackList, VariablesTree,
+//     MergeView), diff (DiffWindow, BlameGutter, FileHistoryView), debug (DebugToolbar, CallStackList, VariablesTree,
 //     WatchesList, BreakpointsList, SessionList and the DebugPanel
 //     template), runtime (InterpreterPicker, PathMappingEditor,
 //     XdebugHintsList, StatusbarVersion), filetree, tabs, statusbar,

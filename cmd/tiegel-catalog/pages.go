@@ -29,7 +29,7 @@ func buildPages() []*page {
 		debugToolbarPage(), callStackPage(), variablesPage(), watchesPage(), breakpointsListPage(), sessionListPage(),
 		interpreterPickerPage(), pathMappingPage(), hintsPage(), statusbarVersionPage(),
 		debugPanelPage(),
-	}, gitPages()...)
+	}, append(gitPages(), diffPages()...)...)
 	// Group by level so the sidebar shows each level once.
 	order := map[string]int{"Tokens": 0, "Atoms": 1, "Molecules": 2, "Organisms": 3, "Templates": 4}
 	slices.SortStableFunc(pages, func(a, b *page) int { return order[a.Level] - order[b.Level] })
