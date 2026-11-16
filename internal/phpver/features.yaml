@@ -1,0 +1,553 @@
+# PHP language feature and deprecation table.
+#
+# Queries are Tree-sitter queries against the "php" grammar of
+# tree-sitter-php v0.25.1. The capture named @feature marks the reported
+# range; other captures (e.g. @t) only feed predicates. Every entry carries
+# examples: "match" must trigger the query, "nomatch" must not. Both are
+# valid PHP for the newest version and are verified by the tests (and with
+# `php -l` when a PHP binary is available).
+#
+# A new PHP version means new entries here, not new code.
+#
+# features:      min       = first PHP version supporting the feature
+# deprecations:  deprecated = first version emitting a deprecation
+#                removed    = first version where it is gone (optional)
+# severity: error (default) | warning | info
+
+features:
+  # ---------------------------------------------------------------- PHP 7.4
+  - id: typed_properties
+    description: Typed properties
+    min: "7.4"
+    query: |
+      (property_declaration type: (_) @feature)
+    examples:
+      match: "<?php class A { public int $x; }"
+      nomatch: "<?php class A { public $x; }"
+
+  - id: arrow_functions
+    description: Arrow functions (fn)
+    min: "7.4"
+    query: |
+      (arrow_function "fn" @feature)
+    examples:
+      match: "<?php $f = fn($x) => $x * 2;"
+      nomatch: "<?php $f = function ($x) { return $x * 2; };"
+
+  - id: null_coalescing_assignment
+    description: Null coalescing assignment operator (??=)
+    min: "7.4"
+    query: |
+      (augmented_assignment_expression operator: "??=" @feature)
+    examples:
+      match: "<?php $a ??= 1;"
+      nomatch: "<?php $a = $a ?? 1; $b += 1;"
+
+  - id: spread_in_arrays
+    description: Spread operator in array expressions
+    min: "7.4"
+    query: |
+      (array_element_initializer (variadic_unpacking) @feature)
+    examples:
+      match: "<?php $a = [1, ...$b];"
+      nomatch: "<?php f(...$b); $a = [1, 2];"
+
+  - id: numeric_literal_separator
+    description: Numeric literal separator (1_000)
+    min: "7.4"
+    query: |
+      ((integer) @feature (#match? @feature "_"))
+      ((float) @feature (#match? @feature "_"))
+    examples:
+      match: "<?php $a = 1_000_000; $b = 1_000.5;"
+      nomatch: "<?php $a = 1000000;"
+
+  # ---------------------------------------------------------------- PHP 8.0
+  - id: named_arguments
+    description: Named arguments
+    min: "8.0"
+    query: |
+      (argument name: (name) @feature)
+    examples:
+      match: "<?php f(name: 1);"
+      nomatch: "<?php f(1, $name);"
+
+  - id: match_expression
+    description: match expression
+    min: "8.0"
+    query: |
+      (match_expression "match" @feature)
+    examples:
+      match: "<?php $r = match ($x) { 1 => 'a', default => 'b' };"
+      nomatch: "<?php switch ($x) { case 1: $r = 'a'; }"
+
+  - id: nullsafe_operator
+    description: Nullsafe operator (?->)
+    min: "8.0"
+    query: |
+      (nullsafe_member_access_expression "?->" @feature)
+      (nullsafe_member_call_expression "?->" @feature)
+    examples:
+      match: "<?php $a?->b; $a?->c();"
+      nomatch: "<?php $a->b; $a->c();"
+
+  - id: union_types
+    description: Union types
+    min: "8.0"
+    query: |
+      (union_type) @feature
+    examples:
+      match: "<?php function f(int|string $a): int|false { return 1; }"
+      nomatch: "<?php function f(?int $a): int { try {} catch (A|B $e) {} return 1; }"
+
+  - id: constructor_promotion
+    description: Constructor property promotion
+    min: "8.0"
+    query: |
+      (property_promotion_parameter) @feature
+    examples:
+      match: "<?php class A { public function __construct(private int $x) {} }"
+      nomatch: "<?php class A { public function __construct(int $x) {} }"
+
+  - id: attributes
+    description: Attributes (#[...])
+    min: "8.0"
+    severity: warning
+    note: Older versions treat "#[" as a comment, so the code still runs but the attribute has no effect.
+    query: |
+      (attribute_list) @feature
+    examples:
+      match: "<?php #[Attr] function f() {}"
+      nomatch: "<?php /** @Attr */ function f() {}"
+
+  - id: static_return_type
+    description: static return type
+    min: "8.0"
+    query: |
+      (method_declaration return_type: (named_type (name) @feature (#match? @feature "^(?i)static$")))
+      (method_declaration return_type: (optional_type (named_type (name) @feature (#match? @feature "^(?i)static$"))))
+      (method_declaration return_type: (union_type (named_type (name) @feature (#match? @feature "^(?i)static$"))))
+    examples:
+      match: "<?php class A { public function f(): static { return $this; } }"
+      nomatch: "<?php class A { public function f(): self { return $this; } }"
+
+  - id: mixed_type
+    description: mixed type
+    min: "8.0"
+    query: |
+      ((primitive_type) @feature (#match? @feature "^(?i)mixed$"))
+    examples:
+      match: "<?php function f(mixed $a): mixed { return $a; }"
+      nomatch: "<?php function f($a) { return $a; }"
+
+  - id: throw_expression
+    description: throw as an expression
+    min: "8.0"
+    query: |
+      (arrow_function body: (throw_expression) @feature)
+      (binary_expression right: (throw_expression) @feature)
+      (conditional_expression alternative: (throw_expression) @feature)
+      (conditional_expression body: (throw_expression) @feature)
+      (assignment_expression right: (throw_expression) @feature)
+    examples:
+      match: "<?php $a = $b ?? throw new E(); $f = fn() => throw new E();"
+      nomatch: "<?php throw new E();"
+
+  - id: non_capturing_catch
+    description: catch without a variable
+    min: "8.0"
+    query: |
+      (catch_clause type: (_) !name) @feature
+    examples:
+      match: "<?php try {} catch (E) {}"
+      nomatch: "<?php try {} catch (E $e) {}"
+
+  - id: class_on_objects
+    description: "::class on objects"
+    min: "8.0"
+    query: |
+      (class_constant_access_expression (variable_name) (name) @feature (#match? @feature "^(?i)class$"))
+    examples:
+      match: "<?php echo $obj::class;"
+      nomatch: "<?php echo Foo::class;"
+
+  - id: str_contains_family
+    description: str_contains/str_starts_with/str_ends_with functions
+    min: "8.0"
+    severity: warning
+    note: A polyfill (e.g. symfony/polyfill-php80) may provide these.
+    query: |
+      (function_call_expression function: (name) @feature (#match? @feature "^(?i)(str_contains|str_starts_with|str_ends_with)$"))
+    examples:
+      match: "<?php str_contains('abc', 'b');"
+      nomatch: "<?php strpos('abc', 'b');"
+
+  # ---------------------------------------------------------------- PHP 8.1
+  - id: enums
+    description: Enumerations
+    min: "8.1"
+    query: |
+      (enum_declaration "enum" @feature)
+    examples:
+      match: "<?php enum Suit: string { case Hearts = 'H'; }"
+      nomatch: "<?php class Suit { const HEARTS = 'H'; }"
+
+  - id: readonly_properties
+    description: Readonly properties
+    min: "8.1"
+    query: |
+      (property_declaration (readonly_modifier) @feature)
+      (property_promotion_parameter readonly: (readonly_modifier) @feature)
+    examples:
+      match: "<?php class A { public readonly int $x; public function __construct(public readonly int $y) {} }"
+      nomatch: "<?php class A { public int $x; }"
+
+  - id: first_class_callable_syntax
+    description: First-class callable syntax (f(...))
+    min: "8.1"
+    query: |
+      (arguments (variadic_placeholder) @feature)
+    examples:
+      match: "<?php $f = strlen(...); $m = $o->m(...);"
+      nomatch: "<?php $f = 'strlen'; f(...$args);"
+
+  - id: never_type
+    description: never return type
+    min: "8.1"
+    query: |
+      (bottom_type) @feature
+    examples:
+      match: "<?php function f(): never { exit; }"
+      nomatch: "<?php function f(): void { exit; }"
+
+  - id: new_in_initializers
+    description: new in initializers
+    min: "8.1"
+    query: |
+      (simple_parameter default_value: (object_creation_expression) @feature)
+      (property_promotion_parameter default_value: (object_creation_expression) @feature)
+      (static_variable_declaration value: (object_creation_expression) @feature)
+      (attribute (arguments (argument (object_creation_expression) @feature)))
+    examples:
+      match: "<?php function f(Logger $l = new NullLogger()) {}"
+      nomatch: "<?php function f(?Logger $l = null) { $l ??= new NullLogger(); }"
+
+  - id: pure_intersection_types
+    description: Pure intersection types
+    min: "8.1"
+    query: |
+      (simple_parameter type: (intersection_type) @feature)
+      (property_promotion_parameter type: (intersection_type) @feature)
+      (property_declaration type: (intersection_type) @feature)
+      (function_definition return_type: (intersection_type) @feature)
+      (method_declaration return_type: (intersection_type) @feature)
+    examples:
+      match: "<?php function f(A&B $x): A&B { return $x; }"
+      nomatch: "<?php function f((A&B)|null $x) { return $x; }"
+
+  - id: explicit_octal_notation
+    description: Explicit octal notation (0o)
+    min: "8.1"
+    query: |
+      ((integer) @feature (#match? @feature "^0[oO]"))
+    examples:
+      match: "<?php $a = 0o755;"
+      nomatch: "<?php $a = 0755;"
+
+  - id: array_is_list
+    description: array_is_list function
+    min: "8.1"
+    severity: warning
+    note: A polyfill (e.g. symfony/polyfill-php81) may provide it.
+    query: |
+      (function_call_expression function: (name) @feature (#match? @feature "^(?i)array_is_list$"))
+    examples:
+      match: "<?php array_is_list([1]);"
+      nomatch: "<?php array_keys([1]);"
+
+  # ---------------------------------------------------------------- PHP 8.2
+  - id: readonly_classes
+    description: Readonly classes
+    min: "8.2"
+    query: |
+      (class_declaration (readonly_modifier) @feature)
+    examples:
+      match: "<?php readonly class A {}"
+      nomatch: "<?php final class A { public readonly int $x; }"
+
+  - id: dnf_types
+    description: Disjunctive normal form (DNF) types
+    min: "8.2"
+    query: |
+      (disjunctive_normal_form_type) @feature
+    examples:
+      match: "<?php function f((A&B)|null $x) {}"
+      nomatch: "<?php function f(A|B|null $x) {}"
+
+  - id: standalone_true_false_null
+    description: true, false and null as standalone types
+    min: "8.2"
+    query: |
+      (function_definition return_type: (primitive_type) @feature (#match? @feature "^(?i)(true|false|null)$"))
+      (method_declaration return_type: (primitive_type) @feature (#match? @feature "^(?i)(true|false|null)$"))
+      (simple_parameter type: (primitive_type) @feature (#match? @feature "^(?i)(true|false|null)$"))
+      (property_declaration type: (primitive_type) @feature (#match? @feature "^(?i)(true|false|null)$"))
+      (property_promotion_parameter type: (primitive_type) @feature (#match? @feature "^(?i)(true|false|null)$"))
+    examples:
+      match: "<?php function f(): true { return true; } function g(null $x): false { return false; }"
+      nomatch: "<?php function f(): int|false { return false; }"
+
+  - id: constants_in_traits
+    description: Constants in traits
+    min: "8.2"
+    query: |
+      (trait_declaration body: (declaration_list (const_declaration) @feature))
+    examples:
+      match: "<?php trait T { const X = 1; }"
+      nomatch: "<?php class C { const X = 1; } trait T { public $x = 1; }"
+
+  # ---------------------------------------------------------------- PHP 8.3
+  - id: typed_class_constants
+    description: Typed class constants
+    min: "8.3"
+    query: |
+      (const_declaration type: (_) @feature)
+    examples:
+      match: "<?php class A { const int X = 1; }"
+      nomatch: "<?php class A { const X = 1; }"
+
+  - id: dynamic_class_constant_fetch
+    description: Dynamic class constant fetch (C::{$name})
+    min: "8.3"
+    query: |
+      (class_constant_access_expression (name (_)) @feature)
+    examples:
+      match: "<?php echo A::{$name};"
+      nomatch: "<?php echo A::X; echo constant('A::' . $name);"
+
+  - id: override_attribute
+    description: "#[\\Override] attribute"
+    min: "8.3"
+    severity: warning
+    note: Unknown attributes are ignored by older versions, so the check is silently skipped.
+    query: |
+      (attribute [(name) (qualified_name)] @feature (#match? @feature "^\\\\?Override$"))
+    examples:
+      match: "<?php class A extends B { #[\\Override] public function f() {} }"
+      nomatch: "<?php class A extends B { #[\\Pure] public function f() {} }"
+
+  - id: json_validate
+    description: json_validate function
+    min: "8.3"
+    severity: warning
+    note: A polyfill (e.g. symfony/polyfill-php83) may provide it.
+    query: |
+      (function_call_expression function: (name) @feature (#match? @feature "^(?i)json_validate$"))
+    examples:
+      match: "<?php json_validate('{}');"
+      nomatch: "<?php json_decode('{}');"
+
+  # ---------------------------------------------------------------- PHP 8.4
+  - id: property_hooks
+    description: Property hooks
+    min: "8.4"
+    query: |
+      (property_hook_list) @feature
+    examples:
+      match: "<?php class A { public string $n { get => 'x'; } }"
+      nomatch: "<?php class A { public string $n = 'x'; }"
+
+  - id: asymmetric_visibility
+    description: Asymmetric property visibility (private(set))
+    min: "8.4"
+    query: |
+      (visibility_modifier (operation)) @feature
+    examples:
+      match: "<?php class A { public private(set) int $a = 1; }"
+      nomatch: "<?php class A { private int $a = 1; }"
+
+  - id: new_without_parentheses
+    description: Member access on new without parentheses
+    min: "8.4"
+    query: |
+      (member_call_expression object: (object_creation_expression) @feature)
+      (member_access_expression object: (object_creation_expression) @feature)
+      (nullsafe_member_call_expression object: (object_creation_expression) @feature)
+      (nullsafe_member_access_expression object: (object_creation_expression) @feature)
+      (scoped_call_expression scope: (object_creation_expression) @feature)
+      (class_constant_access_expression . (object_creation_expression) @feature)
+    examples:
+      match: "<?php $x = new Foo()->bar(); $y = new Foo()->baz;"
+      nomatch: "<?php $x = (new Foo())->bar(); $y = new Foo;"
+
+  - id: deprecated_attribute
+    description: "#[\\Deprecated] attribute"
+    min: "8.4"
+    severity: warning
+    note: Unknown attributes are ignored by older versions, so no deprecation is emitted.
+    query: |
+      (attribute [(name) (qualified_name)] @feature (#match? @feature "^\\\\?Deprecated$"))
+    examples:
+      match: "<?php #[\\Deprecated] function f() {}"
+      nomatch: "<?php /** @deprecated */ function f() {}"
+
+  - id: array_find_family
+    description: array_find/array_find_key/array_any/array_all functions
+    min: "8.4"
+    severity: warning
+    note: A polyfill (e.g. symfony/polyfill-php84) may provide these.
+    query: |
+      (function_call_expression function: (name) @feature (#match? @feature "^(?i)(array_find|array_find_key|array_any|array_all)$"))
+    examples:
+      match: "<?php array_find([1], fn($v) => $v > 0);"
+      nomatch: "<?php array_filter([1], fn($v) => $v > 0);"
+
+  # ---------------------------------------------------------------- PHP 8.5
+  - id: pipe_operator
+    description: Pipe operator (|>)
+    min: "8.5"
+    query: |
+      (binary_expression operator: "|>" @feature)
+    examples:
+      match: "<?php $r = $s |> strtolower(...) |> trim(...);"
+      nomatch: "<?php $r = trim(strtolower($s)); $b = $x | $y;"
+
+  - id: no_discard_attribute
+    description: "#[\\NoDiscard] attribute"
+    min: "8.5"
+    severity: warning
+    note: Unknown attributes are ignored by older versions.
+    query: |
+      (attribute [(name) (qualified_name)] @feature (#match? @feature "^\\\\?NoDiscard$"))
+    examples:
+      match: "<?php #[\\NoDiscard] function f(): int { return 1; }"
+      nomatch: "<?php function f(): int { return 1; }"
+
+deprecations:
+  - id: real_cast
+    description: The (real) cast
+    deprecated: "7.4"
+    removed: "8.0"
+    query: |
+      (cast_expression type: (cast_type) @feature (#match? @feature "^(?i)real$"))
+    examples:
+      # (real) is a parse error on PHP >= 8.0, so the match example cannot be
+      # linted; see lint_skip.
+      match: "<?php $a = (real) $x;"
+      nomatch: "<?php $a = (float) $x;"
+    lint_skip: true
+
+  - id: unset_cast
+    description: The (unset) cast
+    deprecated: "7.2"
+    removed: "8.0"
+    query: |
+      (cast_expression type: (cast_type) @feature (#match? @feature "^(?i)unset$"))
+    examples:
+      match: "<?php $a = (unset) $x;"
+      nomatch: "<?php $a = null; unset($x);"
+    lint_skip: true
+
+  - id: create_function
+    description: create_function()
+    deprecated: "7.2"
+    removed: "8.0"
+    query: |
+      (function_call_expression function: (name) @feature (#match? @feature "^(?i)create_function$"))
+    examples:
+      match: "<?php $f = create_function('$a', 'return $a;');"
+      nomatch: "<?php $f = function ($a) { return $a; };"
+
+  - id: each_function
+    description: each()
+    deprecated: "7.2"
+    removed: "8.0"
+    query: |
+      (function_call_expression function: (name) @feature (#match? @feature "^(?i)each$"))
+    examples:
+      match: "<?php while (list($k, $v) = each($arr)) {}"
+      nomatch: "<?php foreach ($arr as $k => $v) {}"
+
+  - id: money_format
+    description: money_format()
+    deprecated: "7.4"
+    removed: "8.0"
+    query: |
+      (function_call_expression function: (name) @feature (#match? @feature "^(?i)money_format$"))
+    examples:
+      match: "<?php echo money_format('%i', 1.5);"
+      nomatch: "<?php echo number_format(1.5, 2);"
+
+  - id: strftime
+    description: strftime() and gmstrftime()
+    deprecated: "8.1"
+    query: |
+      (function_call_expression function: (name) @feature (#match? @feature "^(?i)(strftime|gmstrftime)$"))
+    examples:
+      match: "<?php echo strftime('%Y');"
+      nomatch: "<?php echo date('Y');"
+
+  - id: mhash
+    description: mhash*() functions
+    deprecated: "8.1"
+    query: |
+      (function_call_expression function: (name) @feature (#match? @feature "^(?i)mhash(_count|_get_block_size|_get_hash_name|_keygen_s2k)?$"))
+    examples:
+      match: "<?php mhash(MHASH_MD5, 'x');"
+      nomatch: "<?php hash('md5', 'x');"
+
+  - id: dollar_brace_interpolation
+    description: "${var} string interpolation"
+    deprecated: "8.2"
+    query: |
+      (encapsed_string (dynamic_variable_name) @feature)
+      (heredoc_body (dynamic_variable_name) @feature)
+    examples:
+      match: "<?php echo \"a ${b} c\";"
+      nomatch: "<?php echo \"a {$b} c $d\";"
+
+  - id: utf8_encode_decode
+    description: utf8_encode() and utf8_decode()
+    deprecated: "8.2"
+    query: |
+      (function_call_expression function: (name) @feature (#match? @feature "^(?i)utf8_(encode|decode)$"))
+    examples:
+      match: "<?php echo utf8_encode('x');"
+      nomatch: "<?php echo mb_convert_encoding('x', 'UTF-8', 'ISO-8859-1');"
+
+  - id: implicitly_nullable_parameter
+    description: Implicitly nullable parameter types (T $x = null)
+    deprecated: "8.4"
+    query: |
+      (simple_parameter type: [(named_type) (primitive_type)] @t default_value: (null) (#not-match? @t "^(?i)(mixed|null)$")) @feature
+      (simple_parameter type: (union_type) @t default_value: (null) (#not-match? @t "(?i)\\bnull\\b")) @feature
+    examples:
+      match: "<?php function f(Foo $x = null, int|string $y = null) {}"
+      nomatch: "<?php function f(?Foo $x = null, int|null $y = null, mixed $z = null) {}"
+
+  - id: e_strict
+    description: The E_STRICT constant
+    deprecated: "8.4"
+    query: |
+      ((name) @feature (#eq? @feature "E_STRICT"))
+    examples:
+      match: "<?php error_reporting(E_ALL & ~E_STRICT);"
+      nomatch: "<?php error_reporting(E_ALL);"
+
+  - id: backtick_operator
+    description: Backtick operator as alias of shell_exec()
+    deprecated: "8.5"
+    query: |
+      (shell_command_expression) @feature
+    examples:
+      match: "<?php $out = `ls`;"
+      nomatch: "<?php $out = shell_exec('ls');"
+
+  - id: non_canonical_casts
+    description: Non-canonical casts (integer), (boolean), (double), (binary)
+    deprecated: "8.5"
+    query: |
+      (cast_expression type: (cast_type) @feature (#match? @feature "^(?i)(integer|boolean|double|binary)$"))
+    examples:
+      match: "<?php $a = (integer) $x; $b = (boolean) $y;"
+      nomatch: "<?php $a = (int) $x; $b = (bool) $y;"
