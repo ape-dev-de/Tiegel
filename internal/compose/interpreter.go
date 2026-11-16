@@ -72,6 +72,19 @@ func NewInterpreter(p *Project, service string) *Interpreter {
 	return c
 }
 
+// ExecOnly returns a copy of c that only uses `docker compose exec`: it
+// never starts a container (`run` could create one and make Docker pull an
+// image). Automatic probes that the user did not trigger (version
+// detection at project open, hooks) must use it; on a stopped service
+// they fail instead.
+func (c *Interpreter) ExecOnly() *Interpreter {
+	cp := *c
+	cp.Mode = ExecAlways
+	cp.Files = append([]string(nil), c.Files...)
+	cp.Profiles = append([]string(nil), c.Profiles...)
+	return &cp
+}
+
 // ID implements interp.Interpreter.
 func (c *Interpreter) ID() string { return "compose:" + c.Project + ":" + c.Service }
 

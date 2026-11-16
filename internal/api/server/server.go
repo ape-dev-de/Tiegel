@@ -8,6 +8,9 @@
 //   - Every connection must authenticate first with the request "auth"
 //     {"token": ...} (api.AuthMethod); the token is random per start unless
 //     given, and is written to a token file readable only by the user (0600).
+//     Before that, messages are limited to a few KiB
+//     (api.DefaultPreAuthMaxMessage), and the number of connections is
+//     capped (Config.MaxConns).
 //   - Unix sockets are created with mode 0600.
 //   - TCP listens on loopback only; any other host (including 0.0.0.0 and
 //     "::") needs Config.AllowRemote and logs a warning, because the
@@ -142,9 +145,16 @@ type Config struct {
 	// Serve configures each connection (framing, concurrency). Its Token
 	// is set from Token/TokenFile.
 	Serve api.ServeOptions
+	// MaxConns limits the number of open connections (authenticated or
+	// not); further connections are closed right away. 0 means
+	// DefaultMaxConns, < 0 unlimited.
+	MaxConns int
 	// Logf receives notices and warnings (nil: discarded).
 	Logf func(format string, args ...any)
 }
+
+// DefaultMaxConns is the default Config.MaxConns.
+const DefaultMaxConns = 64
 
 // Server is a listening API endpoint.
 type Server struct {
@@ -281,7 +291,13 @@ func (s *Server) Serve(ctx context.Context, app *api.App) error {
 			}
 			break
 		}
-		if !s.track(c) {
+		ok, full := s.track(c)
+		if full {
+			s.cfg.Logf("refusing connection from %s: limit of %d connections reached", c.RemoteAddr(), s.maxConns())
+			_ = c.Close()
+			continue
+		}
+		if !ok {
 			_ = c.Close()
 			break
 		}
@@ -301,14 +317,26 @@ func (s *Server) Serve(ctx context.Context, app *api.App) error {
 	return err
 }
 
-func (s *Server) track(c net.Conn) bool {
+func (s *Server) maxConns() int {
+	if s.cfg.MaxConns == 0 {
+		return DefaultMaxConns
+	}
+	return s.cfg.MaxConns
+}
+
+// track registers c. ok is false once the server is closed; full reports
+// that the connection limit is reached.
+func (s *Server) track(c net.Conn) (ok, full bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return false
+		return false, false
+	}
+	if max := s.maxConns(); max > 0 && len(s.conns) >= max {
+		return false, true
 	}
 	s.conns[c] = struct{}{}
-	return true
+	return true, false
 }
 
 func (s *Server) untrack(c net.Conn) {
@@ -335,7 +363,11 @@ func (s *Server) Close() error {
 			_ = c.Close()
 		}
 		if s.tokenFile != "" {
-			_ = os.Remove(s.tokenFile)
+			// Another server may have replaced the shared token file
+			// meanwhile; only remove our own.
+			if t, err := ReadTokenFile(s.tokenFile); err == nil && t == s.token {
+				_ = os.Remove(s.tokenFile)
+			}
 		}
 		if s.sockPath != "" {
 			_ = os.Remove(s.sockPath)

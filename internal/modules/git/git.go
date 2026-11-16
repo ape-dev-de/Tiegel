@@ -113,9 +113,12 @@ type GitDiffLine struct {
 	NewLine int    `json:"newLine,omitempty"`
 }
 
-// GitHunk is one "@@" section.
+// GitHunk is one "@@" section. Hash identifies its content; selections
+// (HunkSel) may echo Header and Hash to make sure they still refer to the
+// same change.
 type GitHunk struct {
 	Header string        `json:"header"`
+	Hash   string        `json:"hash"`
 	Lines  []GitDiffLine `json:"lines"`
 }
 
@@ -208,6 +211,8 @@ func gitErr(err error) error {
 		return api.Errorf(api.CodeNotFound, "%w", err)
 	case errors.Is(err, gitcli.ErrEmptyMessage):
 		return api.Errorf(api.CodeInvalidParams, "%w", err)
+	case errors.Is(err, gitcli.ErrOperationInProgress):
+		return api.Errorf(api.CodeConflict, "%w", err)
 	}
 	return api.Errorf(api.CodeFailed, "git: %w", err)
 }
@@ -273,7 +278,7 @@ func (m *Module) gitDiff(ctx context.Context, p GitDiffParams) (GitDiffResult, e
 		}
 		for j := range f.Hunks {
 			h := &f.Hunks[j]
-			gh := GitHunk{Header: h.Header(), Lines: make([]GitDiffLine, 0, len(h.Lines))}
+			gh := GitHunk{Header: h.Header(), Hash: h.Hash(), Lines: make([]GitDiffLine, 0, len(h.Lines))}
 			for _, l := range h.Lines {
 				gh.Lines = append(gh.Lines, GitDiffLine{Kind: string(rune(l.Kind)), Text: l.Text, OldLine: l.OldLine, NewLine: l.NewLine})
 			}

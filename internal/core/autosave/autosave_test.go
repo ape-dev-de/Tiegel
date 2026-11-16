@@ -482,3 +482,74 @@ func TestConcurrentSaves(t *testing.T) {
 		t.Fatal("dirty docs left")
 	}
 }
+
+type panicDocs struct{ *fakeDocs }
+
+func (p panicDocs) Save(context.Context, Doc) error { panic("save crashed") }
+
+// Review 2026-11-16 #6: the save-before-commit guard must veto the commit
+// when saving panics (or times out) instead of letting it run on unsaved
+// files.
+func TestSaveBeforeGuardFailsClosed(t *testing.T) {
+	docs := newDocs()
+	reg := hooks.New()
+	m, _ := New(Config{Docs: panicDocs{docs}, Hooks: reg})
+	commitBefore := hooks.NewGuard[string]("commit.before")
+	SaveBeforeGuard(m, reg, commitBefore, TriggerBeforeCommit)
+	docs.edit("/a.php", "<?php // unsaved")
+	err := commitBefore.Check(context.Background(), reg, "msg")
+	var ab *hooks.AbortError
+	if !errors.As(err, &ab) || !errors.Is(err, hooks.ErrPanic) {
+		t.Fatalf("panicking save must veto the commit: %v", err)
+	}
+}
+
+// A save whose context ended while the filters ran must not write.
+func TestCancelledSaveDoesNotWrite(t *testing.T) {
+	docs := newDocs()
+	reg := hooks.New()
+	m, _ := New(Config{Docs: docs, Hooks: reg})
+	ctx, cancel := context.WithCancel(context.Background())
+	BeforeSave.On(reg, 0, func(_ context.Context, ev SaveEvent) (SaveEvent, error) {
+		cancel() // e.g. the guard timed out meanwhile
+		return ev, nil
+	})
+	docs.edit("/a.php", "late")
+	if _, err := m.SaveDoc(ctx, Doc{Path: "/a.php", Content: []byte("late"), Version: 1}, TriggerBeforeCommit); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if docs.saveCount() != 0 {
+		t.Fatal("cancelled save was written")
+	}
+}
+
+// Review 2026-11-16 #10: a filter returning an empty SaveEvent without an
+// error must not empty file and buffer.
+func TestEmptyFilterResultIsFilterError(t *testing.T) {
+	docs := newDocs()
+	reg := hooks.New()
+	var sink errSink
+	m, _ := New(Config{Docs: docs, Hooks: reg, OnError: sink.add})
+	BeforeSave.On(reg, 0, func(context.Context, SaveEvent) (SaveEvent, error) {
+		return SaveEvent{}, nil // broken formatter
+	})
+	docs.edit("/a.php", "<?php echo 1;")
+	if err := m.SaveAll(context.Background(), TriggerManual); err != nil {
+		t.Fatal(err)
+	}
+	if got := docs.onDisk("/a.php"); got != "<?php echo 1;" {
+		t.Fatalf("disk = %q", got)
+	}
+	errs := sink.all()
+	if len(errs) != 1 || !errors.Is(errs[0], ErrEmptyFilterResult) {
+		t.Fatalf("errors = %v", errs)
+	}
+	// Empty input stays allowed.
+	docs.edit("/b.php", "")
+	if err := m.SaveAll(context.Background(), TriggerManual); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.all()) != 1 {
+		t.Fatal("empty input reported as error")
+	}
+}

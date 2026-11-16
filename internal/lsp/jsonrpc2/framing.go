@@ -2,6 +2,7 @@ package jsonrpc2
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -11,13 +12,48 @@ import (
 // MaxMessageSize limits the size of a single incoming message body.
 const MaxMessageSize = 256 << 20
 
-// readMessage reads one Content-Length framed message body.
-func readMessage(r *bufio.Reader) ([]byte, error) {
-	length := -1
+// ErrMessageTooLarge is returned by ReadMessageLimit when a message (or a
+// header line) exceeds the limit.
+var ErrMessageTooLarge = errors.New("jsonrpc2: message exceeds size limit")
+
+// LimitedReader is implemented by HeaderFraming and LineFraming: it reads
+// like ReadMessage but rejects messages larger than max bytes before
+// buffering them completely (header lines count as well). Servers use it to
+// keep unauthenticated peers from making them allocate large buffers.
+type LimitedReader interface {
+	ReadMessageLimit(r *bufio.Reader, max int) ([]byte, error)
+}
+
+// readLimitedLine reads one line (without terminator handling) of at most
+// max bytes.
+func readLimitedLine(r *bufio.Reader, max int) (string, error) {
+	var buf []byte
 	for {
-		line, err := r.ReadString('\n')
+		chunk, isPrefix, err := r.ReadLine()
 		if err != nil {
-			if err == io.EOF && line != "" {
+			if err == io.EOF && len(buf) > 0 {
+				err = io.ErrUnexpectedEOF
+			}
+			return "", err
+		}
+		buf = append(buf, chunk...)
+		if len(buf) > max {
+			return "", fmt.Errorf("%w (%d bytes)", ErrMessageTooLarge, max)
+		}
+		if !isPrefix {
+			return string(buf), nil
+		}
+	}
+}
+
+// readMessage reads one Content-Length framed message body of at most max
+// bytes.
+func readMessage(r *bufio.Reader, max int) ([]byte, error) {
+	length := -1
+	for started := false; ; started = true {
+		line, err := readLimitedLine(r, max)
+		if err != nil {
+			if err == io.EOF && started {
 				err = io.ErrUnexpectedEOF
 			}
 			return nil, err
@@ -41,8 +77,8 @@ func readMessage(r *bufio.Reader) ([]byte, error) {
 	if length < 0 {
 		return nil, fmt.Errorf("jsonrpc2: missing Content-Length header")
 	}
-	if length > MaxMessageSize {
-		return nil, fmt.Errorf("jsonrpc2: message of %d bytes exceeds limit", length)
+	if length > max {
+		return nil, fmt.Errorf("%w: %d > %d bytes", ErrMessageTooLarge, length, max)
 	}
 	body := make([]byte, length)
 	if _, err := io.ReadFull(r, body); err != nil {
@@ -89,12 +125,28 @@ var LineFraming Framing = lineFraming{}
 
 type headerFraming struct{}
 
-func (headerFraming) ReadMessage(r *bufio.Reader) ([]byte, error) { return readMessage(r) }
+func (headerFraming) ReadMessage(r *bufio.Reader) ([]byte, error) {
+	return readMessage(r, MaxMessageSize)
+}
+
+// ReadMessageLimit implements LimitedReader.
+func (headerFraming) ReadMessageLimit(r *bufio.Reader, max int) ([]byte, error) {
+	return readMessage(r, min(max, MaxMessageSize))
+}
 func (headerFraming) WriteMessage(w io.Writer, body []byte) error { return writeMessage(w, body) }
 
 type lineFraming struct{}
 
 func (lineFraming) ReadMessage(r *bufio.Reader) ([]byte, error) {
+	return readLine(r, MaxMessageSize)
+}
+
+// ReadMessageLimit implements LimitedReader.
+func (lineFraming) ReadMessageLimit(r *bufio.Reader, max int) ([]byte, error) {
+	return readLine(r, min(max, MaxMessageSize))
+}
+
+func readLine(r *bufio.Reader, max int) ([]byte, error) {
 	var buf []byte
 	for {
 		chunk, isPrefix, err := r.ReadLine()
@@ -105,8 +157,8 @@ func (lineFraming) ReadMessage(r *bufio.Reader) ([]byte, error) {
 			return nil, err
 		}
 		buf = append(buf, chunk...)
-		if len(buf) > MaxMessageSize {
-			return nil, fmt.Errorf("jsonrpc2: message exceeds %d bytes", MaxMessageSize)
+		if len(buf) > max {
+			return nil, fmt.Errorf("%w (%d bytes)", ErrMessageTooLarge, max)
 		}
 		if isPrefix {
 			continue

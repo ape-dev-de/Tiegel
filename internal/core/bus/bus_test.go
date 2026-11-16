@@ -248,3 +248,46 @@ func TestConcurrentUse(t *testing.T) {
 		t.Fatal("no events delivered")
 	}
 }
+
+// Review 2026-11-16 #14: a subscriber that stops consuming made its queue
+// grow without bound. A bounded subscription is cut off at the limit.
+func TestSubscribeBoundedOverflow(t *testing.T) {
+	b := New()
+	block := make(chan struct{})
+	overflow := make(chan struct{}, 2)
+	var got atomic.Int32
+	b.SubscribeBounded("t", func(Event) { got.Add(1); <-block }, 3, func() { overflow <- struct{}{} })
+	for i := 0; i < 100; i++ {
+		b.Publish("t", i)
+	}
+	select {
+	case <-overflow:
+	case <-time.After(5 * time.Second):
+		t.Fatal("overflow not reported")
+	}
+	close(block)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := b.Drain(ctx); err != nil {
+		t.Fatal(err) // queued events were released
+	}
+	if n := got.Load(); n > 4 {
+		t.Fatalf("delivered %d events after the limit", n)
+	}
+	b.Publish("t", "after")
+	if err := b.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(overflow) != 0 {
+		t.Fatal("overflow reported twice")
+	}
+	// Unbounded and roomy subscriptions are unaffected.
+	var all atomic.Int32
+	b.SubscribeBounded("u", func(Event) { all.Add(1) }, 0, nil)
+	for i := 0; i < 50; i++ {
+		b.Publish("u", i)
+	}
+	if err := b.Drain(ctx); err != nil || all.Load() != 50 {
+		t.Fatalf("unbounded: %d %v", all.Load(), err)
+	}
+}

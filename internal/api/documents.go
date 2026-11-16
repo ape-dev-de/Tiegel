@@ -31,6 +31,7 @@ import (
 type Doc struct {
 	mu   sync.Mutex
 	app  *App
+	gen  uint64 // generation: unique per opened instance, see DocState
 	path string // absolute
 	lang langdetect.Language
 	buf  *buffer.Buffer
@@ -51,9 +52,17 @@ func (d *Doc) Path() string { return d.path }
 // Language returns the detected language.
 func (d *Doc) Language() langdetect.Language { return d.lang }
 
+// Generation returns the document's generation: a number unique per opened
+// instance. Closing and reopening a path yields a new generation.
+func (d *Doc) Generation() uint64 { return d.gen }
+
 // newDoc creates a document and wires buffer.OnEdit to the bus.
 func (a *App) newDoc(abs string, data []byte) *Doc {
-	d := &Doc{app: a, path: abs, lang: langdetect.Detect(abs, head(data)), buf: buffer.New(data)}
+	a.mu.Lock()
+	a.docSeq++
+	gen := a.docSeq
+	a.mu.Unlock()
+	d := &Doc{app: a, gen: gen, path: abs, lang: langdetect.Detect(abs, head(data)), buf: buffer.New(data)}
 	d.buf.OnEdit(func(e buffer.Edit) { a.onEdit(d, e) })
 	return d
 }
@@ -127,15 +136,19 @@ func (p Pos) offset(b *buffer.Buffer) (int, error) {
 
 // DocState describes an open document after an operation.
 type DocState struct {
-	Path     string `json:"path"`
-	Version  uint64 `json:"version"`
-	Modified bool   `json:"modified"`
-	Length   int    `json:"length"`
-	Lines    int    `json:"lines"`
-	Language string `json:"language"`
-	EOL      string `json:"eol"`
-	CanUndo  bool   `json:"canUndo"`
-	CanRedo  bool   `json:"canRedo"`
+	Path string `json:"path"`
+	// Generation identifies the opened instance of the document; it
+	// changes when the document is closed and opened again. Pass it to
+	// doc.close so a late close cannot close a newer instance.
+	Generation uint64 `json:"generation"`
+	Version    uint64 `json:"version"`
+	Modified   bool   `json:"modified"`
+	Length     int    `json:"length"`
+	Lines      int    `json:"lines"`
+	Language   string `json:"language"`
+	EOL        string `json:"eol"`
+	CanUndo    bool   `json:"canUndo"`
+	CanRedo    bool   `json:"canRedo"`
 }
 
 func (a *App) stateLocked(d *Doc) DocState {
@@ -144,21 +157,22 @@ func (a *App) stateLocked(d *Doc) DocState {
 		eol = "crlf"
 	}
 	return DocState{
-		Path:     a.displayPath(d.path),
-		Version:  d.buf.Version(),
-		Modified: d.buf.Modified(),
-		Length:   d.buf.Len(),
-		Lines:    d.buf.LineCount(),
-		Language: string(d.lang),
-		EOL:      eol,
-		CanUndo:  d.buf.CanUndo(),
-		CanRedo:  d.buf.CanRedo(),
+		Path:       a.displayPath(d.path),
+		Generation: d.gen,
+		Version:    d.buf.Version(),
+		Modified:   d.buf.Modified(),
+		Length:     d.buf.Len(),
+		Lines:      d.buf.LineCount(),
+		Language:   string(d.lang),
+		EOL:        eol,
+		CanUndo:    d.buf.CanUndo(),
+		CanRedo:    d.buf.CanRedo(),
 	}
 }
 
 func (a *App) registerDocs() {
 	mustHandle(a, "doc.open", "Open a file as an editable document", a.docOpen)
-	mustHandle(a, "doc.close", "Close a document (unsaved changes are discarded)", a.docClose)
+	mustHandle(a, "doc.close", "Close a document (unsaved changes only with discard:true; optional generation)", a.docClose)
 	mustHandle(a, "doc.list", "List open documents", a.docList)
 	mustHandle(a, "doc.text", "Text of a document or of a range", a.docText)
 	mustHandle(a, "doc.insert", "Insert text at a position", a.docInsert)
@@ -171,6 +185,8 @@ func (a *App) registerDocs() {
 	mustHandle(a, "history.list", "Local History revisions of a file, newest first", a.historyList)
 	mustHandle(a, "history.content", "Content of a Local History revision", a.historyContent)
 	mustHandle(a, "history.restore", "Restore a Local History revision to disk (and open document)", a.historyRestore)
+	mustHandle(a, "history.recovery", "Recovery points of unsaved changes that could not be saved (e.g. on close)", a.historyRecovery)
+	mustHandle(a, "history.recoveryDismiss", "Remove recovery hints (paths, or all); the Local History revisions stay", a.historyRecoveryDismiss)
 }
 
 // doc returns the open document for path.
@@ -243,24 +259,60 @@ func (a *App) docOpen(_ context.Context, p DocOpenParams) (DocOpenResult, error)
 	return res, nil
 }
 
+// DocCloseParams are the params of "doc.close".
+type DocCloseParams struct {
+	Path string `json:"path"`
+	// Generation, if non-zero, must match the open document's generation
+	// (see DocState); otherwise the document was closed and reopened in
+	// between and the request fails with CodeConflict.
+	Generation uint64 `json:"generation,omitempty"`
+	// Discard allows closing a document with unsaved changes (they are
+	// lost). Without it such a close fails with CodeConflict.
+	Discard bool `json:"discard,omitempty"`
+}
+
 // DocCloseResult is the result of "doc.close".
 type DocCloseResult struct {
-	Path string `json:"path"`
+	Path       string `json:"path"`
+	Generation uint64 `json:"generation,omitempty"`
 	// Discarded is true if unsaved changes were thrown away.
 	Discarded bool `json:"discarded"`
 }
 
-func (a *App) docClose(_ context.Context, p PathParams) (DocCloseResult, error) {
+func (a *App) docClose(_ context.Context, p DocCloseParams) (DocCloseResult, error) {
 	d, err := a.doc(p.Path)
 	if err != nil {
 		return DocCloseResult{}, err
 	}
-	a.mu.Lock()
-	delete(a.docs, d.path)
-	a.mu.Unlock()
-	d.mu.Lock()
-	res := DocCloseResult{Path: a.displayPath(d.path), Discarded: d.buf.Modified()}
-	d.mu.Unlock()
+	var res DocCloseResult
+	// No save may be in flight while closing: it could still write content
+	// that is being discarded here.
+	err = a.saver.Exclusive(func() error {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if p.Generation != 0 && p.Generation != d.gen {
+			return Errorf(CodeConflict, "%s was reopened (generation %d, request expects %d); not closed", p.Path, d.gen, p.Generation).
+				WithData(map[string]uint64{"generation": d.gen})
+		}
+		if d.buf.Modified() && !p.Discard {
+			return Errorf(CodeConflict, "%s has unsaved changes: save it first (doc.save) or close with discard:true", p.Path).
+				WithData(a.stateLocked(d))
+		}
+		a.mu.Lock()
+		current := a.docs[d.path] == d
+		if current {
+			delete(a.docs, d.path)
+		}
+		a.mu.Unlock()
+		if !current {
+			return Errorf(CodeNotFound, "document not open: %s", p.Path)
+		}
+		res = DocCloseResult{Path: a.displayPath(d.path), Generation: d.gen, Discarded: d.buf.Modified()}
+		return nil
+	})
+	if err != nil {
+		return DocCloseResult{}, err
+	}
 	a.bus.Publish(TopicDocClosed, res)
 	return res, nil
 }
@@ -473,10 +525,16 @@ func (a *App) docSave(ctx context.Context, p PathParams) (DocSaveResult, error) 
 	if err != nil {
 		return DocSaveResult{}, err
 	}
-	d.mu.Lock()
-	snap := autosave.Doc{Path: d.path, Content: d.buf.Bytes(), Version: d.buf.Version()}
-	d.mu.Unlock()
-	ev, err := a.saver.SaveDoc(ctx, snap, autosave.TriggerManual)
+	// The snapshot is taken under the save lock: a copy taken earlier
+	// could be older than what a concurrent autosave has written.
+	ev, err := a.saver.SaveWith(ctx, autosave.TriggerManual, func() (autosave.Doc, error) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return autosave.Doc{Path: d.path, Content: d.buf.Bytes(), Version: d.buf.Version(), Instance: d.gen}, nil
+	})
+	if errors.Is(err, autosave.ErrDocGone) {
+		return DocSaveResult{}, Errorf(CodeNotFound, "save %s: document was closed", p.Path)
+	}
 	if err != nil {
 		return DocSaveResult{}, Errorf(CodeFailed, "save %s: %w", p.Path, err)
 	}
@@ -518,7 +576,7 @@ func (s docSet) Dirty() []autosave.Doc {
 	for _, d := range docs {
 		d.mu.Lock()
 		if d.buf.Modified() {
-			out = append(out, autosave.Doc{Path: d.path, Content: d.buf.Bytes(), Version: d.buf.Version()})
+			out = append(out, autosave.Doc{Path: d.path, Content: d.buf.Bytes(), Version: d.buf.Version(), Instance: d.gen})
 		}
 		d.mu.Unlock()
 	}
@@ -526,13 +584,19 @@ func (s docSet) Dirty() []autosave.Doc {
 	return out
 }
 
+// Save writes the snapshot. Snapshots carrying an Instance are only
+// written while that very document instance is open (closing runs under
+// the save lock, so it cannot happen during the write).
 func (s docSet) Save(_ context.Context, doc autosave.Doc) error {
-	if err := writeFileAtomic(doc.Path, doc.Content); err != nil {
-		return err
-	}
 	s.a.mu.Lock()
 	d := s.a.docs[doc.Path]
 	s.a.mu.Unlock()
+	if doc.Instance != 0 && (d == nil || d.gen != doc.Instance) {
+		return autosave.ErrDocGone
+	}
+	if err := writeFileAtomic(doc.Path, doc.Content); err != nil {
+		return err
+	}
 	if d == nil {
 		return nil
 	}
@@ -688,12 +752,25 @@ func (a *App) historyRestore(_ context.Context, p RevisionParams) (history.Revis
 	if err != nil {
 		return history.Revision{}, err
 	}
-	rev, err := st.Restore(abs, p.ID)
-	if err != nil {
-		return history.Revision{}, Errorf(CodeFailed, "restore: %w", err)
-	}
-	if data, err := st.Content(rev); err == nil {
-		a.reload(abs, data)
-	}
-	return rev, nil
+	var rev history.Revision
+	// Under the save lock: a save in flight must not overwrite the
+	// restored file with an older snapshot after the buffer was reloaded.
+	err = a.saver.Exclusive(func() error {
+		var err error
+		if rev, err = st.Restore(abs, p.ID); err != nil {
+			return Errorf(CodeFailed, "restore: %w", err)
+		}
+		if data, err := st.Content(rev); err == nil {
+			a.reload(abs, data)
+		}
+		return nil
+	})
+	return rev, err
 }
+
+// Exclusive runs fn while no document is being saved (it holds the save
+// lock of the autosave manager). Modules that write files of possibly open
+// documents and reload them (git discard/checkout/resolve) use it, so a
+// save in flight cannot overwrite their result with an older snapshot. fn
+// must not save documents (doc.save, autosave) – that would deadlock.
+func (a *App) Exclusive(fn func() error) error { return a.saver.Exclusive(fn) }

@@ -3,6 +3,9 @@ package controller
 import (
 	"context"
 	"path/filepath"
+	"sync"
+
+	"github.com/ape-dev-de/tiegel/internal/api"
 )
 
 // Tab is an open editor tab.
@@ -17,6 +20,30 @@ type Tab struct {
 	Modified bool
 	// Doc is the shared document (nil until opened).
 	Doc DocHandle
+	// Generation identifies the opened document instance (doc.open); the
+	// tab's doc.close carries it so it cannot close a reopened document.
+	Generation uint64
+}
+
+// pendingCloses holds, per controller and file, a channel that is closed
+// once the doc.save/doc.close of a closed tab have finished. Reopening the
+// file waits for it, so the late doc.close cannot hit the new tab's
+// document.
+var pendingCloses sync.Map // closeKey -> chan struct{}
+
+type closeKey struct {
+	c    *Controller
+	file string
+}
+
+// waitPendingClose blocks until a pending close of file has finished.
+func (c *Controller) waitPendingClose(ctx context.Context, file string) {
+	if ch, ok := pendingCloses.Load(closeKey{c, file}); ok {
+		select {
+		case <-ch.(chan struct{}):
+		case <-ctx.Done():
+		}
+	}
 }
 
 // Title is the tab title (file name).
@@ -62,7 +89,11 @@ func (c *Controller) OpenFile(file string, at *Location) {
 		return
 	}
 	c.Go(func(ctx context.Context) func() {
-		var st DocState
+		c.waitPendingClose(ctx, abs)
+		var st struct {
+			DocState
+			Generation uint64 `json:"generation"`
+		}
 		err := c.call(ctx, "doc.open", map[string]any{"path": abs}, &st)
 		var doc DocHandle
 		if err == nil {
@@ -77,7 +108,7 @@ func (c *Controller) OpenFile(file string, at *Location) {
 				c.Activate(i)
 				return
 			}
-			t := &Tab{File: abs, Path: c.Rel(abs), Language: st.Language, EOL: st.EOL, Modified: st.Modified, Doc: doc}
+			t := &Tab{File: abs, Path: c.Rel(abs), Language: st.Language, EOL: st.EOL, Modified: st.Modified, Doc: doc, Generation: st.Generation}
 			// Insert after the active tab like most editors do.
 			pos := c.Active + 1
 			if pos <= 0 || pos > len(c.Tabs) {
@@ -122,7 +153,10 @@ func (c *Controller) touchRecent(file string) {
 	}
 }
 
-// CloseTab saves and closes tab i (doc.save, then doc.close).
+// CloseTab saves and closes tab i (doc.save, then doc.close with the tab's
+// generation). Unsaved changes are never discarded: if doc.close reports
+// them (edited after the modified flag was mirrored), the document is
+// saved and the close retried once; a failing save leaves it open.
 func (c *Controller) CloseTab(i int) {
 	if i < 0 || i >= len(c.Tabs) {
 		return
@@ -139,13 +173,29 @@ func (c *Controller) CloseTab(i int) {
 		c.touchRecent(c.Tabs[c.Active].File)
 	}
 	c.CloseCompletion()
+	key := closeKey{c, t.File}
+	done := make(chan struct{})
+	pendingCloses.Store(key, done)
 	c.Go(func(ctx context.Context) func() {
+		defer func() {
+			pendingCloses.CompareAndDelete(key, done)
+			close(done)
+		}()
+		params := map[string]any{"path": t.File}
+		if t.Generation != 0 {
+			params["generation"] = t.Generation
+		}
 		var err error
 		if t.Modified {
 			err = c.call(ctx, "doc.save", pathParams{Path: t.File}, nil)
 		}
 		if err == nil {
-			err = c.call(ctx, "doc.close", pathParams{Path: t.File}, nil)
+			err = c.call(ctx, "doc.close", params, nil)
+			if api.ErrorCode(err) == api.CodeConflict {
+				if err = c.call(ctx, "doc.save", pathParams{Path: t.File}, nil); err == nil {
+					err = c.call(ctx, "doc.close", params, nil)
+				}
+			}
 		}
 		return func() { c.notice(err) }
 	})
@@ -172,9 +222,11 @@ func (c *Controller) Autosave(trigger string) {
 	})
 }
 
-// AutosaveSync saves synchronously (window close).
+// AutosaveSync saves synchronously (window close). Documents that cannot
+// be saved are preserved by the backend as recovery points in Local
+// History (history.recovery); the error says so.
 func (c *Controller) AutosaveSync(ctx context.Context) error {
-	return c.call(ctx, "autosave.trigger", map[string]string{"trigger": "focusLost"}, nil)
+	return c.call(ctx, "autosave.trigger", map[string]string{"trigger": "close"}, nil)
 }
 
 func (c *Controller) anyModified() bool {

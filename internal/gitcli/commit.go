@@ -12,6 +12,12 @@ import (
 // ErrEmptyMessage is returned when a commit message is empty.
 var ErrEmptyMessage = errors.New("gitcli: empty commit message")
 
+// ErrOperationInProgress is returned by [Repo.CommitSelection] while a
+// merge, rebase, cherry-pick, revert or am is in progress: a selection
+// commit starts from HEAD and would silently drop the changes of the
+// operation (while git still records e.g. the second merge parent).
+var ErrOperationInProgress = errors.New("gitcli: operation in progress")
+
 // CommitOptions configures a commit.
 type CommitOptions struct {
 	// Message is the full commit message.
@@ -82,10 +88,20 @@ type CommitSelection struct {
 // CommitSelection commits exactly HEAD plus the selection, independent of
 // what is currently staged, using a temporary index (see package
 // documentation). Afterwards the real index entries of the touched paths
-// are reset to the new HEAD; all other index entries stay untouched.
+// that matched the old HEAD are reset to the new HEAD. Touched paths with
+// staged-only content (index differs from the old HEAD) keep it: the
+// committed change is applied on top of the index entry, or, if that does
+// not apply cleanly, the entry is left untouched. All other index entries
+// stay untouched.
+//
+// It returns [ErrOperationInProgress] while a merge, rebase, cherry-pick,
+// revert or am is in progress (bisecting is allowed).
 func (r *Repo) CommitSelection(ctx context.Context, opts CommitOptions, sel CommitSelection) (string, error) {
 	if strings.TrimSpace(opts.Message) == "" {
 		return "", ErrEmptyMessage
+	}
+	if st := r.state(); st != StateClean && st != StateBisecting {
+		return "", fmt.Errorf("%w: %s; finish or abort it first, or commit the whole index", ErrOperationInProgress, st)
 	}
 	if len(sel.Paths) == 0 && len(sel.Patches) == 0 && !opts.AllowEmpty && !opts.Amend {
 		return "", ErrEmptySelection
@@ -119,17 +135,117 @@ func (r *Repo) CommitSelection(ctx context.Context, opts CommitOptions, sel Comm
 		}
 		touched = append(touched, patchPaths(p)...)
 	}
+	touched = dedupe(touched)
+	oldTree, err := r.treeOf(ctx, head)
+	if err != nil {
+		return "", err
+	}
+	var oldEntries, indexEntries map[string]string
+	if len(touched) > 0 {
+		if oldEntries, err = r.treeEntries(ctx, oldTree, touched); err != nil {
+			return "", err
+		}
+		if indexEntries, err = r.indexEntries(ctx, touched); err != nil {
+			return "", err
+		}
+	}
 	hash, err := r.commit(ctx, idx, opts)
 	if err != nil {
 		return "", err
 	}
-	if len(touched) > 0 {
-		args := append([]string{"reset", "-q", "HEAD", "--"}, dedupe(touched)...)
-		if _, err := r.run(ctx, runOpts{}, args...); err != nil {
-			return hash, fmt.Errorf("gitcli: commit succeeded, index update failed: %w", err)
-		}
+	if err := r.syncIndex(ctx, oldTree, touched, oldEntries, indexEntries); err != nil {
+		return hash, fmt.Errorf("gitcli: commit succeeded, index update failed: %w", err)
 	}
 	return hash, nil
+}
+
+// syncIndex updates the real index after a selection commit. Entries that
+// matched the old HEAD are reset to the new HEAD. Entries with staged-only
+// content get the committed change applied on top; if that fails they stay
+// as they are, so staged content is never lost.
+func (r *Repo) syncIndex(ctx context.Context, oldTree string, touched []string, oldEntries, indexEntries map[string]string) error {
+	var reset []string
+	for _, p := range touched {
+		if oldEntries[p] == indexEntries[p] {
+			reset = append(reset, p)
+			continue
+		}
+		patch, err := r.run(ctx, runOpts{}, "diff", "--binary", "--no-renames", "--no-ext-diff", oldTree, "HEAD", "--", p)
+		if err != nil || len(patch) == 0 {
+			continue
+		}
+		// Best effort: on failure the staged content stays untouched.
+		_ = r.ApplyPatch(ctx, patch, ApplyOptions{Cached: true})
+	}
+	if len(reset) == 0 {
+		return nil
+	}
+	args := append([]string{"reset", "-q", "HEAD", "--"}, reset...)
+	if _, err := r.run(ctx, runOpts{}, args...); err != nil {
+		return err
+	}
+	return nil
+}
+
+// treeOf returns the tree hash of a tree-ish.
+func (r *Repo) treeOf(ctx context.Context, treeish string) (string, error) {
+	out, err := r.run(ctx, runOpts{}, "rev-parse", "--verify", treeish+"^{tree}")
+	if err != nil {
+		return "", fmt.Errorf("gitcli: resolve tree %s: %w", treeish, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// treeEntries returns "mode hash" per path of the given tree.
+func (r *Repo) treeEntries(ctx context.Context, tree string, paths []string) (map[string]string, error) {
+	args := append([]string{"ls-tree", "-r", "-z", "--full-tree", tree, "--"}, paths...)
+	out, err := r.run(ctx, runOpts{}, args...)
+	if err != nil {
+		return nil, fmt.Errorf("gitcli: ls-tree: %w", err)
+	}
+	m := map[string]string{}
+	for _, rec := range bytes.Split(out, []byte{0}) {
+		// <mode> SP <type> SP <hash> TAB <path>
+		meta, path, ok := strings.Cut(string(rec), "\t")
+		if !ok {
+			continue
+		}
+		f := strings.Fields(meta)
+		if len(f) == 3 {
+			m[path] = f[0] + " " + f[2]
+		}
+	}
+	return m, nil
+}
+
+// indexEntries returns "mode hash" per path of the real index. Paths with
+// conflict stages get a marker that never equals a tree entry.
+func (r *Repo) indexEntries(ctx context.Context, paths []string) (map[string]string, error) {
+	args := append([]string{"ls-files", "-s", "-z", "--"}, paths...)
+	out, err := r.run(ctx, runOpts{}, args...)
+	if err != nil {
+		return nil, fmt.Errorf("gitcli: ls-files: %w", err)
+	}
+	m := map[string]string{}
+	for _, rec := range bytes.Split(out, []byte{0}) {
+		// <mode> SP <hash> SP <stage> TAB <path>
+		meta, path, ok := strings.Cut(string(rec), "\t")
+		if !ok {
+			continue
+		}
+		f := strings.Fields(meta)
+		if len(f) != 3 {
+			continue
+		}
+		if f[2] != "0" {
+			m[path] = "conflict"
+			continue
+		}
+		if m[path] != "conflict" {
+			m[path] = f[0] + " " + f[1]
+		}
+	}
+	return m, nil
 }
 
 // patchPaths returns all file paths a patch touches.

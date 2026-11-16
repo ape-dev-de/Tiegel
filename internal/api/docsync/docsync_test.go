@@ -321,3 +321,23 @@ type failSub struct{ api.Caller }
 func (failSub) Subscribe(context.Context, []string, func(api.Event)) (func(), error) {
 	return nil, errors.New("no events")
 }
+
+// Review 2026-11-16 #2: CloseDocument never discards unsaved changes.
+func TestCloseDocumentKeepsUnsavedChanges(t *testing.T) {
+	a := apitest.NewApp(t, map[string]string{"a.php": initial})
+	c := apitest.NewInProcess(t, a)
+	ctx := context.Background()
+	m := open(t, c, docsync.Options{})
+	if err := m.Insert(ctx, 0, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CloseDocument(ctx); api.ErrorCode(err) != api.CodeConflict {
+		t.Fatalf("close with unsaved changes: %v", err)
+	}
+	if _, err := m.Save(ctx); err != nil {
+		t.Fatalf("mirror detached after refused close: %v", err)
+	}
+	if res, err := m.CloseDocument(ctx); err != nil || res.Discarded {
+		t.Fatalf("close after save: %+v %v", res, err)
+	}
+}

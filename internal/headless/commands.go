@@ -38,7 +38,7 @@ func init() {
 		&command{name: "version", usage: "version", summary: "print the version", maxArgs: 0, run: runVersion},
 		&command{name: "update-check", usage: "update-check [--prereleases]", summary: "check for a newer release (network access, only when run)", maxArgs: 0, run: runUpdateCheck},
 		&command{name: "git-status", usage: "git-status", summary: "branch and changed files of the project", maxArgs: 0, cwdProject: true, run: runGitStatus},
-		&command{name: "php-version", usage: "php-version", summary: "project PHP version and where it comes from", maxArgs: 0, cwdProject: true, run: runPHPVersion},
+		&command{name: "php-version", usage: "php-version [--start]", summary: "project PHP version and where it comes from (--start may start a stopped compose container)", maxArgs: 0, cwdProject: true, run: runPHPVersion},
 		&command{name: "php-check", usage: "php-check FILE... [--php VERSION]", summary: "check PHP files against the project's PHP version (exit 1 on findings)", minArgs: 1, maxArgs: -1, cwdProject: true, run: runPHPCheck},
 	)
 }
@@ -89,10 +89,15 @@ func runGitStatus(c *cli) error {
 
 func runPHPVersion(c *cli) error {
 	var pv phpruntime.PHPVersionResult
-	if err := c.call("php.version", phpruntime.PHPVersionParams{}, &pv); err != nil {
+	if err := c.call("php.version", phpruntime.PHPVersionParams{Start: c.p.has("start")}, &pv); err != nil {
 		return err
 	}
-	return c.emit(pv, func(w io.Writer) { fmt.Fprintf(w, "%s\t%s\t%s\n", pv.Version, pv.Source, pv.Detail) })
+	return c.emit(pv, func(w io.Writer) {
+		fmt.Fprintf(w, "%s\t%s\t%s\n", pv.Version, pv.Source, pv.Detail)
+		if pv.Hint != nil {
+			fmt.Fprintf(w, "hint: %s (php-version --start may start the container)\n", pv.Hint.Message)
+		}
+	})
 }
 
 func runPHPCheck(c *cli) error {

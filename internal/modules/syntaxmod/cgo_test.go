@@ -99,7 +99,7 @@ func TestPHP(t *testing.T) {
 		t.Fatalf("plaintext override %+v", h.Spans)
 	}
 
-	modtest.Call(t, a, "doc.close", api.PathParams{Path: "src/Kernel.php"}, nil)
+	modtest.Call(t, a, "doc.close", api.DocCloseParams{Path: "src/Kernel.php", Discard: true}, nil)
 	drain(t, a)
 	m.mu.Lock()
 	n := len(m.docs)

@@ -98,10 +98,15 @@ type subscription struct {
 	pattern string
 	handler Handler
 
-	mu      sync.Mutex
-	queue   []Event
-	running bool
-	removed bool
+	// max bounds the mailbox (0 = unbounded); see SubscribeBounded.
+	max        int
+	onOverflow func()
+
+	mu         sync.Mutex
+	queue      []Event
+	running    bool
+	removed    bool
+	overflowed bool
 }
 
 // Subscribe registers h for topic, which may also be "*" or "prefix.*". The
@@ -111,10 +116,24 @@ type subscription struct {
 //
 // Subscribing on a closed bus returns a no-op unsubscribe function.
 func (b *Bus) Subscribe(topic string, h Handler) (unsubscribe func()) {
-	if h == nil {
+	return b.subscribe(&subscription{bus: b, pattern: topic, handler: h})
+}
+
+// SubscribeBounded is like Subscribe, but the subscription's mailbox holds
+// at most max undelivered events. When an event would exceed it, the
+// subscription is removed (its queued events are discarded) and
+// onOverflow, if not nil, is called once in its own goroutine. It is meant
+// for consumers that may stop reading, e.g. remote API clients: dropping
+// single events would silently desynchronise them, so they are cut off
+// instead. max <= 0 means unbounded.
+func (b *Bus) SubscribeBounded(topic string, h Handler, max int, onOverflow func()) (unsubscribe func()) {
+	return b.subscribe(&subscription{bus: b, pattern: topic, handler: h, max: max, onOverflow: onOverflow})
+}
+
+func (b *Bus) subscribe(s *subscription) (unsubscribe func()) {
+	if s.handler == nil {
 		return func() {}
 	}
-	s := &subscription{bus: b, pattern: topic, handler: h}
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -138,6 +157,10 @@ func (b *Bus) remove(s *subscription) {
 	b.mu.Unlock()
 
 	s.mu.Lock()
+	if s.removed {
+		s.mu.Unlock()
+		return
+	}
 	s.removed = true
 	dropped := len(s.queue)
 	s.queue = nil
@@ -188,6 +211,18 @@ func (s *subscription) enqueue(ev Event) {
 	s.mu.Lock()
 	if s.removed {
 		s.mu.Unlock()
+		return
+	}
+	if s.max > 0 && len(s.queue) >= s.max {
+		first := !s.overflowed
+		s.overflowed = true
+		s.mu.Unlock()
+		if first {
+			s.bus.remove(s)
+			if s.onOverflow != nil {
+				go s.onOverflow()
+			}
+		}
 		return
 	}
 	s.bus.add(1)

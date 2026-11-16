@@ -51,8 +51,10 @@ type SettingValue struct {
 
 // AutosaveTriggerParams are the params of "autosave.trigger".
 type AutosaveTriggerParams struct {
-	// Trigger is focusLost (default), idle, beforeRun, beforeDebug or
-	// beforeCommit; it is recorded in Local History and file.saved.
+	// Trigger is focusLost (default), idle, beforeRun, beforeDebug,
+	// beforeCommit or close; it is recorded in Local History and
+	// file.saved. With close, documents that cannot be saved are
+	// preserved as recovery points in Local History (history.recovery).
 	Trigger string `json:"trigger,omitempty"`
 }
 
@@ -136,6 +138,7 @@ var autosaveTriggers = map[string]autosave.Trigger{
 	"beforeRun":    autosave.TriggerBeforeRun,
 	"beforeDebug":  autosave.TriggerBeforeDebug,
 	"beforeCommit": autosave.TriggerBeforeCommit,
+	"close":        autosave.TriggerClose,
 }
 
 func (a *App) autosaveTrigger(ctx context.Context, p AutosaveTriggerParams) (SaveAllResult, error) {
@@ -148,6 +151,11 @@ func (a *App) autosaveTrigger(ctx context.Context, p AutosaveTriggerParams) (Sav
 		res.Saved = append(res.Saved, a.displayPath(d.Path))
 	}
 	if err := a.saver.SaveAll(ctx, tr); err != nil {
+		if tr == autosave.TriggerClose {
+			// The client is about to go away: keep what could not be saved.
+			pts := a.preserveUnsaved("save failed on close", err)
+			return res, Errorf(CodeFailed, "autosave: %w (%d document(s) preserved in Local History, see history.recovery)", err, len(pts)).WithData(pts)
+		}
 		return res, Errorf(CodeFailed, "autosave: %w", err)
 	}
 	return res, nil

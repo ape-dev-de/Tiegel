@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -331,3 +332,99 @@ type fakeCtx struct{ module.Context }
 
 func (fakeCtx) ModuleID() string { return ID }
 func (fakeCtx) Bus() *bus.Bus    { return nil }
+
+// stoppedDocker writes a docker stand-in for a compose project whose
+// service is stopped: ps lists nothing, exec fails, run would start a
+// container and answer. Every invocation is appended to the returned log.
+func stoppedDocker(t *testing.T) (docker, log string) {
+	t.Helper()
+	dir := t.TempDir()
+	docker, log = filepath.Join(dir, "docker"), filepath.Join(dir, "calls.log")
+	script := `#!/bin/sh
+echo "$*" >> '` + log + `'
+mode=""
+for a in "$@"; do
+  case "$a" in
+    ps) exit 0 ;;
+    exec) echo 'service "app" is not running' >&2; exit 1 ;;
+    run) mode=run ;;
+  esac
+  if [ "$mode" = run ]; then
+    case "$a" in *PHP_VERSION*) printf '8.2.7'; exit 0 ;; esac
+  fi
+done
+exit 2
+`
+	if err := os.WriteFile(docker, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return docker, log
+}
+
+func startedContainer(t *testing.T, log string) bool {
+	t.Helper()
+	data, _ := os.ReadFile(log)
+	for _, l := range strings.Split(string(data), "\n") {
+		for _, f := range strings.Fields(l) {
+			if f == "run" || f == "up" || f == "start" || f == "pull" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Review 2026-11-16 #7 (privacy): automatic version probes (php.version at
+// project open, the php.version hook, runtime.diagnose) ran `docker compose
+// run` on a stopped service, which can make Docker pull an image without a
+// user action. They now only use exec and fall back to composer.json with
+// the hint container-not-running.
+func TestAutomaticProbesNeverStartContainers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stand-in")
+	}
+	docker, log := stoppedDocker(t)
+	a, _ := newApp(t, nil, Options{Docker: docker})
+	modtest.Project(t, a, map[string]string{
+		"compose.yaml":  "services:\n  app:\n    image: php:8.3-fpm\n    volumes:\n      - ./:/var/www/html\n",
+		"composer.json": `{"require":{"php":"^8.1"}}`,
+	})
+	var list []InterpreterInfo
+	modtest.Call(t, a, "interp.list", nil, &list)
+	var id string
+	for _, i := range list {
+		if i.Kind == "compose" {
+			id = i.ID
+		}
+	}
+	if id == "" {
+		t.Fatalf("no compose interpreter: %+v", list)
+	}
+	modtest.Call(t, a, "interp.select", InterpSelectParams{ID: id}, nil)
+
+	var pv PHPVersionResult
+	modtest.Call(t, a, "php.version", nil, &pv)
+	if startedContainer(t, log) {
+		t.Fatal("php.version started a container")
+	}
+	if pv.Short != "8.1" || pv.Source != "composer require.php" || pv.Hint == nil || pv.Hint.Code != HintContainerNotRunning {
+		t.Fatalf("fallback %+v (hint %+v)", pv, pv.Hint)
+	}
+	if q, _ := api.HookPHPVersion.Apply(context.Background(), a.Hooks(), api.PHPVersionQuery{}); q.Short != "8.1" {
+		t.Fatalf("hook %+v", q)
+	}
+	var d Diagnosis
+	modtest.Call(t, a, "runtime.diagnose", nil, &d)
+	if startedContainer(t, log) {
+		t.Fatal("hook or diagnose started a container")
+	}
+	if len(d.Hints) == 0 || d.Hints[len(d.Hints)-1].Code != HintContainerNotRunning {
+		t.Fatalf("diagnose hints %+v", d.Hints)
+	}
+
+	// An explicit user action may start it.
+	modtest.Call(t, a, "php.version", PHPVersionParams{Start: true}, &pv)
+	if pv.Version != "8.2.7" || pv.Source != "interpreter" || pv.Hint != nil || !startedContainer(t, log) {
+		t.Fatalf("explicit start %+v", pv)
+	}
+}

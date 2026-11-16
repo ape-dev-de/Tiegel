@@ -31,7 +31,22 @@ type ServeOptions struct {
 	// AuthTimeout closes a connection that has not authenticated in time
 	// (only with Token; 0 means 10 seconds).
 	AuthTimeout time.Duration
+	// PreAuthMaxMessage limits the size of messages before successful
+	// authentication (only with Token; 0 means DefaultPreAuthMaxMessage).
+	// A larger message closes the connection.
+	PreAuthMaxMessage int
+	// MaxQueuedEvents bounds the events waiting to be written to the
+	// client (0 means DefaultMaxQueuedEvents, < 0 unbounded). A client
+	// that stops reading is disconnected when the limit is reached.
+	MaxQueuedEvents int
 }
+
+// DefaultPreAuthMaxMessage is the message size limit before "auth"
+// succeeded; the auth request itself is tiny.
+const DefaultPreAuthMaxMessage = 4 << 10
+
+// DefaultMaxQueuedEvents is the default ServeOptions.MaxQueuedEvents.
+const DefaultMaxQueuedEvents = 10000
 
 // AuthMethod is the request a socket client must send first (see
 // ServeOptions.Token). It is answered by every transport, also without a
@@ -61,6 +76,20 @@ func (a *App) Serve(ctx context.Context, rwc io.ReadWriteCloser, opts ServeOptio
 		f = jsonrpc2.LineFraming
 	}
 	tf := &trackingFraming{inner: f, sequential: !opts.Concurrent, changed: make(chan struct{}), stop: ctx.Done()}
+	auth := &authState{token: opts.Token}
+	auth.ok.Store(opts.Token == "")
+	if opts.Token != "" {
+		limit := opts.PreAuthMaxMessage
+		if limit <= 0 {
+			limit = DefaultPreAuthMaxMessage
+		}
+		tf.limit = func() int {
+			if auth.ok.Load() {
+				return 0
+			}
+			return limit
+		}
+	}
 	tf.atEOF = func() {
 		// Deliver events caused by the last requests before the
 		// connection goes away.
@@ -73,8 +102,14 @@ func (a *App) Serve(ctx context.Context, rwc io.ReadWriteCloser, opts ServeOptio
 		_ = conn.Notify(context.Background(), NotifyMethod, ev)
 	})
 	defer sess.Close()
-	auth := &authState{token: opts.Token}
-	auth.ok.Store(opts.Token == "")
+	maxQueue := opts.MaxQueuedEvents
+	if maxQueue == 0 {
+		maxQueue = DefaultMaxQueuedEvents
+	}
+	sess.LimitQueue(maxQueue, func() {
+		a.log.Warn("api: client does not read its events; disconnecting", "limit", maxQueue)
+		_ = conn.Close()
+	})
 	tf.afterWrite = func() {
 		if auth.failed.Load() {
 			go conn.Close()
@@ -168,25 +203,46 @@ type trackingFraming struct {
 	sequential bool
 	stop       <-chan struct{}
 	atEOF      func()
-	afterWrite func() // after each response
+	afterWrite func()     // after each response
+	limit      func() int // current message size limit (0: framing default)
 
 	mu      sync.Mutex
 	pending int
 	changed chan struct{} // closed and replaced whenever pending drops
 }
 
+// peek decodes the ID the same way the connection does (jsonrpc2.ID: string
+// or integer). A request whose ID does not decode (object, float, …) is
+// answered as a parse error without ID, so it must not count as pending.
 type peek struct {
-	ID     json.RawMessage `json:"id"`
-	Method string          `json:"method"`
+	ID     *jsonrpc2.ID `json:"id"`
+	Method string       `json:"method"`
 }
 
-func hasID(raw json.RawMessage) bool { return len(raw) > 0 && string(raw) != "null" }
+// pendingRequest reports whether body is a request that will get a
+// response carrying its ID.
+func pendingRequest(body []byte) bool {
+	var p peek
+	return json.Unmarshal(body, &p) == nil && p.ID != nil && p.Method != ""
+}
+
+// responseWithID reports whether body is a response to a request with ID.
+func responseWithID(body []byte) bool {
+	var p peek
+	return json.Unmarshal(body, &p) == nil && p.ID != nil && p.Method == ""
+}
 
 func (t *trackingFraming) ReadMessage(r *bufio.Reader) ([]byte, error) {
 	if t.sequential {
 		t.waitIdle()
 	}
-	body, err := t.inner.ReadMessage(r)
+	var body []byte
+	var err error
+	if lr, ok := t.inner.(jsonrpc2.LimitedReader); ok && t.limit != nil && t.limit() > 0 {
+		body, err = lr.ReadMessageLimit(r, t.limit())
+	} else {
+		body, err = t.inner.ReadMessage(r)
+	}
 	if err != nil {
 		t.waitIdle()
 		if t.atEOF != nil {
@@ -194,8 +250,7 @@ func (t *trackingFraming) ReadMessage(r *bufio.Reader) ([]byte, error) {
 		}
 		return nil, err
 	}
-	var p peek
-	if json.Unmarshal(body, &p) == nil && hasID(p.ID) && p.Method != "" {
+	if pendingRequest(body) {
 		t.mu.Lock()
 		t.pending++
 		t.mu.Unlock()
@@ -205,8 +260,7 @@ func (t *trackingFraming) ReadMessage(r *bufio.Reader) ([]byte, error) {
 
 func (t *trackingFraming) WriteMessage(w io.Writer, body []byte) error {
 	err := t.inner.WriteMessage(w, body)
-	var p peek
-	if json.Unmarshal(body, &p) == nil && hasID(p.ID) && p.Method == "" {
+	if responseWithID(body) {
 		t.mu.Lock()
 		if t.pending > 0 {
 			t.pending--

@@ -291,3 +291,38 @@ func TestConcurrentRegistrationAndInvocation(t *testing.T) {
 		t.Fatal("hooks leaked")
 	}
 }
+
+// Review 2026-11-16 #6: core guards registered with WithFailClosed veto on
+// timeout, panic and type mismatch instead of being skipped.
+func TestGuardFailClosed(t *testing.T) {
+	r := New(WithDefaultTimeout(20 * time.Millisecond))
+	g := NewGuard[string]("commit.before")
+	release := make(chan struct{})
+	defer close(release)
+
+	rm := g.On(r, 0, func(context.Context, string) error { <-release; return nil }, WithFailClosed(), WithOwner("autosave"))
+	err := g.Check(context.Background(), r, "msg")
+	var ab *AbortError
+	if !errors.As(err, &ab) || !errors.Is(err, ErrTimeout) || ab.Owner != "autosave" {
+		t.Fatalf("timeout: err = %v", err)
+	}
+	rm()
+
+	rm = g.On(r, 0, func(context.Context, string) error { panic("broken") }, WithFailClosed())
+	if err := g.Check(context.Background(), r, "msg"); !errors.As(err, &ab) || !errors.Is(err, ErrPanic) {
+		t.Fatalf("panic: err = %v", err)
+	}
+	rm()
+
+	r.add("commit.before", KindGuard, 0, func(context.Context, int) error { return nil }, []HookOption{WithFailClosed()})
+	if err := g.Check(context.Background(), r, "msg"); !errors.As(err, &ab) || !errors.Is(err, ErrTypeMismatch) {
+		t.Fatalf("mismatch: err = %v", err)
+	}
+
+	// Without the option the guard still fails open.
+	r2 := New(WithDefaultTimeout(20 * time.Millisecond))
+	g.On(r2, 0, func(context.Context, string) error { panic("broken") })
+	if err := g.Check(context.Background(), r2, "msg"); err != nil {
+		t.Fatalf("fail-open guard vetoed: %v", err)
+	}
+}
