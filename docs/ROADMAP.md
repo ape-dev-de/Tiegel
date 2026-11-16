@@ -50,6 +50,13 @@ Backend-Pakete (`core`, `editor`, `syntax`, `lsp`, `dbgp`, `gitcli`, `compose`, 
 - AP2.5 Hauptfenster-Template: Dateibaum, Tab-Leiste, Editor-Fläche, Statusleiste, Tool-Fenster unten/rechts; Projekt öffnen.
 - **Abnahme:** Katalog und Hauptfenster starten; Golden-Screenshot-Tests für Tokens/Atome (headless Gio-Rendering).
 
+## MH – Headless-Modus & interne API (querschnittlich, D41)
+- AP-H.1 `internal/api`: Service-Schicht über alle Backend-Pakete (Projekt öffnen, Dateien, Puffer-Operationen, Interpreter, Compose, PHP-Version/Features, Git, LSP, Debug), Methoden + Events, transportunabhängig.
+- AP-H.2 `tiegel --headless <befehl>`: Einzelbefehle für Pipelines, menschenlesbar oder `--json`, sinnvolle Exit-Codes.
+- AP-H.3 `tiegel --headless serve`: JSON-RPC 2.0 über stdio (Events als Notifications); gleiche API später per Socket (M9).
+- Regel: Neue Funktionen zuerst in `internal/api` + Headless-Befehl, dann GUI. E2E-Tests laufen headless.
+- **Abnahme:** E2E-Tests starten das Binary mit `--headless` und prüfen Ausgaben/JSON.
+
 ## M3 – Editor (Eigenbau) – größter Block
 - AP3.1 Piece-Table-Puffer: Einfügen/Löschen O(log n), Zeilenindex, UTF-8/Grapheme-sicher, Undo/Redo mit Gruppierung, Snapshots.
 - AP3.2 Cursor-Modell inkl. Mehrfach-Cursor, Auswahl, Wort-/Zeilenbewegung, Klammer-Paare.

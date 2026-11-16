@@ -5,6 +5,7 @@ Schnelle, native PHP-IDE in Go mit Gio. Konzept: `docs/konzept.md`, Plan: `docs/
 ## Regeln
 - **Nur Go**, kein JavaScript/WebView. UI ausschließlich mit Gio (`gioui.org`).
 - Backend-Pakete (`internal/core`, `editor`, `syntax`, `lsp`, `dbgp`, `gitcli`, `compose`, `phpver`, `api`) importieren **kein Gio**.
+- **Headless first (D41):** Logik gehört ins Backend und ist über `internal/api` erreichbar; jede Funktion bekommt einen Befehl in `tiegel --headless …` (und in `serve`). Die GUI ist nur ein Client. Außerhalb von reiner UI-Arbeit headless entwickeln und testen.
 - Module kommunizieren nur über Event-Bus/Hooks (`internal/core`), nie direkt miteinander.
 - Plugins/Module bauen UI nur aus `internal/ui/{atoms,molecules,organisms}`; Farben/Abstände nur aus `internal/ui/tokens`.
 - **Privacy:** kein Netzwerkzugriff außer vom Nutzer ausgelöst (DBGp-Listener lokal, `git push`, Update-Prüfung opt-in). Keine Telemetrie, keine Downloads.
