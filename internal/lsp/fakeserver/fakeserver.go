@@ -11,6 +11,8 @@
 //   - completion at line 666 calls Options.Crash.
 //   - hover at line 999 blocks until the request is cancelled.
 //   - "fake/state" returns the server state (for out-of-process tests).
+//   - references, highlights, rename, code actions, formatting and symbols
+//     work on words and lines of the synced documents (see features.go).
 package fakeserver
 
 import (
@@ -59,6 +61,10 @@ type State struct {
 	Saved         []string                        `json:"saved"`
 	Closed        []protocol.DocumentURI          `json:"closed"`
 	ShutdownCalls int                             `json:"shutdownCalls"`
+	// Executed lists executed commands; Applied the answers of the
+	// client to workspace/applyEdit.
+	Executed []string `json:"executed"`
+	Applied  []bool   `json:"applied"`
 }
 
 // Server is a running fake server.
@@ -115,6 +121,8 @@ func (s *Server) Snapshot() State {
 	st.Changes = append([]int(nil), s.state.Changes...)
 	st.Saved = append([]string(nil), s.state.Saved...)
 	st.Closed = append([]protocol.DocumentURI(nil), s.state.Closed...)
+	st.Executed = append([]string(nil), s.state.Executed...)
+	st.Applied = append([]bool(nil), s.state.Applied...)
 	return st
 }
 
@@ -140,6 +148,9 @@ func (s *Server) register() {
 			return s.Snapshot(), nil
 		},
 	}
+	for m, f := range s.featureHandlers() {
+		h[m] = f
+	}
 	for m, f := range h {
 		s.conn.Handle(m, f)
 	}
@@ -158,22 +169,26 @@ func (s *Server) initialize(_ context.Context, req *jsonrpc2.Request) (any, erro
 	s.state.RootURI = p.RootURI
 	s.mu.Unlock()
 	// Capabilities are written as raw JSON to exercise the decoders.
-	return map[string]any{
-		"capabilities": map[string]any{
-			"positionEncoding": "utf-16",
-			"textDocumentSync": map[string]any{
-				"openClose": true,
-				"change":    int(s.opts.Sync),
-				"save":      map[string]any{"includeText": true},
-			},
-			"completionProvider":     map[string]any{"triggerCharacters": []string{"$", ">", ":"}},
-			"hoverProvider":          true,
-			"signatureHelpProvider":  map[string]any{"triggerCharacters": []string{"(", ","}},
-			"definitionProvider":     map[string]any{"workDoneProgress": true},
-			"implementationProvider": true,
-			"semanticTokensProvider": map[string]any{"legend": Legend, "full": true},
+	caps := map[string]any{
+		"positionEncoding": "utf-16",
+		"textDocumentSync": map[string]any{
+			"openClose": true,
+			"change":    int(s.opts.Sync),
+			"save":      map[string]any{"includeText": true},
 		},
-		"serverInfo": map[string]any{"name": "fake", "version": "1.0"},
+		"completionProvider":     map[string]any{"triggerCharacters": []string{"$", ">", ":"}},
+		"hoverProvider":          true,
+		"signatureHelpProvider":  map[string]any{"triggerCharacters": []string{"(", ","}},
+		"definitionProvider":     map[string]any{"workDoneProgress": true},
+		"implementationProvider": true,
+		"semanticTokensProvider": map[string]any{"legend": Legend, "full": true},
+	}
+	for k, v := range featureCapabilities() {
+		caps[k] = v
+	}
+	return map[string]any{
+		"capabilities": caps,
+		"serverInfo":   map[string]any{"name": "fake", "version": "1.0"},
 	}, nil
 }
 

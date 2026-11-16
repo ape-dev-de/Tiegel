@@ -51,6 +51,7 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "git.branches", "Local and remote-tracking branches", m.gitBranches)
 	api.Add(p, "git.commit", "Commit the index (commit.before guard saves documents; optionally stages paths)", m.gitCommit)
 	m.registerOps(p)
+	m.registerRemote(p)
 	return p.Err()
 }
 

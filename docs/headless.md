@@ -50,6 +50,8 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `read FILE` | Dateiinhalt ausgeben (binär unverändert) | `files.read` |
 | `lang FILE...` | Sprache erkennen (php, json, yaml, xml, dotenv, plaintext) | `files.detectLanguage` |
 | `search FILE PATTERN [--regex] [--case] [--word] [--limit N]` | Treffer als `datei:zeile:spalte: zeile` | `search.inDoc` |
+| `find PATTERN [--regex] [--case] [--word] [--mask GLOBS] [--dir DIR \| --open] [--libraries] [--ignored] [--limit N] [--max-size BYTES]` | Find in Files im Projekt: Treffer als `pfad:zeile:spalte: zeile`; `--mask "*.php,!*Test.php"`, `--dir` Verzeichnis, `--open` nur offene Dokumente; `vendor/`, `node_modules/` und `.gitignore`-Dateien nur mit `--libraries`/`--ignored`; Exit 1 ohne Treffer | `search.inProject` |
+| `replace PATTERN ERSETZUNG [--preview] [find-Flags] [DATEI...]` | Replace in Path: ohne `--preview` werden die Dateien geschrieben (Local History „before replace in path“/„replace in path“), mit DATEIEN nur diese; Regex-Ersetzung mit `$1`/`${name}`; Exit 1 ohne Treffer oder bei Fehlern | `search.replaceInProject` |
 | `interpreters` | lokale PHP-Binaries und Compose-Dienste; `*` = gewählt | `interp.list` |
 | `interpreters select ID` | Interpreter fürs Projekt wählen (ohne Projekt: global) | `interp.select` |
 | `interpreters version [ID] [--modules] [--ini]` | Version, Erweiterungen, Xdebug-INI-Werte | `interp.version` |
@@ -67,6 +69,14 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `git-commit -m MSG [--amend] [--push] [DATEI...]` | Commit (offene Dokumente werden vorher gespeichert); mit DATEIEN nur diese (unabhängig vom Index), sonst der Index; `--push` pusht danach (Exit 1, wenn der Push scheitert – mit Fehlerart) | `git.commitSelection`, `git.commit`, `git.push` |
 | `git-diff [DATEI...] [--staged] [--base REV]` | Unified Diff (Arbeitsbaum ↔ Index, `--staged` Index ↔ HEAD, `--base` gegen Revision); `--json` geparst | `git.diff` |
 | `git-push [--remote R]` | aktuellen Branch pushen (Netzwerkzugriff nur hier) | `git.push` |
+| `git-fetch [--remote R] [--prune] [--tags]` | alle Remotes (oder eines) holen; Ausgabe `new`/`updated`/`pruned` + Ref + Hash je geänderter Ref (Netzwerkzugriff nur hier) | `git.fetch` |
+| `git-pull [--remote R] [--branch B] [--strategy merge\|rebase\|ff-only] [--autostash] [--prune]` | holen und in den aktuellen Branch integrieren; Konflikte als `U pfad`, dann Exit 1 (weiter mit `git.conflicts`/`git.mergeData`/`git.resolve`) | `git.pull` |
+| `git-update [--strategy S] [--autostash] [--prune]` | Update Project: Dokumente speichern, Upstream holen, integrieren, offene Dokumente neu laden; Exit 1 bei Konflikten | `git.updateProject` |
+| `git-stash [list \| push [-m MSG] [--untracked] [--keep-index] [DATEI...] \| apply [N] [--restore-index] \| pop [N] [--restore-index] \| drop [N]]` | Stash verwalten (`N` oder `stash@{N}`, ohne Unterbefehl: Liste); Exit 1 bei Konflikten von `apply`/`pop` | `git.stash*` |
+| `usages DATEI ZEILE:SPALTE [--no-declaration] [--server ID] [--command PATH]` | Find Usages über den Language Server: `pfad:zeile:spalte: zeile`; Exit 1 ohne Treffer | `lsp.start`, `lsp.references` |
+| `code-actions DATEI ZEILE:SPALTE [--apply N\|ID\|TITEL] [--timeout DUR] [--server ID] [--command PATH]` | Code Actions (Quick Fixes mit den Diagnosen an der Stelle, Refactorings, Organize Imports) auflisten; `--apply` wendet eine an und speichert die geänderten Dokumente | `lsp.codeActions`, `lsp.applyCodeAction` |
+| `format DATEI... [--preview] [--tab-size N] [--server ID] [--command PATH]` | Reformat über den Language Server und speichern (`--preview`: nur die Änderungen) | `lsp.formatting` |
+| `rename DATEI ZEILE:SPALTE NEUER-NAME [--preview] [--server ID] [--command PATH]` | Symbol in allen Dateien umbenennen (prepareRename + rename) und speichern | `lsp.rename` |
 | `runtime-diagnose [INTERPRETER-ID]` | Xdebug-Einrichtung des (gewählten) Interpreters: INI-Werte `xdebug.mode/client_host/client_port`, Exec-Modus, Pfad-Mappings, Hinweise; Exit 1 bei Warnungen | `runtime.diagnose` |
 | `mappings [set HOST=REMOTE... \| reset] [--exec-mode auto\|exec\|run]` | Pfad-Mappings anzeigen oder dauerhaft korrigieren (`reset`: wieder aus Compose); Exec-Modus für Compose-Interpreter | `runtime.mappings.*`, `runtime.execMode` |
 | `php-override [VERSION \| clear]` | dauerhaften PHP-Versions-Override setzen/entfernen, danach Version und Quelle | `php.setVersionOverride`, `php.version` |
@@ -93,6 +103,13 @@ tiegel --headless files | grep '\.php$' | xargs tiegel --headless php-check
 
 # Language-Server-Diagnosen in CI (Exit 1 bei Fehlern/Warnungen)
 git diff --name-only HEAD~1 -- '*.php' | xargs tiegel --headless lsp-check --timeout 30s
+
+# Alle Aufrufe einer Funktion in PHP-Dateien (ohne vendor), dann ersetzen
+tiegel --headless find 'old_helper(' --mask '*.php'
+tiegel --headless replace 'old_helper\(' 'new_helper(' --regex --mask '*.php' --preview
+
+# Projekt aktualisieren (Fetch + Rebase, lokale Änderungen automatisch gestasht)
+tiegel --headless git-update --strategy rebase --autostash
 
 # Nur ausgewählte Dateien committen und pushen
 tiegel --headless git-commit -m "Fix" --push src/Kernel.php
@@ -192,7 +209,7 @@ Alles, was auf dem Event-Bus veröffentlicht wird, kann ein Client abonnieren:
 
 Muster: exakte Topics, `präfix.*` oder `*`. Zustellung als Notification `event` mit `{"topic": …, "payload": …}`. Jedes Event kommt pro Verbindung höchstens einmal (auch wenn mehrere Muster passen) und alle Events einer Verbindung in Veröffentlichungsreihenfolge; zwischen Antworten und Events gibt es keine feste Reihenfolge (Events laufen asynchron).
 
-Vom Kern veröffentlichte Topics: `project.opened`/`project.closed` (`{root, name}`), `file.opened` (`{path, file, language, version, size}`), `file.saved` (`{path, file, trigger, size}` – auch bei Autosave), `doc.opened`, `doc.changed`, `doc.edited`, `doc.saved`, `doc.closed`, `modules.changed`, `settings.changed`.
+Vom Kern veröffentlichte Topics: `project.opened`/`project.closed` (`{root, name}`), `file.opened` (`{path, file, language, version, size}`), `file.saved` (`{path, file, trigger, size}` – auch bei Autosave), `doc.opened`, `doc.changed`, `doc.edited`, `doc.saved`, `doc.closed`, `modules.changed`, `settings.changed`, `search.results` (gestreamte Projektsuche: `{id, files, done, summary, error}`).
 
 `doc.edited` beschreibt **jede** Pufferänderung – egal ob über `doc.*`, Undo, Autosave-Filter oder direkt in der GUI – im Format `{path, file, language, version, start, oldEnd, newEnd, startPoint, oldEndPoint, newEndPoint, range: {start: {line, character}, end: …}, text, oldText}`: Byte-Offsets und Zeile/Byte-Spalte (Tree-sitter) sowie der ersetzte Bereich in LSP-Koordinaten (0-basiert, UTF-16). `version` steigt pro Änderung um 1.
 
@@ -202,8 +219,8 @@ Von den Modulen veröffentlichte Topics:
 |---|---|
 | php-runtime | `interpreter.changed` (`{id, label, kind, previous}`), `interp.selected`, `runtime.mappingsChanged` (`{mappings, source}`) |
 | php-features | `php.diagnostics` (`{path, file, version, phpVersion, source, diagnostics}`), `php.versionChanged` (`{override}`) |
-| lang-php | `lsp.status` (gestartet/gestoppt/abgestürzt), `lsp.diagnostics` (`{path, file, version, diagnostics}`) |
-| git | `git.changed` (`{op, paths}` nach jeder Änderung über die API), `git.committed` |
+| lang-php | `lsp.status` (gestartet/gestoppt/abgestürzt), `lsp.diagnostics` (`{path, file, version, diagnostics}`), `lsp.editApplied` (`{label, applied, files}` nach jeder angewendeten Workspace-Änderung: Code Action, Rename, `workspace/applyEdit` des Servers) |
+| git | `git.changed` (`{op, paths}` nach jeder Änderung über die API; `op` u.a. `fetch`, `pull`, `update`, `stash`, `stashApply`, `stashPop`, `stashDrop`), `git.committed` |
 | debug-xdebug | `debug.listening`, `debug.stopped`, `debug.sessionStarted`, `debug.sessionEnded`, `debug.break` (gemappte Host-Datei/Zeile), `debug.breakpointHit`, `debug.breakpoints.changed`, `debug.status`, `debug.output`, `debug.notification`, `debug.breakpoint.resolved` |
 
 ## Module
@@ -264,6 +281,9 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `settings.set` | `key` (nur `ui.*`, `editor.*`, `update.*`), `scope?`, `value` (`null` löscht) | wie `settings.get` |
 | `search.inDoc` | `path`, `pattern`, `regex?`, `caseSensitive?`, `wholeWord?`, `limit?` | Treffer mit `line`, `col`, `text`, `lineText` (offenes Dokument oder Datei) |
 | `search.replaceInDoc` | wie `search.inDoc` + `replacement` | Zustand + `replaced` (ein Undo-Schritt) |
+| `search.inProject` | `pattern`, `regex?`, `caseSensitive?`, `wholeWord?`, `mask?` (`"*.php,*.inc,!*.min.js"`; mit `/` gegen den Projektpfad), `scope?` (`project`, `directory` + `dir`, `openFiles`), `paths?` (nur diese Dateien), `libraries?`, `ignored?`, `limit?` (5000), `maxFileSize?` (4 MiB), `stream?`, `id?` | `{id, files[{path, file, open, version, matches[{start, end, line, col, text, lineText, previewStart?}]}], matches, filesMatched, filesSearched, skippedBinary, skippedLarge, limited, cancelled, durationMs}`; offene Dokumente werden im Puffer durchsucht (auch ungespeicherte neue). Mit `stream: true` kommt sofort `{id, running: true}`, die Treffer folgen als Events `search.results` (Stapel; das letzte hat `done: true` und `summary`) |
+| `search.cancel` | `id` | `{id, cancelled}` – bricht eine laufende Suche (auch `search.replaceInProject` vor dem Schreiben) ab |
+| `search.replaceInProject` | wie `search.inProject` + `replacement`, `preview?` | `{preview, files[{path, open, replaced, version, revision, matches?[{…, replacement}], error}], replaced, filesChanged, failed, filesSearched, limited}` – Vorschau ändert nichts; sonst pro Datei: offenes Dokument = ein Undo-Schritt (nicht gespeichert), geschlossene Datei atomar geschrieben mit Local-History-Revisionen „before replace in path“/„replace in path“ und `file.saved` (`trigger: "replace in path"`); die Treffer werden beim Anwenden gegen den aktuellen Text neu berechnet; Fehler einer Datei stoppen die anderen nicht |
 | `modules.list` | – | `{id, dependsOn, enabled, running, error}` |
 | `modules.enable` / `modules.disable` | `id`, `withDependencies?` | Modulzustand (wirkt sofort) |
 
@@ -305,6 +325,18 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `lsp.signature` | `path`, `at` | `{signatures[{label, documentation, parameters[{label, documentation}]}], activeSignature, activeParameter}` |
 | `lsp.definition` / `lsp.implementation` | `path`, `at` | `[{path, file, range}]` |
 | `lsp.semanticTokens` | `path` | `[{range, type, modifiers}]` |
+| `lsp.references` | `path`, `at`, `includeDeclaration?` (Standard `true`) | Find Usages: `[{path, file, range, lineText}]` sortiert nach Datei/Position |
+| `lsp.documentHighlight` | `path`, `at` | `[{range, kind}]` (`text`, `read`, `write`) |
+| `lsp.codeActions` | `path`, `start`, `end?`, `only?` (Kind-Präfixe wie `quickfix`, `source.organizeImports`) | `[{id, title, kind, preferred, disabled, diagnostics, hasEdit, command, action}]`; die zuletzt empfangenen Server-Diagnosen, die den Bereich berühren, gehen als Kontext mit (Quick Fixes). `id` gilt für die laufende Server-Generation (nach Neustart -32001) |
+| `lsp.applyCodeAction` | `id` oder `action` (rohe Code Action aus `lsp.codeActions`) | `{label, applied, files[{kind, path, newPath, open, edits, version, revision, skipped}], command, commandResult}`; ohne Edit wird per `codeAction/resolve` nachgeladen, danach Edit angewendet, dann `command` per `workspace/executeCommand` ausgeführt (dessen `workspace/applyEdit` werden bedient); deaktivierte Aktionen -32000 |
+| `lsp.executeCommand` | `command`, `arguments?` | wie `lsp.applyCodeAction` (`command`, `commandResult`) |
+| `lsp.formatting` / `lsp.rangeFormatting` | `path`, (`start`, `end` bei Range), `tabSize?` (4), `insertSpaces?` (`true`), `apply?` (`true`) | `{path, edits[{range, newText}], applied, version}` – als ein Undo-Schritt, nur wenn das Dokument noch die angefragte Version hat (sonst -32004) |
+| `lsp.prepareRename` | `path`, `at` | `{canRename, range?, placeholder?}` |
+| `lsp.rename` | `path`, `at`, `newName`, `preview?` | wie `lsp.applyCodeAction` + `preview[{kind, path, newPath, edits}]`; vorher `prepareRename` (nicht umbenennbar: -32602) |
+| `lsp.documentSymbols` | `path` | Baum `[{name, detail, kind, range, selectionRange, children}]` |
+| `lsp.workspaceSymbols` | `query`, `limit?` (500) | `[{name, kind, container, path, file, range?}]` |
+
+Workspace-Änderungen des Servers (Code Actions, Rename, `workspace/applyEdit`) laufen über `App.ApplyFileOps`: Text-Edits offener Dokumente als ein Undo-Schritt je Datei (Versionsprüfung bei versionierten `documentChanges`), geschlossene Dateien atomar unter der Speicher-Sperre mit Local History, Ressourcen-Operationen `create`/`rename`/`delete` in Reihenfolge (ein offenes Dokument wird vor dem Umbenennen gespeichert, geschlossen und unter dem neuen Pfad wieder geöffnet; Gelöschtes bleibt in der Local History). Beim ersten Fehler wird abgebrochen (`failureHandling: abort`), bereits angewendete Schritte bleiben.
 
 **git** – Hunk-Indizes beziehen sich auf `git.diff` mit denselben Optionen. Jeder Hunk in `git.diff` hat `header` und `hash` (Inhalts-Hash); eine Auswahl `{hunk, header?, hash?}` mit diesen Werten wird abgelehnt (-32004 mit `data: {reason: "staleSelection", path, hunk}`), wenn sich der Diff inzwischen geändert hat (z.B. durch Formatierung beim Speichern) – statt still einen anderen Hunk zu nehmen; der Client lädt dann den Diff neu. Ohne `header`/`hash` gilt nur der Index (rückwärtskompatibel). Clients sollten beide mitschicken.
 
@@ -318,7 +350,7 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `git.stage` / `git.unstage` | `paths?` oder `path` + `hunks?: [{hunk, lines?, header?, hash?}]` (Indizes aus `git.diff`: stage ohne Basis, unstage mit `staged`) | Status |
 | `git.discard` | `path`, `hunks` oder `all: true` | `path`, `reloaded` (offenes, ungeändertes Dokument neu geladen, ein Undo-Schritt) |
 | `git.commitSelection` | `message`, `paths?`, `hunks?: [{path, hunks}]` (Indizes aus `git.diff` mit `base: "HEAD"`), `amend?`, `push?`, `noVerify?`, `signOff?`, `allowEmpty?` | `hash`, `message`, `pushed`, `push?`, `pushError?: {kind, message}`; Guard `commit.before` (Autosave; schlägt das Speichern fehl, läuft es in den Timeout oder stürzt es ab, wird der Commit abgelehnt), Filter `commit.message`. Während Merge/Rebase/Cherry-pick/Revert/am abgelehnt (-32004; `git.commit` committet den ganzen Index). Nur-gestagte Inhalte berührter Dateien bleiben im Index erhalten |
-| `git.push` | `remote?`, `branch?`, `remoteBranch?`, `setUpstream?`, `forceWithLease?`, `tags?` | `remote`, `branch`, `remoteBranch`; Fehler -32000 mit `data: {kind, message, stderr}`, `kind` = `rejected`, `remoteRejected`, `auth`, `network`, `repoNotFound`, `noRemote`, `failed` |
+| `git.push` | `remote?`, `branch?`, `remoteBranch?`, `setUpstream?`, `forceWithLease?`, `tags?` | `remote`, `branch`, `remoteBranch`; Fehler -32000 mit `data: {kind, message, stderr}`, `kind` = `rejected`, `remoteRejected`, `auth`, `network`, `repoNotFound`, `noRemote`, `failed` (Fetch/Pull/Update/Stash zusätzlich `noUpstream`, `localChanges`, `diverged`, `detached`) |
 | `git.recentMessages` | `max?` (20) | Nachrichten, neueste zuerst |
 | `git.gutter` | `path`, `base?` (`head`/`index`) | `ranges[{kind, start, end, baseStart, baseEnd}]` (1-basiert, `end` exklusiv; gelöscht: `start == end`), aus dem Pufferinhalt |
 | `git.rollback` | `path`, `line`, `base?` | Dokumentzustand (Änderung als Undo-fähige Bearbeitung des offenen Dokuments) |
@@ -327,6 +359,13 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `git.createBranch` / `git.deleteBranch` | `name`, `start?`, `checkout?` / `force?` | Branches |
 | `git.conflicts` | – | Dateien mit Konflikt |
 | `git.mergeData` | `path` | `base`, `ours`, `theirs`, `has*`, `blocks[{index, kind, conflict, base, ours, theirs, *Start}]`, `merged` (mit Markern), `conflicts` |
+| `git.fetch` | `remote?` (ohne: alle), `prune?`, `tags?` | `{remotes, updated[{ref, old?, new?}]}` (Netzwerkzugriff nur hier) |
+| `git.pull` | `remote?`, `branch?` (Standard: Upstream), `strategy?` (`merge` Standard, `rebase`, `ff-only`), `autostash?`, `prune?` | `{branch, remote, remoteBranch, before, after, upToDate, fastForward, changed, conflicts, state, fetched, ahead, behind}`; vorher werden offene Dokumente gespeichert, das Holen läuft außerhalb, das Integrieren unter der Speicher-Sperre, danach werden offene, ungeänderte Dokumente neu geladen. Konflikte sind kein Fehler (`conflicts`, `state` `merging`/`rebasing`) |
+| `git.updateProject` | `strategy?`, `prune?`, `autostash?` | wie `git.pull` für den Upstream des aktuellen Branches (`git.changed` mit `op: "update"` und den geänderten Pfaden) |
+| `git.stash` | `message?`, `includeUntracked?`, `keepIndex?`, `paths?` | `{created, entry?}` (Dokumente werden vorher gespeichert) |
+| `git.stashList` | – | `[{index, ref, hash, message, date}]`, neueste zuerst |
+| `git.stashApply` / `git.stashPop` | `index?` (0), `hash?` (Prüfung gegen verschobenen Stash: -32004 `{reason: "staleStash"}`), `restoreIndex?` | `{conflicts, dropped}` (Pop behält den Eintrag bei Konflikten) |
+| `git.stashDrop` | `index?`, `hash?` | verbleibende Einträge |
 | `git.resolve` | `path`, `content?` oder `resolutions: [{block, resolution: ours\|theirs\|oursFirst\|theirsFirst\|base\|custom, custom?}]` | `content`, `reloaded` |
 
 **debug-xdebug**

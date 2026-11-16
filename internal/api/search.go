@@ -29,6 +29,9 @@ type SearchMatch struct {
 	Col      int    `json:"col"`
 	Text     string `json:"text"`
 	LineText string `json:"lineText"`
+	// PreviewStart is the byte offset in the line where LineText starts
+	// when a long line was cut down to a window around the match.
+	PreviewStart int `json:"previewStart,omitempty"`
 }
 
 // SearchResult is the result of "search.inDoc".
@@ -55,6 +58,7 @@ type ReplaceResult struct {
 func (a *App) registerSearch() {
 	mustHandle(a, "search.inDoc", "Find matches in a document or file (text/regex, case, whole word)", a.searchInDoc)
 	mustHandle(a, "search.replaceInDoc", "Replace all matches in an open document (one undo step)", a.replaceInDoc)
+	a.registerProjectSearch()
 }
 
 func (p SearchParams) compile() (*search.Query, error) {

@@ -77,6 +77,8 @@ type App struct {
 	docs    map[string]*Doc
 	claims  map[string][]string
 	docSeq  uint64 // last document generation, guarded by mu
+
+	searches searchRegistry // running project searches (search.cancel)
 }
 
 // New creates an App with the built-in namespaces and the extensions from
