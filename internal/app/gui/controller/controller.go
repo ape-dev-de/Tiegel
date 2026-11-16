@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
+	"github.com/ape-dev-de/tiegel/internal/core/fspath"
 )
 
 // Status is the information shown in the status bar.
@@ -426,10 +427,10 @@ func addRecent(list []string, item string) []string {
 
 // Abs resolves a project-relative path.
 func (c *Controller) Abs(rel string) string {
-	if filepath.IsAbs(rel) || c.Project.Root == "" {
+	if c.Project.Root == "" {
 		return rel
 	}
-	return filepath.Join(c.Project.Root, filepath.FromSlash(rel))
+	return fspath.Resolve(c.Project.Root, rel)
 }
 
 // Rel returns the project-relative slash path of abs (abs if outside).

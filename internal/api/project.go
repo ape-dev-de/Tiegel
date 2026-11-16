@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ape-dev-de/tiegel/internal/compose"
+	"github.com/ape-dev-de/tiegel/internal/core/fspath"
 	"github.com/ape-dev-de/tiegel/internal/core/history"
 	"github.com/ape-dev-de/tiegel/internal/core/langdetect"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
@@ -168,11 +169,11 @@ func (a *App) resolvePath(p string) (string, error) {
 	if p == "" {
 		return "", Errorf(CodeInvalidParams, "path is required")
 	}
-	if filepath.IsAbs(p) {
+	if fspath.IsAbs(p) {
 		return filepath.Clean(p), nil
 	}
 	if root := a.ProjectRoot(); root != "" {
-		return filepath.Join(root, p), nil
+		return fspath.Resolve(root, p), nil
 	}
 	abs, err := filepath.Abs(p)
 	if err != nil {
@@ -267,7 +268,7 @@ func (a *App) filesList(ctx context.Context, p FilesListParams) (FilesListResult
 	if rel == "." || rel == "/" {
 		rel = ""
 	}
-	if strings.HasPrefix(rel, "../") || rel == ".." || filepath.IsAbs(p.Path) {
+	if strings.HasPrefix(rel, "../") || rel == ".." || fspath.IsAbs(p.Path) {
 		return FilesListResult{}, Errorf(CodeInvalidParams, "path must be relative to the project root")
 	}
 	dir := filepath.Join(pr.root, filepath.FromSlash(rel))

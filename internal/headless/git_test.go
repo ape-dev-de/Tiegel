@@ -28,7 +28,7 @@ func gitProject(t *testing.T) (dir, remote string) {
 	remote = filepath.Join(t.TempDir(), "remote.git")
 	for _, args := range [][]string{
 		{"init", "-q", "-b", "main"}, {"config", "user.name", "T"}, {"config", "user.email", "t@example.org"},
-		{"config", "commit.gpgsign", "false"}, {"add", "-A"}, {"commit", "-q", "-m", "init"},
+		{"config", "commit.gpgsign", "false"}, {"config", "core.autocrlf", "false"}, {"add", "-A"}, {"commit", "-q", "-m", "init"},
 		{"init", "-q", "--bare", "-b", "main", remote}, {"remote", "add", "origin", remote},
 	} {
 		gitIn(t, dir, args...)

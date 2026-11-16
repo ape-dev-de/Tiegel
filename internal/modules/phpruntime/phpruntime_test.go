@@ -250,6 +250,9 @@ func TestMappingsExecModeAndDiagnose(t *testing.T) {
 		t.Fatalf("mode %+v", em)
 	}
 
+	if runtime.GOOS == "windows" {
+		t.Skip("the rest runs the fake docker, a shell script stand-in")
+	}
 	var list []InterpreterInfo
 	modtest.Call(t, a, "interp.list", nil, &list)
 	modtest.Call(t, a, "interp.select", InterpSelectParams{ID: list[0].ID}, nil)

@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/compose-spec/compose-go/v2/types"
+
+	"github.com/ape-dev-de/tiegel/internal/core/fspath"
 )
 
 // Candidate is a service that probably runs PHP.
@@ -145,7 +147,7 @@ func buildScore(b *types.BuildConfig, projectDir string) (int, []string) {
 	best := 0
 	var reasons []string
 	ctxDir := b.Context
-	if ctxDir != "" && !filepath.IsAbs(ctxDir) && !strings.Contains(ctxDir, "://") {
+	if ctxDir != "" && !fspath.IsAbs(ctxDir) && !strings.Contains(ctxDir, "://") {
 		ctxDir = filepath.Join(projectDir, ctxDir)
 	}
 	if strings.Contains(filepath.ToSlash(ctxDir), "laravel/sail/runtimes") {
@@ -159,7 +161,7 @@ func buildScore(b *types.BuildConfig, projectDir string) (int, []string) {
 		if df == "" {
 			df = "Dockerfile"
 		}
-		if !filepath.IsAbs(df) {
+		if !fspath.IsAbs(df) {
 			df = filepath.Join(ctxDir, df)
 		}
 		if data, err := os.ReadFile(df); err == nil {

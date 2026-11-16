@@ -2,6 +2,7 @@ package tshighlight
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"slices"
 	"strings"
@@ -47,7 +48,31 @@ func wait(t *testing.T, h *Highlighter) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := h.Wait(ctx); err != nil {
+		if errors.Is(err, syntax.ErrNoTreeSitter) {
+			// Build without cgo (Windows client, D80): nothing to parse here,
+			// TestWithoutTreeSitter covers this case.
+			t.Skip("needs Tree-sitter (cgo)")
+		}
 		t.Fatalf("wait: %v", err)
+	}
+}
+
+// TestWithoutTreeSitter: in a build without cgo a Tree-sitter language
+// yields no spans and Wait reports ErrNoTreeSitter instead of hanging.
+func TestWithoutTreeSitter(t *testing.T) {
+	if syntax.TreeSitter {
+		t.Skip("built with Tree-sitter")
+	}
+	b := buffer.NewString(samplePHP)
+	h := New(b, Options{Path: "a.php"})
+	defer h.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.Wait(ctx); !errors.Is(err, syntax.ErrNoTreeSitter) {
+		t.Fatalf("wait: %v", err)
+	}
+	if sp := all(h, b); len(sp) != 0 {
+		t.Fatalf("spans without Tree-sitter: %v", sp)
 	}
 }
 
@@ -146,6 +171,10 @@ func TestInitialParseMatchesFresh(t *testing.T) {
 	wait(t, h)
 	if !h.Ready() || !h.Idle() || h.Err() != nil {
 		t.Fatal("not ready")
+	}
+	// Invalidate runs after the state change that ends Wait, so it may lag.
+	for deadline := time.Now().Add(5 * time.Second); calls.Load() == 0 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
 	}
 	if calls.Load() == 0 {
 		t.Error("invalidate not called")

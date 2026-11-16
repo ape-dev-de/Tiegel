@@ -1,0 +1,4 @@
+# LF everywhere, also in Windows checkouts (core.autocrlf=true): gofmt,
+# embedded files (Tree-sitter queries, feature tables) and byte-exact test
+# data (diffs, compose files) expect it. Binary files are detected by git.
+* text=auto eol=lf

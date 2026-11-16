@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -143,7 +144,8 @@ func TestDocSaveHistoryAndRestore(t *testing.T) {
 	if string(data) != "<?PHP\nECHO 1;\n" || docText(t, a, "a.php") != string(data) {
 		t.Fatalf("filtered save: disk %q buffer %q", data, docText(t, a, "a.php"))
 	}
-	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
+	// Windows has no Unix permission bits (only read-only), nothing to keep.
+	if st, _ := os.Stat(path); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", st.Mode())
 	}
 

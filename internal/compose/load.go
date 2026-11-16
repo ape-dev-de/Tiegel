@@ -16,6 +16,8 @@ import (
 	"github.com/compose-spec/compose-go/v2/cli"
 	"github.com/compose-spec/compose-go/v2/dotenv"
 	"github.com/compose-spec/compose-go/v2/types"
+
+	"github.com/ape-dev-de/tiegel/internal/core/fspath"
 )
 
 // ErrNoComposeFile is returned when a directory contains no compose file.
@@ -68,7 +70,7 @@ func FindFiles(dir string, env map[string]string) (Files, error) {
 			if p == "" {
 				continue
 			}
-			if !filepath.IsAbs(p) {
+			if !fspath.IsAbs(p) {
 				p = filepath.Join(abs, p)
 			}
 			if !isFile(p) {

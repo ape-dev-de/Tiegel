@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -206,7 +207,7 @@ func TestGutterMarkersUpdate(t *testing.T) {
 		return map[string]any{"ranges": ranges}, nil
 	})
 	c := started(t, f)
-	file := root + "/src/Mailer.php"
+	file := filepath.Join(root, "src/Mailer.php")
 	c.OpenFile("src/Mailer.php", nil)
 	c.Settle(time.Second)
 	g := c.Vcs
@@ -385,7 +386,8 @@ func debugFake() *fakeBackend {
 			Enabled   *bool
 		}
 		_ = json.Unmarshal(raw, &p)
-		rel := strings.TrimPrefix(p.File, root+"/")
+		rel, _ := filepath.Rel(root, p.File)
+		rel = filepath.ToSlash(rel)
 		bps = append(bps, Breakpoint{ID: rel + ":" + string(rune('0'+p.Line)), Path: rel, Line: p.Line, Condition: p.Condition, Enabled: p.Enabled == nil || *p.Enabled})
 		return map[string]any{"breakpoints": bps}, nil
 	})
@@ -401,7 +403,7 @@ func debugFake() *fakeBackend {
 	for _, m := range []string{"debug.run", "debug.stepOver", "debug.stepInto", "debug.stepOut", "debug.stopSession"} {
 		f.answer(m, map[string]any{"status": "running"})
 	}
-	f.answer("debug.stack", []map[string]any{{"Level": 0, "Where": "{main}", "File": root + "/index.php", "Line": 3}, {"Level": 1, "Where": "x", "File": root + "/src/Mailer.php", "Line": 2}})
+	f.answer("debug.stack", []map[string]any{{"Level": 0, "Where": "{main}", "File": filepath.Join(root, "index.php"), "Line": 3}, {"Level": 1, "Where": "x", "File": filepath.Join(root, "src/Mailer.php"), "Line": 2}})
 	f.on("debug.variables", func(raw json.RawMessage) (any, error) {
 		var p struct {
 			FullName string `json:"fullname"`
@@ -456,15 +458,15 @@ func TestDebugEventSequence(t *testing.T) {
 	}
 	f.emit("debug.status", map[string]any{"session": "s1", "status": "running"})
 	f.emit("debug.status", map[string]any{"session": "s1", "status": "break"})
-	f.emit(api.TopicDebugBreak, api.DebugBreakEvent{Session: "s1", File: root + "/index.php", Path: "index.php", Line: 3})
+	f.emit(api.TopicDebugBreak, api.DebugBreakEvent{Session: "s1", File: filepath.Join(root, "index.php"), Path: "index.php", Line: 3})
 	c.Settle(time.Second)
-	if !d.Paused() || d.Exec == nil || d.Exec.Line != 3 || d.Exec.File != root+"/index.php" || d.BreakVersion != 1 {
+	if !d.Paused() || d.Exec == nil || d.Exec.Line != 3 || d.Exec.File != filepath.Join(root, "index.php") || d.BreakVersion != 1 {
 		t.Fatalf("exec %+v state %q", d.Exec, d.State())
 	}
 	if len(d.Frames) != 2 || len(d.Variables) != 2 || d.Variables[0].Value != "3" || d.Watches[0].Value == nil {
 		t.Fatalf("stop data frames %d vars %+v watches %+v", len(d.Frames), d.Variables, d.Watches)
 	}
-	if tab := c.ActiveTab(); tab == nil || tab.File != root+"/index.php" || c.Reveal == nil || c.Reveal.Range.Start.Line != 3 || c.Reveal.Range.Start.Offset != -1 {
+	if tab := c.ActiveTab(); tab == nil || tab.File != filepath.Join(root, "index.php") || c.Reveal == nil || c.Reveal.Range.Start.Line != 3 || c.Reveal.Range.Start.Offset != -1 {
 		t.Fatalf("break should open index.php at line 3: %+v", c.Reveal)
 	}
 	// Lazy children with paging.
@@ -533,7 +535,7 @@ func TestBreakpointsToggleAndEvents(t *testing.T) {
 	f := debugFake()
 	c := started(t, f)
 	d := c.Debug
-	file := root + "/index.php"
+	file := filepath.Join(root, "index.php")
 	d.ToggleBreakpoint(file, 2)
 	c.Settle(time.Second)
 	b, ok := d.BreakpointAt(file, 2)
@@ -559,7 +561,7 @@ func TestBreakpointsToggleAndEvents(t *testing.T) {
 	// Changes from other clients arrive as event.
 	f.emit(api.TopicDebugBreakpoints, []Breakpoint{{ID: "src/Mailer.php:7", Path: "src/Mailer.php", Line: 7, Enabled: false}})
 	c.Settle(200 * time.Millisecond)
-	if b, ok := d.BreakpointAt(root+"/src/Mailer.php", 7); !ok || b.Enabled {
+	if b, ok := d.BreakpointAt(filepath.Join(root, "src/Mailer.php"), 7); !ok || b.Enabled {
 		t.Fatalf("event breakpoints %+v", d.Breakpoints)
 	}
 	f.answer("debug.breakpoints.enable", map[string]any{"breakpoints": []Breakpoint{}})

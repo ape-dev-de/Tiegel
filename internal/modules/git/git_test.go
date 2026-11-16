@@ -38,6 +38,9 @@ func setup(t *testing.T) (*api.App, string) {
 func initRepo(t *testing.T, dir string) {
 	t.Helper()
 	modtest.Git(t, dir, "init", "-q", "-b", "main")
+	// Byte-exact working tree: ignore core.autocrlf=true from the system
+	// config (Git for Windows); the module's own git calls read it.
+	modtest.Git(t, dir, "config", "core.autocrlf", "false")
 	modtest.Git(t, dir, "config", "user.name", "Test")
 	modtest.Git(t, dir, "config", "user.email", "test@example.org")
 	modtest.Git(t, dir, "config", "commit.gpgsign", "false")
@@ -229,6 +232,7 @@ func TestPush(t *testing.T) {
 	other := filepath.Join(t.TempDir(), "other")
 	modtest.Git(t, dir, "clone", "-q", remote, other)
 	modtest.Git(t, other, "config", "user.name", "O")
+	modtest.Git(t, other, "config", "core.autocrlf", "false")
 	modtest.Git(t, other, "config", "user.email", "o@example.org")
 	modtest.Git(t, other, "config", "commit.gpgsign", "false")
 	write(t, other, "o.txt", "o\n")

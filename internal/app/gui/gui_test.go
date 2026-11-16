@@ -17,6 +17,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
 	"github.com/ape-dev-de/tiegel/internal/modules"
+	"github.com/ape-dev-de/tiegel/internal/syntax"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/statusbar"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
@@ -239,7 +240,13 @@ func TestEditTypeAutosaveDiagnostics(t *testing.T) {
 	e.waitFor("modified flag cleared", func() bool { return !e.ctl.ActiveTab().Modified })
 
 	// php-features reports the enum (PHP 8.1) against composer's ^8.0.
-	e.waitFor("php diagnostics", func() bool { return len(s.ed.Diagnostics()) > 0 })
+	// Its checks need Tree-sitter (cgo); without it (Windows build, D80)
+	// only the language server diagnostic below is shown.
+	wantProblems := 1
+	if syntax.TreeSitter {
+		wantProblems = 2
+		e.waitFor("php diagnostics", func() bool { return len(s.ed.Diagnostics()) > 0 })
+	}
 	// A language server diagnostic arrives as event.
 	e.app.Bus().Publish(api.TopicLSPDiagnostics, map[string]any{
 		"path": "src/Shop.php", "file": file, "version": 1,
@@ -253,7 +260,7 @@ func TestEditTypeAutosaveDiagnostics(t *testing.T) {
 		}
 		return false
 	})
-	if len(e.v.probs.Items) < 2 {
+	if len(e.v.probs.Items) < wantProblems {
 		t.Fatalf("problems %+v", e.v.probs.Items)
 	}
 
@@ -350,7 +357,9 @@ func TestScreenshots(t *testing.T) {
 	e := newEnv(t, true)
 	e.ctl.OpenFile("src/Shop.php", nil)
 	e.waitFor("tab", func() bool { return e.ctl.ActiveTab() != nil })
-	e.waitFor("php diagnostics", func() bool { return e.ctl.DiagVersion > 1 && len(e.ctl.Problems()) > 0 })
+	if syntax.TreeSitter { // php-features checks need Tree-sitter (D80)
+		e.waitFor("php diagnostics", func() bool { return e.ctl.DiagVersion > 1 && len(e.ctl.Problems()) > 0 })
+	}
 	e.v.toggleTool(toolProblems)
 	e.settle()
 	// The opened file is revealed: its folder is expanded and loaded.

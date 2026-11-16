@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -193,7 +194,8 @@ func TestSearchCommand(t *testing.T) {
 
 func TestCallCommand(t *testing.T) {
 	dir := project(t, map[string]string{"a.php": "<?php\n"})
-	code, out, _ := run(t, "", "call", "files.detectLanguage", `{"path":"`+filepath.Join(dir, "a.php")+`"}`)
+	params, _ := json.Marshal(map[string]string{"path": filepath.Join(dir, "a.php")}) // escapes \ on Windows
+	code, out, _ := run(t, "", "call", "files.detectLanguage", string(params))
 	if code != ExitOK || !strings.Contains(out, `"language": "php"`) {
 		t.Fatalf("call %d %q", code, out)
 	}
@@ -441,6 +443,15 @@ func TestDebugListenCommand(t *testing.T) {
 
 // --- End-to-end: build the real binary and drive it. ---
 
+// exeName adds the executable suffix of the OS: Windows only starts files
+// with an extension from PATHEXT, and go build -o keeps the name as given.
+func exeName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
+
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	if testing.Short() {
@@ -450,8 +461,10 @@ func buildBinary(t *testing.T) string {
 	if err != nil {
 		t.Skip("go toolchain not found")
 	}
-	bin := filepath.Join(t.TempDir(), "tiegel")
-	cmd := exec.Command(goBin, "build", "-o", bin, "github.com/ape-dev-de/tiegel/cmd/tiegel")
+	bin := filepath.Join(t.TempDir(), exeName("tiegel"))
+	// The E2E tests only drive --headless: build without the GUI (D84), so
+	// they need no Gio toolchain (cgo on macOS/Linux) and link faster.
+	cmd := exec.Command(goBin, "build", "-tags", "headless", "-o", bin, "github.com/ape-dev-de/tiegel/cmd/tiegel")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
@@ -553,10 +566,10 @@ func TestE2E(t *testing.T) {
 	if code, out, _ := e2e(t, bin, cfg, "", "--version"); code != 0 || out == "" {
 		t.Fatalf("--version %d %q", code, out)
 	}
-	// The GUI path opens a real window, so only its argument handling is
-	// driven here: an unusable project fails before any window appears.
-	if code, _, errs := e2e(t, bin, cfg, "", filepath.Join(dir, "missing")); code != 1 || errs == "" {
-		t.Fatalf("gui missing project %d %q", code, errs)
+	// The binary is headless-only (buildBinary): starting the GUI explains
+	// how to use it instead of failing obscurely.
+	if code, _, errs := e2e(t, bin, cfg, "", dir); code != 2 || !strings.Contains(errs, "--headless") {
+		t.Fatalf("gui in a headless-only build %d %q", code, errs)
 	}
 	if code, _, _ := e2e(t, bin, cfg, "", "--frob"); code != 2 {
 		t.Fatal("gui bad flag")
