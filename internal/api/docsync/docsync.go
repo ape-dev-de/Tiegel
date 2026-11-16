@@ -391,12 +391,21 @@ func (m *Mirror) Close() error {
 	return nil
 }
 
-// CloseDocument closes the document on the server (doc.close; unsaved
-// changes are discarded) and stops mirroring.
+// CloseDocument closes the document on the server (doc.close with the
+// mirrored generation) and stops mirroring. Unsaved changes are never
+// discarded: the server then answers CodeConflict and the mirror stays
+// attached (save first).
 func (m *Mirror) CloseDocument(ctx context.Context) (api.DocCloseResult, error) {
 	if err := m.checkOpen(); err != nil {
 		return api.DocCloseResult{}, err
 	}
+	m.mu.Lock()
+	params := api.DocCloseParams{Path: m.path, Generation: m.state.Generation}
+	m.mu.Unlock()
+	res, err := api.Call[api.DocCloseResult](ctx, m.c, "doc.close", params)
+	if err != nil {
+		return res, err
+	}
 	m.detach()
-	return api.Call[api.DocCloseResult](ctx, m.c, "doc.close", api.PathParams{Path: m.path})
+	return res, nil
 }

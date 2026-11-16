@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -196,5 +197,113 @@ func TestServeShutdown(t *testing.T) {
 	// Serving a closed server returns at once.
 	if err := s.Serve(context.Background(), a); err != nil {
 		t.Fatalf("serve after close: %v", err)
+	}
+}
+
+// closedByPeer reports whether the server closes c within the timeout.
+func closedByPeer(c net.Conn, timeout time.Duration) bool {
+	_ = c.SetReadDeadline(time.Now().Add(timeout))
+	buf := make([]byte, 4096)
+	for {
+		if _, err := c.Read(buf); err != nil {
+			var ne net.Error
+			return !(errors.As(err, &ne) && ne.Timeout())
+		}
+	}
+}
+
+// Review 2026-11-16 #8: before authentication a client could send messages
+// up to 256 MiB and open unlimited connections. Now unauthenticated
+// messages are limited to a few KiB and connections are capped.
+func TestPreAuthLimits(t *testing.T) {
+	a := apitest.NewApp(t, map[string]string{"a.txt": "x"})
+	s, err := server.Listen(server.Config{
+		Addr: "tcp:127.0.0.1:0", Token: "secret", MaxConns: 2,
+		Serve: api.ServeOptions{AuthTimeout: time.Minute},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, a) }()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	_, addr, _ := server.ParseAddr(s.Addr())
+
+	// A large message before auth closes the connection (no 256 MiB
+	// buffer is allocated).
+	big, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer big.Close()
+	go func() {
+		_, _ = big.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"auth","params":{"token":"` + strings.Repeat("x", 64<<10)))
+	}()
+	if !closedByPeer(big, 5*time.Second) {
+		t.Fatal("oversized unauthenticated message did not close the connection")
+	}
+
+	// The connection cap: two idle unauthenticated connections are
+	// allowed, the third is closed at once.
+	var idle []net.Conn
+	for i := 0; i < 2; i++ {
+		c, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		idle = append(idle, c)
+	}
+	time.Sleep(100 * time.Millisecond) // let the server accept them
+	third, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer third.Close()
+	if !closedByPeer(third, 5*time.Second) {
+		t.Fatal("connection over the limit was kept open")
+	}
+	// After one connection is gone a new client can authenticate and use
+	// large messages.
+	_ = idle[0].Close()
+	time.Sleep(100 * time.Millisecond)
+	c, err := client.Dial(context.Background(), s.Addr(), "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := api.Call[api.DocOpenResult](context.Background(), c, "doc.open", api.DocOpenParams{Path: "a.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.Call[api.DocState](context.Background(), c, "doc.replace", api.DocReplaceParams{Path: "a.txt", Text: strings.Repeat("y", 64<<10)}); err != nil {
+		t.Fatalf("large message after auth: %v", err)
+	}
+}
+
+// Review 2026-11-16 #13: two servers sharing a token file: the first to
+// stop removed the file of the second.
+func TestTokenFileOfOtherServerIsKept(t *testing.T) {
+	dir := apitest.SocketDir(t)
+	tok := filepath.Join(dir, "serve.token")
+	s1, err := server.Listen(server.Config{Addr: "tcp:127.0.0.1:0", TokenFile: tok})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2, err := server.Listen(server.Config{Addr: "tcp:127.0.0.1:0", TokenFile: tok})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s1.Close()
+	got, err := server.ReadTokenFile(tok)
+	if err != nil || got != s2.Token() {
+		t.Fatalf("token file of the running server removed: %q %v", got, err)
+	}
+	_ = s2.Close()
+	if _, err := os.Stat(tok); !os.IsNotExist(err) {
+		t.Fatal("own token file not removed")
 	}
 }

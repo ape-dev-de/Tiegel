@@ -286,7 +286,7 @@ func (p rawPeer) send(t *testing.T, body string) {
 
 func (p rawPeer) recv(t *testing.T) map[string]any {
 	t.Helper()
-	b, err := readMessage(p.r)
+	b, err := readMessage(p.r, MaxMessageSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,16 +356,16 @@ func TestFraming(t *testing.T) {
 		"too large":       "Content-Length: 999999999999\r\n\r\n",
 	}
 	for name, in := range cases {
-		if _, err := readMessage(bufio.NewReader(strings.NewReader(in))); err == nil {
+		if _, err := readMessage(bufio.NewReader(strings.NewReader(in)), MaxMessageSize); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
 	}
 	in := "Content-Type: application/vscode-jsonrpc; charset=utf-8\r\ncontent-length: 2\r\n\r\n{}"
-	b, err := readMessage(bufio.NewReader(strings.NewReader(in)))
+	b, err := readMessage(bufio.NewReader(strings.NewReader(in)), MaxMessageSize)
 	if err != nil || string(b) != "{}" {
 		t.Fatalf("got %q %v", b, err)
 	}
-	if _, err := readMessage(bufio.NewReader(strings.NewReader(""))); err != io.EOF {
+	if _, err := readMessage(bufio.NewReader(strings.NewReader("")), MaxMessageSize); err != io.EOF {
 		t.Fatalf("empty: %v", err)
 	}
 	var buf bytes.Buffer
@@ -444,5 +444,35 @@ func TestLineFramingConn(t *testing.T) {
 	}
 	if NewConnFraming(a, nil).framing != HeaderFraming {
 		t.Fatal("nil framing should default to header framing")
+	}
+}
+
+// Review 2026-11-16 #8: limited reads reject large messages (and endless
+// header lines) without buffering them.
+func TestReadMessageLimit(t *testing.T) {
+	big := strings.Repeat("x", 10000)
+	for name, tc := range map[string]struct {
+		f  Framing
+		in string
+	}{
+		"line":        {LineFraming, `{"a":"` + big + `"}` + "\n"},
+		"header len":  {HeaderFraming, "Content-Length: 10000\r\n\r\n" + big},
+		"header line": {HeaderFraming, "X-Junk: " + big + "\r\n"},
+	} {
+		lr, ok := tc.f.(LimitedReader)
+		if !ok {
+			t.Fatalf("%s: framing without limit support", name)
+		}
+		if _, err := lr.ReadMessageLimit(bufio.NewReader(strings.NewReader(tc.in)), 4096); !errors.Is(err, ErrMessageTooLarge) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	b, err := LineFraming.(LimitedReader).ReadMessageLimit(bufio.NewReader(strings.NewReader("{}\n")), 4096)
+	if err != nil || string(b) != "{}" {
+		t.Fatalf("small message: %q %v", b, err)
+	}
+	b, err = HeaderFraming.(LimitedReader).ReadMessageLimit(bufio.NewReader(strings.NewReader("Content-Length: 2\r\n\r\n{}")), 4096)
+	if err != nil || string(b) != "{}" {
+		t.Fatalf("small header message: %q %v", b, err)
 	}
 }

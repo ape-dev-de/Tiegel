@@ -31,10 +31,12 @@ type Session struct {
 	app    *App
 	notify func(Event)
 
-	mu       sync.Mutex
-	patterns map[string]bool
-	unsub    func()
-	closed   bool
+	mu         sync.Mutex
+	patterns   map[string]bool
+	unsub      func()
+	closed     bool
+	maxQueue   int
+	onOverflow func()
 }
 
 type sessionKey struct{}
@@ -65,6 +67,17 @@ func (s *Session) With(ctx context.Context) context.Context {
 	return context.WithValue(ctx, sessionKey{}, s)
 }
 
+// LimitQueue bounds the number of events waiting for delivery to this
+// session (see bus.SubscribeBounded). When a client stops reading and the
+// limit is reached, the session's subscriptions end and onOverflow is
+// called once (e.g. to close the connection). It applies to subscriptions
+// made afterwards; max <= 0 means unbounded (the default).
+func (s *Session) LimitQueue(max int, onOverflow func()) {
+	s.mu.Lock()
+	s.maxQueue, s.onOverflow = max, onOverflow
+	s.mu.Unlock()
+}
+
 // Subscribe forwards events of the given topic patterns ("doc.saved",
 // "debug.*", "*") to the session and returns all subscribed patterns.
 func (s *Session) Subscribe(patterns ...string) []string {
@@ -79,9 +92,21 @@ func (s *Session) Subscribe(patterns ...string) []string {
 		}
 	}
 	if len(s.patterns) > 0 && s.unsub == nil {
-		s.unsub = s.app.bus.Subscribe("*", s.deliver)
+		s.unsub = s.app.bus.SubscribeBounded("*", s.deliver, s.maxQueue, s.overflow)
 	}
 	return s.topicsLocked()
+}
+
+// overflow ends the subscriptions after the event queue limit was hit.
+func (s *Session) overflow() {
+	s.mu.Lock()
+	clear(s.patterns)
+	s.unsub = nil // already removed by the bus
+	fn := s.onOverflow
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // deliver forwards e if one of the session's patterns matches.

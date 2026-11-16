@@ -57,8 +57,9 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `lsp-servers [--all]` | installierte Language Server (`--all` inkl. proprietärer) | `lsp.servers` |
 | `modules [enable ID \| disable ID]` | Module anzeigen/schalten | `modules.*` |
 | `history FILE [--show ID \| --restore ID]` | Local History: Liste, Inhalt einer Revision, Wiederherstellen | `history.*` |
+| `recovery [--dismiss [FILE...]]` | Wiederherstellungspunkte: ungespeicherte Änderungen, die beim Schließen nicht gespeichert werden konnten (bzw. beim Beenden noch offen waren), liegen in der Local History; `--dismiss` entfernt die Hinweise (ohne Dateien: alle), die Revisionen bleiben | `history.recovery`, `history.recoveryDismiss` |
 | `git-status` | Branch und geänderte Dateien (`XY pfad`) | `git.status` |
-| `php-version` | PHP-Version des Projekts und ihre Quelle | `php.version` |
+| `php-version [--start]` | PHP-Version des Projekts und ihre Quelle; bei gestopptem Compose-Dienst Version aus `composer.json` mit Hinweis „Container läuft nicht“, `--start` erlaubt `docker compose run` | `php.version` |
 | `php-check FILE... [--php VERSION]` | Features/Deprecations gegen die Projektversion prüfen | `php.check` |
 | `debug-listen [--addr HOST:PORT] [--map HOST=REMOTE]...` | Xdebug-Listener starten (Standard `127.0.0.1:9003`; ohne `--map` Mappings aus php-runtime) und Ereignisse zeilenweise ausgeben, bis Strg+C | `debug.listen`, Events `debug.*` |
 | `breakpoints [set DATEI:ZEILE [--condition AUSDRUCK] \| remove DATEI:ZEILE \| enable DATEI:ZEILE \| disable DATEI:ZEILE]` | Projekt-Breakpoints anzeigen (`pfad:zeile [disabled] if bedingung`) oder ändern; dauerhaft pro Projekt gespeichert, in jeder neuen Debug-Sitzung automatisch gesetzt | `debug.breakpoints.*` |
@@ -136,8 +137,9 @@ tiegel --headless serve --listen tcp:127.0.0.1:7420 --token-file ~/.config/Tiege
 ```
 
 - Mehrere Clients gleichzeitig; jede Verbindung ist eine eigene Sitzung mit eigenen Event-Abos. Alle teilen dieselben offenen Dokumente.
-- **Authentisierung:** Die erste Anfrage jeder Verbindung muss `auth` mit dem Token sein. Jede andere Anfrage davor und ein falsches Token liefern `-32007` und schließen die Verbindung; ohne erfolgreiche Anmeldung wird sie nach 10 s geschlossen.
-- **Token:** `--token T` (sichtbar in der Prozessliste, nur für Tests), sonst `$TIEGEL_TOKEN`, sonst ein zufälliges 256-Bit-Token, das in `--token-file` (Standard `<Konfigurationsverzeichnis>/serve.token`, Modus 0600) geschrieben und beim Beenden gelöscht wird.
+- **Authentisierung:** Die erste Anfrage jeder Verbindung muss `auth` mit dem Token sein. Jede andere Anfrage davor und ein falsches Token liefern `-32007` und schließen die Verbindung; ohne erfolgreiche Anmeldung wird sie nach 10 s geschlossen. Vor der Anmeldung sind Nachrichten auf 4 KiB begrenzt (größere schließen die Verbindung); höchstens 64 Verbindungen gleichzeitig, weitere werden sofort geschlossen.
+- **Langsame Clients:** Liest ein Client seine Events nicht mehr, wird er nach 10 000 wartenden Events getrennt (statt unbegrenzt Speicher zu belegen).
+- **Token:** `--token T` ist **in der Prozessliste (`ps`) für alle Benutzer sichtbar** – nur für Tests; sonst `$TIEGEL_TOKEN`, sonst ein zufälliges 256-Bit-Token, das in `--token-file` (Standard `<Konfigurationsverzeichnis>/serve.token`, Modus 0600) geschrieben und beim Beenden gelöscht wird – nur, wenn die Datei noch das eigene Token enthält (ein zweiter Server mit derselben Token-Datei behält seine).
 - **Adressen:** Unix-Sockets werden mit Modus 0600 angelegt (verwaiste Socket-Dateien werden ersetzt, belegte nicht). TCP nur auf Loopback (`127.0.0.1`, `::1`, `localhost`); andere Adressen (auch `0.0.0.0`) nur mit `--allow-remote` und Warnung – die Verbindung ist **unverschlüsselt**.
 - **Start/Ende:** Nach dem Binden schreibt der Server eine JSON-Zeile auf stdout (`{"listen":"tcp:127.0.0.1:54321","tokenFile":"…","pid":…}`; bei Port 0 mit dem echten Port). SIGINT/SIGTERM beenden ihn sauber: keine neuen Verbindungen, offene werden geschlossen, Socket- und Token-Datei entfernt, Exit 0.
 - Go-Clients nutzen `internal/api/client` (`Dial`, `Spawn`), siehe [plattformen.md](plattformen.md).
@@ -173,7 +175,7 @@ Fehler sind JSON-RPC-Fehlerobjekte `{"code": …, "message": …}`:
 | -32000 | Ausführung fehlgeschlagen | 1 |
 | -32001 | nicht gefunden (Datei, Dokument, Revision, Modul, Sitzung, Repository) | 1 |
 | -32003 | kein Projekt geöffnet | 1 |
-| -32004 | Versionskonflikt (`version` passt nicht zum Dokument) | 1 |
+| -32004 | Konflikt: Versionskonflikt (`version` passt nicht zum Dokument), `doc.close` mit ungespeicherten Änderungen ohne `discard` oder mit veralteter `generation`, Hunk-Auswahl passt nicht mehr zum Diff (`header`/`hash`), `git.commitSelection` während Merge/Rebase/Cherry-pick/Revert | 1 |
 | -32005 | externes Programm/Dienst nicht verfügbar (php, git, Language Server, Port belegt, Update-Server) | 1 |
 | -32006 | Modul abgeschaltet (`module disabled`; `data: {module, method}`) – mit `modules.enable` wieder einschalten | 1 |
 | -32007 | nicht angemeldet / falsches Token (nur Socket-Verbindungen; die Verbindung wird geschlossen) | – |
@@ -241,20 +243,22 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `files.list` | `path?`, `depth?`, `ignored?`, `libraries?`, `limit?` | Baum `{name, path, dir, size, ignored, library, collapsed, children}` + Zähler |
 | `files.read` | `path`, `maxBytes?` | `content`, `encoding` (`utf-8`/`base64`), `language`, `size`, `truncated` |
 | `files.detectLanguage` | `path`, `content?` | `language` |
-| `doc.open` | `path`, `create?`, `text?` | Dokumentzustand (+ `text`, `alreadyOpen`) |
-| `doc.close` | `path` | `discarded` (ungespeicherte Änderungen verworfen) |
+| `doc.open` | `path`, `create?`, `text?` | Dokumentzustand (+ `text`, `alreadyOpen`); jeder Dokumentzustand enthält `generation` (eindeutig pro geöffneter Instanz, neu nach Schließen + Öffnen) |
+| `doc.close` | `path`, `generation?`, `discard?` | `path`, `generation`, `discarded`; mit ungespeicherten Änderungen nur mit `discard: true` (sonst -32004, `data` = Dokumentzustand); mit `generation` nur, wenn sie zur offenen Instanz passt (sonst -32004 – ein verspätetes Close trifft kein neu geöffnetes Dokument) |
 | `doc.list` | – | Dokumentzustände |
 | `doc.text` | `path`, `start?`, `end?` | `text`, `version` |
 | `doc.insert` | `path`, `at`, `text`, `version?` | Dokumentzustand |
 | `doc.delete` | `path`, `start`, `end`, `version?` | Dokumentzustand |
 | `doc.replace` | `path`, `start?`, `end?`, `text`, `version?` (ohne Bereich: ganzes Dokument) | Dokumentzustand |
 | `doc.undo` / `doc.redo` | `path` | Dokumentzustand + `done` |
-| `doc.save` | `path` | Zustand + `size`, `revision` (Hooks `file.beforeSave`, Local History, `file.saved`) |
+| `doc.save` | `path` | Zustand + `size`, `revision` (Hooks `file.beforeSave`, Local History, `file.saved`); der Inhalt wird erst unter der Speicher-Sperre gelesen, ein älterer Stand überschreibt nie einen neueren Autosave |
 | `doc.saveAll` | – | `saved: [..]` |
 | `history.list` | `path` | Revisionen (neueste zuerst) |
 | `history.content` | `path`, `id` | `revision`, `text` |
-| `history.restore` | `path`, `id` | neue Revision (offenes Dokument wird neu geladen) |
-| `autosave.trigger` | `trigger?` (`focusLost` Standard, `idle`, `beforeRun`, `beforeDebug`, `beforeCommit`) | `saved: [..]` – alle geänderten Dokumente über Autosave (Hooks, Local History mit Label `autosave: <trigger>`) |
+| `history.restore` | `path`, `id` | neue Revision (offenes Dokument wird neu geladen; unter der Speicher-Sperre) |
+| `history.recovery` | – | `[{path, file, revision, time, reason, error}]` – Wiederherstellungspunkte (neueste zuerst): ungespeicherte Änderungen, die beim Schließen nicht gespeichert werden konnten (`autosave.trigger` mit `close`) oder beim Beenden/`project.close` noch offen waren; Inhalt über `history.content` |
+| `history.recoveryDismiss` | `paths?` (ohne: alle) | verbleibende Wiederherstellungspunkte (die Revisionen bleiben in der Local History) |
+| `autosave.trigger` | `trigger?` (`focusLost` Standard, `idle`, `beforeRun`, `beforeDebug`, `beforeCommit`, `close`) | `saved: [..]` – alle geänderten Dokumente über Autosave (Hooks, Local History mit Label `autosave: <trigger>`); mit `close` werden nicht speicherbare Dokumente als Wiederherstellungspunkt gesichert, der Fehler (-32000) nennt das und trägt die Punkte als `data` |
 | `autosave.config` | `idleSeconds?` (0 = aus) | `idleSeconds` (dauerhaft in den globalen Settings; jede Pufferänderung startet den Leerlauf-Timer neu) |
 | `settings.get` | `key`, `scope?` (`global`, `project`) | `key`, `scope`, `found`, `value` |
 | `settings.set` | `key` (nur `ui.*`, `editor.*`, `update.*`), `scope?`, `value` (`null` löscht) | wie `settings.get` |
@@ -273,11 +277,11 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `interp.select` | `id` | gewählter Interpreter (Events `interpreter.changed`, `interp.selected`) |
 | `interp.version` | `id?`, `modules?`, `ini?` | `version`, `modules`, `ini` |
 | `compose.detect` | `dir?`, `profiles?` | `found`, `files`, `services`, `candidates[{service, score, reasons, image, mappings, xdebugHints}]` |
-| `php.version` | `override?`, `interpreter?`, `noInterpreter?` | `version`, `short`, `source` (`override`, `interpreter`, `composer …`), `detail`; ohne `override` gilt der gespeicherte Override; bei Compose-Interpretern kommt die Version aus dem Container |
+| `php.version` | `override?`, `interpreter?`, `noInterpreter?`, `start?` | `version`, `short`, `source` (`override`, `interpreter`, `composer …`), `detail`, `hint?`; ohne `override` gilt der gespeicherte Override; bei Compose-Interpretern kommt die Version per `docker compose exec` aus dem **laufenden** Container – ohne `start: true` wird nie ein Container gestartet (kein `run`, kein Image-Pull); läuft er nicht, Version aus `composer.json` mit `hint: {code: "container-not-running"}` |
 | `runtime.mappings.get` | – | `mappings[{host, remote}]`, `source` (`settings`, `compose`, `none`), `service` |
 | `runtime.mappings.set` | `mappings` oder `reset: true` | wie `get` (dauerhaft pro Projekt; Event `runtime.mappingsChanged`) |
 | `runtime.execMode` | `mode?` (`auto`, `exec`, `run`) | `mode` – wie PHP im Compose-Dienst läuft (`docker compose exec`/`run --rm`) |
-| `runtime.diagnose` | `interpreter?` | `interpreter`, `version`, `ini` (`xdebug.mode`, `xdebug.client_host`, `xdebug.client_port`, `xdebug.start_with_request`), `execMode`, `mappings`, `hints[{severity, code, message}]` (Compose-Hinweise + INI-Prüfung) |
+| `runtime.diagnose` | `interpreter?`, `start?` (wie bei `php.version`; ohne nur `exec`, bei gestopptem Dienst Hinweis `container-not-running`) | `interpreter`, `version`, `ini` (`xdebug.mode`, `xdebug.client_host`, `xdebug.client_port`, `xdebug.start_with_request`), `execMode`, `mappings`, `hints[{severity, code, message}]` (Compose-Hinweise + INI-Prüfung) |
 
 **php-features**
 
@@ -302,18 +306,18 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `lsp.definition` / `lsp.implementation` | `path`, `at` | `[{path, file, range}]` |
 | `lsp.semanticTokens` | `path` | `[{range, type, modifiers}]` |
 
-**git** – Hunk-Indizes beziehen sich auf `git.diff` mit denselben Optionen.
+**git** – Hunk-Indizes beziehen sich auf `git.diff` mit denselben Optionen. Jeder Hunk in `git.diff` hat `header` und `hash` (Inhalts-Hash); eine Auswahl `{hunk, header?, hash?}` mit diesen Werten wird abgelehnt (-32004), wenn sich der Diff inzwischen geändert hat (z.B. durch Formatierung beim Speichern) – statt still einen anderen Hunk zu nehmen. Ohne `header`/`hash` gilt nur der Index (rückwärtskompatibel). Clients sollten beide mitschicken.
 
 | Methode | Parameter | Ergebnis |
 |---|---|---|
 | `git.status` | `ignored?`, `noUntracked?`, `paths?` | Branch, Upstream, ahead/behind, `files[{path, index, worktree, staged, unstaged}]` |
-| `git.diff` | `base?`, `target?`, `staged?`, `context?`, `paths?`, `raw?` | Dateien mit Hunks oder Rohtext |
+| `git.diff` | `base?`, `target?`, `staged?`, `context?`, `paths?`, `raw?` | Dateien mit Hunks (`header`, `hash`, `lines`) oder Rohtext |
 | `git.log` | `rev?`, `all?`, `skip?`, `max?` (Standard 100), `path?`, `follow?` | Commits |
 | `git.branches` | – | Branches |
 | `git.commit` | `message`, `stage?`, `amend?`, `allowEmpty?`, `noVerify?`, `signOff?` | `hash` (Guard `commit.before` speichert offene Dokumente, Filter `commit.message`) |
-| `git.stage` / `git.unstage` | `paths?` oder `path` + `hunks?: [{hunk, lines?}]` (Indizes aus `git.diff`: stage ohne Basis, unstage mit `staged`) | Status |
+| `git.stage` / `git.unstage` | `paths?` oder `path` + `hunks?: [{hunk, lines?, header?, hash?}]` (Indizes aus `git.diff`: stage ohne Basis, unstage mit `staged`) | Status |
 | `git.discard` | `path`, `hunks` oder `all: true` | `path`, `reloaded` (offenes, ungeändertes Dokument neu geladen, ein Undo-Schritt) |
-| `git.commitSelection` | `message`, `paths?`, `hunks?: [{path, hunks}]` (Indizes aus `git.diff` mit `base: "HEAD"`), `amend?`, `push?`, `noVerify?`, `signOff?`, `allowEmpty?` | `hash`, `message`, `pushed`, `push?`, `pushError?: {kind, message}`; Guard `commit.before` (Autosave), Filter `commit.message` |
+| `git.commitSelection` | `message`, `paths?`, `hunks?: [{path, hunks}]` (Indizes aus `git.diff` mit `base: "HEAD"`), `amend?`, `push?`, `noVerify?`, `signOff?`, `allowEmpty?` | `hash`, `message`, `pushed`, `push?`, `pushError?: {kind, message}`; Guard `commit.before` (Autosave; schlägt das Speichern fehl, läuft es in den Timeout oder stürzt es ab, wird der Commit abgelehnt), Filter `commit.message`. Während Merge/Rebase/Cherry-pick/Revert/am abgelehnt (-32004; `git.commit` committet den ganzen Index). Nur-gestagte Inhalte berührter Dateien bleiben im Index erhalten |
 | `git.push` | `remote?`, `branch?`, `remoteBranch?`, `setUpstream?`, `forceWithLease?`, `tags?` | `remote`, `branch`, `remoteBranch`; Fehler -32000 mit `data: {kind, message, stderr}`, `kind` = `rejected`, `remoteRejected`, `auth`, `network`, `repoNotFound`, `noRemote`, `failed` |
 | `git.recentMessages` | `max?` (20) | Nachrichten, neueste zuerst |
 | `git.gutter` | `path`, `base?` (`head`/`index`) | `ranges[{kind, start, end, baseStart, baseEnd}]` (1-basiert, `end` exklusiv; gelöscht: `start == end`), aus dem Pufferinhalt |

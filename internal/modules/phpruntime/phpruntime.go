@@ -438,6 +438,12 @@ type PHPVersionParams struct {
 	// one. NoInterpreter skips asking an interpreter at all.
 	Interpreter   string `json:"interpreter,omitempty"`
 	NoInterpreter bool   `json:"noInterpreter,omitempty"`
+	// Start allows starting a container of a compose interpreter
+	// (`docker compose run`, which may pull an image) when the service is
+	// not running. Only pass it for an explicit user action; by default
+	// php.version only uses `exec` on a running container and otherwise
+	// falls back to composer.json with the hint container-not-running.
+	Start bool `json:"start,omitempty"`
 }
 
 // PHPVersionResult is the result of "php.version".
@@ -448,6 +454,40 @@ type PHPVersionResult struct {
 	// platform (composer config.platform.php) or require (require.php).
 	Source string `json:"source"`
 	Detail string `json:"detail,omitempty"`
+	// Hint explains a fallback, e.g. code container-not-running when the
+	// selected compose service is stopped (the version then comes from
+	// composer.json).
+	Hint *HintInfo `json:"hint,omitempty"`
+}
+
+// HintContainerNotRunning is the hint code of php.version and
+// runtime.diagnose when the selected compose service is not running and
+// the probe did not start it.
+const HintContainerNotRunning = "container-not-running"
+
+// probeInterpreter returns i for an automatic probe: compose interpreters
+// are restricted to `exec` unless start is true (see
+// compose.Interpreter.ExecOnly). The second result is the compose
+// interpreter to ask for the running state when the probe fails.
+func probeInterpreter(i interp.Interpreter, start bool) (interp.Interpreter, *compose.Interpreter) {
+	ci, ok := i.(*compose.Interpreter)
+	if !ok || start {
+		return i, nil
+	}
+	return ci.ExecOnly(), ci
+}
+
+// stoppedHint returns the container-not-running hint if ci's service is
+// known to be stopped.
+func stoppedHint(ctx context.Context, ci *compose.Interpreter) *HintInfo {
+	if ci == nil {
+		return nil
+	}
+	if running, err := ci.Running(ctx); err != nil || running {
+		return nil
+	}
+	return &HintInfo{"info", HintContainerNotRunning,
+		fmt.Sprintf("container not running: compose service %q is stopped; start it for the exact PHP version (no container is started automatically)", ci.Service)}
 }
 
 // Runner adapts any interp.Interpreter to phpver.Runner. For a compose
@@ -473,6 +513,7 @@ func (m *Module) phpVersion(ctx context.Context, p PHPVersionParams) (PHPVersion
 		}
 		opts.Override = &v
 	}
+	var probed *compose.Interpreter
 	if !p.NoInterpreter && opts.Override == nil {
 		id := p.Interpreter
 		if id == "" {
@@ -483,6 +524,9 @@ func (m *Module) phpVersion(ctx context.Context, p PHPVersionParams) (PHPVersion
 			if err != nil {
 				return PHPVersionResult{}, err
 			}
+			// Privacy: never start a container for this (often automatic)
+			// query unless explicitly allowed.
+			i, probed = probeInterpreter(i, p.Start)
 			opts.Runner = Runner{i}
 		} else if locals := interp.Discover(ctx, m.app.Options().Interp); len(locals) > 0 {
 			// No explicit choice: the concept puts the real interpreter
@@ -491,13 +535,20 @@ func (m *Module) phpVersion(ctx context.Context, p PHPVersionParams) (PHPVersion
 		}
 	}
 	res, err := phpver.Detect(ctx, opts)
+	var hint *HintInfo
+	if probed != nil && (err != nil || res.Source != phpver.SourceInterpreter) {
+		hint = stoppedHint(ctx, probed)
+	}
 	if err != nil {
+		if hint != nil {
+			err = fmt.Errorf("%s: %w", hint.Message, err)
+		}
 		if errors.Is(err, phpver.ErrUnknown) {
 			return PHPVersionResult{}, api.Errorf(api.CodeNotFound, "%w", err)
 		}
 		return PHPVersionResult{}, api.Errorf(api.CodeFailed, "php version: %w", err)
 	}
-	return PHPVersionResult{Version: res.Version.String(), Short: res.Version.Short(), Source: res.Source.String(), Detail: res.Detail}, nil
+	return PHPVersionResult{Version: res.Version.String(), Short: res.Version.Short(), Source: res.Source.String(), Detail: res.Detail, Hint: hint}, nil
 }
 
 // MappingsResult is the result of "runtime.mappings.get/set".
@@ -609,6 +660,10 @@ func (m *Module) execMode(_ context.Context, p ExecModeParams) (ExecModeResult, 
 type DiagnoseParams struct {
 	// Interpreter to diagnose; empty means the selected one.
 	Interpreter string `json:"interpreter,omitempty"`
+	// Start allows starting a container of a compose interpreter
+	// (`docker compose run`); by default only `exec` on a running
+	// container is used (hint container-not-running otherwise).
+	Start bool `json:"start,omitempty"`
 }
 
 // Diagnosis is the result of "runtime.diagnose".
@@ -664,7 +719,12 @@ func (m *Module) diagnose(ctx context.Context, p DiagnoseParams) (Diagnosis, err
 			}
 		}
 	}
+	i, probed := probeInterpreter(i, p.Start)
 	if res.Version, err = i.Version(ctx); err != nil {
+		if h := stoppedHint(ctx, probed); h != nil {
+			res.Hints = append(res.Hints, *h)
+			return res, nil
+		}
 		res.Hints = append(res.Hints, HintInfo{"warning", HintInterpreterError, fmt.Sprintf("interpreter does not answer: %v", err)})
 		return res, nil
 	}

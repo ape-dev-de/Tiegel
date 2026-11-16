@@ -116,6 +116,7 @@ func (a *App) projectInfo(_ context.Context, _ struct{}) (ProjectInfo, error) {
 }
 
 func (a *App) projectClose(_ context.Context, _ struct{}) (ProjectInfo, error) {
+	a.preserveUnsaved("unsaved on project close", nil)
 	a.mu.Lock()
 	pr := a.project
 	a.project = nil

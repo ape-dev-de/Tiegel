@@ -64,9 +64,37 @@ func (m *Module) rels(r *gitcli.Repo, ps []string) ([]string, error) {
 // HunkSel selects one hunk of a file diff (index into the hunks of the
 // corresponding git.diff result) and optionally single lines of it (indexes
 // into the hunk's lines; context lines are always kept).
+//
+// Header and Hash are optional (backwards compatible) but recommended:
+// when given they must match the hunk's header and hash in the current
+// diff, otherwise the operation fails with CodeConflict instead of acting
+// on a different change (e.g. after a format-on-save shifted the hunks).
 type HunkSel struct {
-	Hunk  int   `json:"hunk"`
-	Lines []int `json:"lines,omitempty"`
+	Hunk   int    `json:"hunk"`
+	Lines  []int  `json:"lines,omitempty"`
+	Header string `json:"header,omitempty"`
+	Hash   string `json:"hash,omitempty"`
+}
+
+// checkSel verifies the optional Header/Hash of each selection against the
+// current diff.
+func checkSel(f *gitcli.FileDiff, hs []HunkSel) error {
+	for _, h := range hs {
+		if h.Header == "" && h.Hash == "" {
+			continue
+		}
+		if h.Hunk < 0 || h.Hunk >= len(f.Hunks) {
+			return api.Errorf(api.CodeConflict, "%s: hunk %d no longer exists; refresh the diff", f.Path(), h.Hunk)
+		}
+		cur := &f.Hunks[h.Hunk]
+		if h.Header != "" && h.Header != cur.Header() {
+			return api.Errorf(api.CodeConflict, "%s: hunk %d changed (was %q, now %q); refresh the diff", f.Path(), h.Hunk, h.Header, cur.Header())
+		}
+		if h.Hash != "" && h.Hash != cur.Hash() {
+			return api.Errorf(api.CodeConflict, "%s: hunk %d changed (hash mismatch); refresh the diff", f.Path(), h.Hunk)
+		}
+	}
+	return nil
 }
 
 func toSel(hs []HunkSel) []gitcli.HunkSelection {
@@ -128,6 +156,9 @@ func (m *Module) stageOp(ctx context.Context, p StageParams, unstage bool) (GitS
 		}
 		f, err := m.fileDiff(ctx, r, rel, gitcli.DiffOptions{Staged: unstage}, !unstage)
 		if err != nil {
+			return GitStatus{}, err
+		}
+		if err := checkSel(f, p.Hunks); err != nil {
 			return GitStatus{}, err
 		}
 		if unstage {
@@ -204,20 +235,33 @@ func (m *Module) gitDiscard(ctx context.Context, p DiscardParams) (DiscardResult
 	if err != nil {
 		return DiscardResult{}, err
 	}
+	if err := checkSel(f, p.Hunks); err != nil {
+		return DiscardResult{}, err
+	}
 	sel := toSel(p.Hunks)
 	if p.All {
 		sel = f.SelectAll()
 	}
-	if err := r.DiscardSelection(ctx, f, sel); err != nil {
-		return DiscardResult{}, gitErr(err)
+	// Write and reload under the save lock, so a save in flight cannot
+	// overwrite the result with an older snapshot.
+	var reloaded bool
+	if err := m.app.Exclusive(func() error {
+		if err := r.DiscardSelection(ctx, f, sel); err != nil {
+			return gitErr(err)
+		}
+		reloaded = m.reload(p.Path)
+		return nil
+	}); err != nil {
+		return DiscardResult{}, err
 	}
 	m.changed("discard", rel)
-	return DiscardResult{Path: rel, Reloaded: m.reload(p.Path)}, nil
+	return DiscardResult{Path: rel, Reloaded: reloaded}, nil
 }
 
 // reload replaces the content of an open, unmodified document with the
 // file on disk as one undo step and marks it saved. It reports whether the
-// document was updated.
+// document was updated. Callers hold the save lock (api.App.Exclusive)
+// together with the write that changed the file.
 func (m *Module) reload(path string) bool {
 	d, err := m.app.Document(path)
 	if err != nil {
@@ -302,6 +346,16 @@ func (m *Module) gitCommitSelection(ctx context.Context, p CommitSelectionParams
 	if len(p.Paths) == 0 && len(p.Hunks) == 0 && !p.Amend && !p.AllowEmpty {
 		return CommitSelectionResult{}, api.Errorf(api.CodeInvalidParams, "nothing selected (paths or hunks)")
 	}
+	// Refuse early (before the save guard runs): a selection commit during
+	// a merge/rebase/cherry-pick/revert would drop the operation's changes.
+	info, err := r.Info(ctx)
+	if err != nil {
+		return CommitSelectionResult{}, gitErr(err)
+	}
+	if info.State != gitcli.StateClean && info.State != gitcli.StateBisecting {
+		return CommitSelectionResult{}, api.Errorf(api.CodeConflict,
+			"git.commitSelection is not possible while %s is in progress; finish or abort it first (git.commit commits the whole index)", info.State)
+	}
 	all := append([]string(nil), p.Paths...)
 	for _, fh := range p.Hunks {
 		all = append(all, fh.Path)
@@ -326,6 +380,9 @@ func (m *Module) gitCommitSelection(ctx context.Context, p CommitSelectionParams
 		}
 		f, err := m.fileDiff(ctx, r, rel, gitcli.DiffOptions{Base: "HEAD"}, true)
 		if err != nil {
+			return CommitSelectionResult{}, err
+		}
+		if err := checkSel(f, fh.Hunks); err != nil {
 			return CommitSelectionResult{}, err
 		}
 		patch, err := f.Patch(toSel(fh.Hunks))
@@ -613,11 +670,16 @@ func (m *Module) gitCheckout(ctx context.Context, p CheckoutParams) (GitStatus, 
 	if p.Ref == "" {
 		return GitStatus{}, api.Errorf(api.CodeInvalidParams, "ref is required")
 	}
-	if err := r.Checkout(ctx, p.Ref); err != nil {
-		return GitStatus{}, gitErr(err)
+	if err := m.app.Exclusive(func() error {
+		if err := r.Checkout(ctx, p.Ref); err != nil {
+			return gitErr(err)
+		}
+		m.reloadAll()
+		return nil
+	}); err != nil {
+		return GitStatus{}, err
 	}
 	m.changed("checkout")
-	m.reloadAll()
 	return m.gitStatus(ctx, GitStatusParams{})
 }
 
@@ -639,13 +701,18 @@ func (m *Module) gitCreateBranch(ctx context.Context, p BranchParams) ([]GitBran
 	if p.Name == "" {
 		return nil, api.Errorf(api.CodeInvalidParams, "name is required")
 	}
-	if err := r.CreateBranch(ctx, p.Name, p.Start, p.Checkout); err != nil {
-		return nil, gitErr(err)
+	if err := m.app.Exclusive(func() error {
+		if err := r.CreateBranch(ctx, p.Name, p.Start, p.Checkout); err != nil {
+			return gitErr(err)
+		}
+		if p.Checkout {
+			m.reloadAll()
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	m.changed("createBranch")
-	if p.Checkout {
-		m.reloadAll()
-	}
 	return m.gitBranches(ctx, struct{}{})
 }
 
@@ -799,9 +866,16 @@ func (m *Module) gitResolve(ctx context.Context, p ResolveParams) (ResolveResult
 		}
 		content = mr.Render(markerLabels)
 	}
-	if err := r.ResolveConflict(ctx, rel, content); err != nil {
-		return ResolveResult{}, gitErr(err)
+	var reloaded bool
+	if err := m.app.Exclusive(func() error {
+		if err := r.ResolveConflict(ctx, rel, content); err != nil {
+			return gitErr(err)
+		}
+		reloaded = m.reload(p.Path)
+		return nil
+	}); err != nil {
+		return ResolveResult{}, err
 	}
 	m.changed("resolve", rel)
-	return ResolveResult{Path: rel, Content: string(content), Reloaded: m.reload(p.Path)}, nil
+	return ResolveResult{Path: rel, Content: string(content), Reloaded: reloaded}, nil
 }

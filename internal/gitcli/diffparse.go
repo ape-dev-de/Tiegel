@@ -3,6 +3,8 @@ package gitcli
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -47,6 +49,26 @@ func (h *Hunk) Header() string {
 		s += " " + h.Section
 	}
 	return s
+}
+
+// Hash identifies the hunk's content: a short hex digest of its header
+// and all lines (kind, text and missing-newline marker). Clients echo it
+// in a selection to detect that the diff changed in between (for example
+// after a format-on-save), so hunk indexes cannot silently point to other
+// changes.
+func (h *Hunk) Hash() string {
+	d := sha256.New()
+	d.Write([]byte(h.Header()))
+	d.Write([]byte{'\n'})
+	for _, l := range h.Lines {
+		d.Write([]byte{byte(l.Kind)})
+		d.Write([]byte(l.Text))
+		if l.NoEOL {
+			d.Write([]byte("\n\\"))
+		}
+		d.Write([]byte{'\n'})
+	}
+	return hex.EncodeToString(d.Sum(nil)[:8])
 }
 
 func rangeStr(start, n int) string {

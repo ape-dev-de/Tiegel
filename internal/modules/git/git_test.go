@@ -3,13 +3,17 @@ package git
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
+	"github.com/ape-dev-de/tiegel/internal/core/autosave"
 	"github.com/ape-dev-de/tiegel/internal/core/bus"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/gitcli"
@@ -416,3 +420,125 @@ func TestErrorsAndModuleSwitch(t *testing.T) {
 type busEvent = bus.Event
 
 func pushKind(k int) gitcli.PushErrorKind { return gitcli.PushErrorKind(k) }
+
+// Review 2026-11-16 #1: git.commitSelection during a merge (git merge
+// --no-commit) is refused with CodeConflict; HEAD and the merge stay.
+func TestCommitSelectionRefusedDuringMerge(t *testing.T) {
+	a, dir := setup(t)
+	modtest.Git(t, dir, "checkout", "-q", "-b", "feature")
+	write(t, dir, "f.txt", "feature\n")
+	modtest.Git(t, dir, "add", "f.txt")
+	modtest.Git(t, dir, "commit", "-q", "-m", "feature")
+	modtest.Git(t, dir, "checkout", "-q", "main")
+	write(t, dir, "b.txt", "main\n")
+	modtest.Git(t, dir, "commit", "-q", "-am", "main")
+	head := strings.TrimSpace(modtest.Git(t, dir, "rev-parse", "HEAD"))
+	modtest.Git(t, dir, "merge", "--no-commit", "--no-ff", "-q", "feature")
+	write(t, dir, "a.txt", twoHunks())
+
+	modtest.WantCode(t, a, "git.commitSelection", CommitSelectionParams{
+		Message: "selection", Hunks: []FileHunks{{Path: "a.txt", Hunks: []HunkSel{{Hunk: 0}}}},
+	}, api.CodeConflict)
+	if got := strings.TrimSpace(modtest.Git(t, dir, "rev-parse", "HEAD")); got != head {
+		t.Fatalf("HEAD moved: %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git", "MERGE_HEAD")); err != nil {
+		t.Fatalf("merge state lost: %v", err)
+	}
+}
+
+// Review 2026-11-16 #6: a hunk selection echoing header/hash is refused
+// when the diff changed in between (e.g. format-on-save added a hunk), so
+// the index cannot silently point to a different change.
+func TestHunkSelectionHashValidation(t *testing.T) {
+	a, dir := setup(t)
+	var long strings.Builder
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&long, "line %d\n", i)
+	}
+	orig := long.String()
+	write(t, dir, "a.txt", orig)
+	modtest.Git(t, dir, "commit", "-q", "-am", "long")
+	edit := func(s string, n int) string {
+		return strings.Replace(s, fmt.Sprintf("line %d\n", n), fmt.Sprintf("LINE %d\n", n), 1)
+	}
+	write(t, dir, "a.txt", edit(edit(orig, 1), 30))
+	var d GitDiffResult
+	modtest.Call(t, a, "git.diff", GitDiffParams{Base: "HEAD", Paths: []string{"a.txt"}}, &d)
+	if len(d.Files) != 1 || len(d.Files[0].Hunks) != 2 {
+		t.Fatalf("diff %+v", d)
+	}
+	want := d.Files[0].Hunks[1] // the line 30 change
+	if want.Hash == "" {
+		t.Fatal("hunk without hash")
+	}
+	sel := HunkSel{Hunk: 1, Header: want.Header, Hash: want.Hash}
+
+	// A formatter changes line 15: hunk 1 is now that change.
+	write(t, dir, "a.txt", edit(edit(edit(orig, 1), 15), 30))
+	modtest.WantCode(t, a, "git.commitSelection", CommitSelectionParams{
+		Message: "line 30 only", Hunks: []FileHunks{{Path: "a.txt", Hunks: []HunkSel{sel}}},
+	}, api.CodeConflict)
+	modtest.WantCode(t, a, "git.stage", StageParams{Path: "a.txt", Hunks: []HunkSel{{Hunk: 1, Hash: want.Hash}}}, api.CodeConflict)
+	modtest.WantCode(t, a, "git.discard", DiscardParams{Path: "a.txt", Hunks: []HunkSel{{Hunk: 7, Hash: want.Hash}}}, api.CodeConflict)
+	if got := strings.TrimSpace(modtest.Git(t, dir, "rev-list", "--count", "HEAD")); got != "2" {
+		t.Fatalf("a commit was created: %s", got)
+	}
+
+	// With a fresh diff the selection works.
+	modtest.Call(t, a, "git.diff", GitDiffParams{Base: "HEAD", Paths: []string{"a.txt"}}, &d)
+	h := d.Files[0].Hunks[2]
+	var res CommitSelectionResult
+	modtest.Call(t, a, "git.commitSelection", CommitSelectionParams{
+		Message: "line 30 only", Hunks: []FileHunks{{Path: "a.txt", Hunks: []HunkSel{{Hunk: 2, Header: h.Header, Hash: h.Hash}}}},
+	}, &res)
+	var show ShowResult
+	modtest.Call(t, a, "git.show", ShowParams{Path: "a.txt"}, &show)
+	if show.Content != edit(orig, 30) {
+		t.Fatalf("committed %q", show.Content)
+	}
+}
+
+// Review 2026-11-16 #12: git.discard wrote the file and reloaded the
+// document outside the save lock; a save in flight then overwrote the
+// discarded file while the buffer showed the reloaded content as saved.
+func TestDiscardWaitsForSaveInFlight(t *testing.T) {
+	a, dir := setup(t)
+	write(t, dir, "a.txt", twoHunks())
+	modtest.Call(t, a, "doc.open", api.DocOpenParams{Path: "a.txt"}, nil)
+
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	autosave.BeforeSave.On(a.Hooks(), 0, func(_ context.Context, e autosave.SaveEvent) (autosave.SaveEvent, error) {
+		if e.Trigger == autosave.TriggerManual {
+			once.Do(func() { close(started); <-release })
+		}
+		return e, nil
+	})
+	saved := make(chan error, 1)
+	go func() {
+		_, err := a.CallJSON(context.Background(), "doc.save", api.PathParams{Path: "a.txt"})
+		saved <- err
+	}()
+	<-started
+	discarded := make(chan error, 1)
+	go func() {
+		_, err := a.CallJSON(context.Background(), "git.discard", DiscardParams{Path: "a.txt", All: true})
+		discarded <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	for _, ch := range []chan error{saved, discarded} {
+		select {
+		case err := <-ch:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("timeout")
+		}
+	}
+	if disk, buf := read(t, dir, "a.txt"), docText(t, a, "a.txt"); disk != ten || buf != ten {
+		t.Fatalf("disk %q, buffer %q; want the discarded (HEAD) content in both", disk, buf)
+	}
+}

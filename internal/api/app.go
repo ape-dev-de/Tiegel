@@ -76,6 +76,7 @@ type App struct {
 	project *project
 	docs    map[string]*Doc
 	claims  map[string][]string
+	docSeq  uint64 // last document generation, guarded by mu
 }
 
 // New creates an App with the built-in namespaces and the extensions from
@@ -158,10 +159,12 @@ func New(opts Options) (*App, error) {
 }
 
 // Close stops the modules, closes the project and shuts the bus down.
-// Unsaved documents are discarded.
+// Unsaved documents are not saved; their content is preserved as recovery
+// points in Local History (see "history.recovery").
 func (a *App) Close() error {
 	var errs []error
 	a.saver.Close()
+	a.preserveUnsaved("unsaved on exit", nil)
 	if err := a.modules.Stop(); err != nil {
 		errs = append(errs, err)
 	}

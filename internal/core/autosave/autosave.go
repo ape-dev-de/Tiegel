@@ -45,6 +45,8 @@ const (
 	TriggerBeforeDebug  Trigger = "beforeDebug"
 	TriggerBeforeCommit Trigger = "beforeCommit"
 	TriggerIdle         Trigger = "idle"
+	// TriggerClose saves before the application (window) closes.
+	TriggerClose Trigger = "close"
 )
 
 // Doc is a snapshot of an unsaved document.
@@ -55,7 +57,17 @@ type Doc struct {
 	// DirtyDocs.Save can avoid marking a document clean that changed in
 	// the meantime.
 	Version uint64
+	// Instance optionally identifies the open document instance the
+	// snapshot was taken from (0 = address by path only). DirtyDocs.Save
+	// returns ErrDocGone instead of writing when that instance was closed
+	// meanwhile (discarded content must not be written, and versions of a
+	// reopened document must not be confused with the old ones).
+	Instance uint64
 }
+
+// ErrDocGone is returned by DirtyDocs.Save when the document instance of
+// the snapshot is no longer open. SaveAll skips such documents silently.
+var ErrDocGone = errors.New("autosave: document is no longer open")
 
 // DirtyDocs is the editor-side view autosave works with.
 type DirtyDocs interface {
@@ -64,7 +76,9 @@ type DirtyDocs interface {
 	// Save writes doc.Content to doc.Path (atomically) and marks the
 	// document clean if its version is still doc.Version. doc.Content may
 	// differ from the snapshot when a file.beforeSave filter changed it;
-	// the implementation should then update the buffer as well.
+	// the implementation should then update the buffer as well. It
+	// returns ErrDocGone (without writing) if doc.Instance is set and that
+	// instance is no longer open.
 	Save(ctx context.Context, doc Doc) error
 }
 
@@ -154,6 +168,11 @@ type Manager struct {
 	lastAct time.Time
 }
 
+// ErrEmptyFilterResult is reported (Config.OnError) when the
+// file.beforeSave filters turn non-empty content into empty content; the
+// unfiltered content is saved instead.
+var ErrEmptyFilterResult = errors.New("filter returned empty content for non-empty input")
+
 // ErrNoDocs is returned by New when Config.Docs is nil.
 var ErrNoDocs = errors.New("autosave: Config.Docs is required")
 
@@ -184,11 +203,37 @@ func (m *Manager) SaveAll(ctx context.Context, trigger Trigger) error {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(append(errs, err)...)
 		}
-		if _, err := m.saveLocked(ctx, d, trigger); err != nil {
+		if _, err := m.saveLocked(ctx, d, trigger); err != nil && !errors.Is(err, ErrDocGone) {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// SaveWith runs the save pipeline for the document snapshot returns. The
+// snapshot is taken while holding the save lock, so it can never be older
+// than content another save (e.g. autosave) has written in the meantime;
+// an explicit save with a stale copy would otherwise overwrite newer
+// content on disk while the buffer stays marked as saved.
+func (m *Manager) SaveWith(ctx context.Context, trigger Trigger, snapshot func() (Doc, error)) (SavedEvent, error) {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+	d, err := snapshot()
+	if err != nil {
+		return SavedEvent{}, err
+	}
+	return m.saveLocked(ctx, d, trigger)
+}
+
+// Exclusive runs fn while no save runs: it holds the lock that serialises
+// all saves of m. Use it for other writers of document files (restoring a
+// revision, reloading after a git operation, closing a document), so that
+// a save in flight cannot overwrite their result with an older snapshot.
+// fn must not save through m (that would deadlock).
+func (m *Manager) Exclusive(fn func() error) error {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+	return fn()
 }
 
 // SaveDoc runs the save pipeline for a single document (e.g. explicit
@@ -209,10 +254,22 @@ func (m *Manager) saveLocked(ctx context.Context, d Doc, trigger Trigger) (Saved
 		if err != nil {
 			m.cfg.OnError(fmt.Errorf("autosave: %s: before-save filters: %w", d.Path, err))
 		}
-		content = ev.Content
+		if len(ev.Content) == 0 && len(content) > 0 {
+			// A filter that returns an empty event (e.g. a zero SaveEvent
+			// on an internal error) would empty file and buffer. Treat it
+			// as a filter failure and save the unfiltered content.
+			m.cfg.OnError(fmt.Errorf("autosave: %s: before-save filters: %w", d.Path, ErrEmptyFilterResult))
+		} else {
+			content = ev.Content
+		}
 	}
 
-	if err := m.cfg.Docs.Save(ctx, Doc{Path: d.Path, Content: content, Version: d.Version}); err != nil {
+	// A cancelled or timed-out save must not write anymore: the caller
+	// (e.g. the commit guard) has already given up on it.
+	if err := ctx.Err(); err != nil {
+		return SavedEvent{}, fmt.Errorf("autosave: %s: %w", d.Path, err)
+	}
+	if err := m.cfg.Docs.Save(ctx, Doc{Path: d.Path, Content: content, Version: d.Version, Instance: d.Instance}); err != nil {
 		return SavedEvent{}, fmt.Errorf("autosave: save %s: %w", d.Path, err)
 	}
 
@@ -328,11 +385,13 @@ const AttachTimeout = 30 * time.Second
 
 // SaveBeforeGuard registers a guard hook on g that saves all dirty
 // documents first (e.g. on "commit.before" with TriggerBeforeCommit). If a
-// document cannot be saved, the guard vetoes the operation.
+// document cannot be saved, the guard vetoes the operation. The guard
+// fails closed: a timeout or panic vetoes as well, so the operation never
+// runs on files whose save did not complete.
 func SaveBeforeGuard[T any](m *Manager, r *hooks.Registry, g hooks.Guard[T], trigger Trigger) (remove func()) {
 	return g.On(r, AttachPriority, func(ctx context.Context, _ T) error {
 		return m.SaveAll(ctx, trigger)
-	}, hooks.WithOwner("autosave"), hooks.WithTimeout(AttachTimeout))
+	}, hooks.WithOwner("autosave"), hooks.WithTimeout(AttachTimeout), hooks.WithFailClosed())
 }
 
 // SaveOnAction registers an action hook on a that saves all dirty

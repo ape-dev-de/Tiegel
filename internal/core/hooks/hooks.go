@@ -151,6 +151,15 @@ func WithTimeout(d time.Duration) HookOption {
 	return func(e *entry) { e.timeout = d; e.hasTimeout = true }
 }
 
+// WithFailClosed makes a guard hook veto the operation when it times out,
+// panics or is registered with the wrong type, instead of being skipped
+// (see [Guard.Check]). Core guards whose skipping could lose data (e.g.
+// "save all documents before commit") use it. It has no effect on actions
+// and filters.
+func WithFailClosed() HookOption {
+	return func(e *entry) { e.failClosed = true }
+}
+
 // WithOwner tags a hook with its owner (usually a module ID), used in error
 // reports and by Registry.RemoveOwner.
 func WithOwner(owner string) HookOption {
@@ -175,6 +184,7 @@ type entry struct {
 	owner      string
 	timeout    time.Duration
 	hasTimeout bool
+	failClosed bool
 	fn         any
 }
 
@@ -407,10 +417,12 @@ func (g Guard[T]) On(r *Registry, priority int, fn func(ctx context.Context, v T
 // Check runs the guard's hooks in order. The first hook that returns an
 // error aborts the check; Check then returns an *AbortError wrapping it.
 //
-// Guards fail open: a hook that times out, panics or is registered with the
-// wrong type is reported to the registry's error handler and skipped, so a
-// broken plugin cannot permanently block an operation. If ctx is cancelled,
-// Check returns ctx.Err().
+// Guards fail open by default: a hook that times out, panics or is
+// registered with the wrong type is reported to the registry's error
+// handler and skipped, so a broken plugin cannot permanently block an
+// operation. Hooks registered with [WithFailClosed] veto in these cases
+// (an *AbortError wrapping ErrTimeout, ErrPanic or ErrTypeMismatch). If ctx
+// is cancelled, Check returns ctx.Err().
 func (g Guard[T]) Check(ctx context.Context, r *Registry, v T) error {
 	for _, e := range r.snapshot(g.name) {
 		if err := ctx.Err(); err != nil {
@@ -418,7 +430,10 @@ func (g Guard[T]) Check(ctx context.Context, r *Registry, v T) error {
 		}
 		fn, ok := e.fn.(func(context.Context, T) error)
 		if !ok || e.kind != KindGuard {
-			r.mismatch(e, KindGuard)
+			he := r.mismatch(e, KindGuard)
+			if e.failClosed {
+				return &AbortError{HookError: *he}
+			}
 			continue
 		}
 		_, err := run(ctx, r, e, func(c context.Context) (struct{}, error) { return struct{}{}, fn(c, v) })
@@ -427,7 +442,10 @@ func (g Guard[T]) Check(ctx context.Context, r *Registry, v T) error {
 		case ctx.Err() != nil:
 			return ctx.Err()
 		case errors.Is(err, ErrTimeout), errors.Is(err, ErrPanic):
-			r.fail(e, err)
+			he := r.fail(e, err)
+			if e.failClosed {
+				return &AbortError{HookError: *he}
+			}
 		default:
 			return &AbortError{HookError: *r.fail(e, err)}
 		}

@@ -232,3 +232,78 @@ func TestPatchPathsAndDedupe(t *testing.T) {
 func removeFile(tr *testRepo, p string) error {
 	return os.Remove(filepath.Join(tr.dir, p))
 }
+
+// Review 2026-11-16 #1: a selection commit during a merge (git merge
+// --no-commit) started from HEAD, dropped the merged changes and still
+// recorded the second parent.
+func TestCommitSelectionRefusedDuringMerge(t *testing.T) {
+	tr := newTestRepo(t)
+	ctx := ctxT(t)
+	tr.write("a.txt", "a\n")
+	tr.commitAll("init")
+	tr.git("checkout", "-q", "-b", "feature")
+	tr.write("feature.txt", "from feature\n")
+	tr.commitAll("feature")
+	tr.git("checkout", "-q", "main")
+	tr.write("a.txt", "a2\n")
+	before := tr.commitAll("main change")
+	tr.git("merge", "--no-commit", "--no-ff", "-q", "feature")
+	tr.write("local.txt", "local\n")
+
+	_, err := tr.r.CommitSelection(ctx, CommitOptions{Message: "selection"}, CommitSelection{Paths: []string{"local.txt"}})
+	if !errors.Is(err, ErrOperationInProgress) {
+		t.Fatalf("CommitSelection during merge: err = %v, want ErrOperationInProgress", err)
+	}
+	if got := tr.git("rev-parse", "HEAD"); got != before {
+		t.Fatalf("HEAD moved to %s", got)
+	}
+	// The merge is still in progress and its changes are staged.
+	if got := tr.git("diff", "--cached", "--name-only"); got != "feature.txt" {
+		t.Errorf("staged merge changes: %q", got)
+	}
+}
+
+// Review 2026-11-16 #4: content that was only staged (index differs from
+// both HEAD and work tree) was destroyed by the index reset after a
+// partial commit of another hunk of the same file.
+func TestCommitSelectionKeepsStagedOnlyContent(t *testing.T) {
+	tr := newTestRepo(t)
+	ctx := ctxT(t)
+	orig := numbered(30)
+	tr.write("a.txt", orig)
+	tr.commitAll("init")
+	// Stage a version of line 2 that exists neither in HEAD nor later in
+	// the work tree.
+	tr.write("a.txt", replaceLine(orig, 2, "STAGED\n"))
+	tr.git("add", "a.txt")
+	work := replaceLine(replaceLine(orig, 2, "WORK\n"), 28, "TWENTY-EIGHT\n")
+	tr.write("a.txt", work)
+
+	files, err := tr.r.Diff(ctx, DiffOptions{Base: "HEAD", Paths: []string{"a.txt"}})
+	if err != nil || len(files) != 1 || len(files[0].Hunks) != 2 {
+		t.Fatalf("diff: %+v %v", files, err)
+	}
+	patch, err := files[0].Patch([]HunkSelection{{Hunk: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.r.CommitSelection(ctx, CommitOptions{Message: "line 28"}, CommitSelection{Patches: [][]byte{patch}}); err != nil {
+		t.Fatal(err)
+	}
+	head, _ := tr.r.ShowFile(ctx, "HEAD", "a.txt")
+	if string(head) != replaceLine(orig, 28, "TWENTY-EIGHT\n") {
+		t.Errorf("committed content:\n%s", head)
+	}
+	index := tr.git("show", ":a.txt")
+	if !strings.Contains(index, "STAGED") {
+		t.Fatalf("staged-only content lost, index:\n%s", index)
+	}
+	// The committed change is part of the index, so it is not shown as a
+	// staged revert.
+	if !strings.Contains(index, "TWENTY-EIGHT") {
+		t.Errorf("committed change missing in index:\n%s", index)
+	}
+	if tr.read("a.txt") != work {
+		t.Error("work tree modified")
+	}
+}

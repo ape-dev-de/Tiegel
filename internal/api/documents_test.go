@@ -104,7 +104,8 @@ func TestDocEditing(t *testing.T) {
 		t.Fatalf("list %+v", list)
 	}
 	var cr DocCloseResult
-	call(t, a, "doc.close", PathParams{Path: "a.php"}, &cr)
+	wantCode(t, a, "doc.close", PathParams{Path: "a.php"}, CodeConflict) // unsaved changes
+	call(t, a, "doc.close", DocCloseParams{Path: "a.php", Discard: true}, &cr)
 	if !cr.Discarded {
 		t.Fatal("close should report discarded changes")
 	}

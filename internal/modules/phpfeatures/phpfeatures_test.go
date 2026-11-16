@@ -146,7 +146,7 @@ func TestBackgroundDiagnostics(t *testing.T) {
 	rec.Wait(t, api.TopicPHPDiagnostics, func(e bus.Event) bool { return diagsOf(e).PHPVersion == "8.0.0" && diagsOf(e).Version == 5 })
 
 	// Closing drops the document.
-	modtest.Call(t, a, "doc.close", api.PathParams{Path: "enum.php"}, nil)
+	modtest.Call(t, a, "doc.close", api.DocCloseParams{Path: "enum.php", Discard: true}, nil)
 	modtest.Eventually(t, "dropped", func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
