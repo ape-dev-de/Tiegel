@@ -100,6 +100,16 @@ Backend-Pakete (`core`, `editor`, `syntax`, `lsp`, `dbgp`, `gitcli`, `compose`, 
 ## M9 – Linux & Windows/WSL
 - Linux-Builds (Wayland/X11), Backend als eigener Prozess über Socket (`internal/api`), Windows-UI ↔ WSL-Backend.
 
+## M10 – Parität & Fenster-Management (Nutzer-Feedback 2026-11-16)
+Grundlage: Funktionsvergleich [vergleich.md](vergleich.md).
+- AP10.1 Fenster-Management: Tool-Fenster links/rechts/unten andockbar mit Seitenleisten-Knöpfen, ein-/ausblenden, Größe ziehen, Editor maximieren, Editor-Split (vertikal/horizontal), mehrere Projektfenster.
+- AP10.2 Projekte: öffnen/wechseln/schließen, zuletzt geöffnete Projekte, „in neuem/diesem Fenster“, Ordner-Dialog.
+- AP10.3 Schrift: Systemschriften (macOS: SF Mono/Menlo, SF Pro) mit Fallback, einstellbar (Familie, Größe, Zeilenhöhe); Emoji/CJK über System-Fallback.
+- AP10.4 Kontextmenüs: Editor, Dateibaum, Tabs, Gutter, Git-Listen; Datei-Operationen (neu, umbenennen, löschen, kopieren, Pfad kopieren, im Finder zeigen) – zuerst als API/Headless.
+- AP10.5 Tree-sitter-Index: projektweiter Symbol-Index (Klassen, Interfaces, Traits, Methoden, extends/implements/use) → Go to Implementation/Definition ohne LSP, Gutter-Icons „implementiert/überschreibt“, Symbol-/Klassen-Suche.
+- AP10.6 Git-Diff-Fenster: eigenes Diff-Fenster (side-by-side, Syntax-Highlighting, Änderungsnavigation), aus Commit-Dialog, Log, Dateibaum, Editor; Datei-Historie, Annotate (blame).
+- Weitere Punkte nach Priorität aus vergleich.md.
+
 ---
 
 ## Ausführungsplan (Wellen)
