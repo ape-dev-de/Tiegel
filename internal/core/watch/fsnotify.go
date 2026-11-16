@@ -1,3 +1,5 @@
+//go:build !windows
+
 package watch
 
 import (
@@ -7,9 +9,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// fsnotifyBackend watches every directory with fsnotify (inotify,
-// ReadDirectoryChangesW, kqueue). New directories are added by the
-// watcher when its rescan finds them.
+// fsnotifyBackend watches every directory with fsnotify (inotify, kqueue).
+// New directories are added by the watcher when its rescan finds them.
+// Windows uses a recursive ReadDirectoryChangesW instead (rdcw_windows.go).
 type fsnotifyBackend struct {
 	w    *Watcher
 	fw   *fsnotify.Watcher
