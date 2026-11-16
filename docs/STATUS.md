@@ -19,7 +19,7 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 | 5.1–5.4 | Interpreter, Compose, PHP-Version, Features | ✅ | interp/compose 96–98 %; syntax (Tree-sitter) + phpver 96 %, 41 Features + 13 Deprecations; Erst-Parse 100k Zeilen ~0,5 s → im Hintergrund |
 | 5.5 | Runtime-UI | ⬜ | |
 | 6.1 | Git-CLI-Wrapper | ✅ | 95 %; Teil-Commit über temporären Index, Myers-Diff, Merge3; git ≥ 2.28 |
-| 6.2–6.5 | Git-UI, Commit-Dialog, Merge | 🟡 | Organismen in Arbeit |
+| 6.2–6.5 | Git-UI, Commit-Dialog, Merge | 🟡 | Organismen ✅ (CommitPanel, DiffView, LogView, BranchList, MergeView); Anbindung in Shell offen; Gutter-Marker offen |
 | 7.1 | DBGp-Server | ✅ | 93 %; Test mit echtem Xdebug offen (lokal nicht installiert) |
 | 7.2–7.3 | Debug-Modul + UI | ⬜ | |
 | M8 | Mac-Paketierung | ⚠️ | Skripte, Universal-App, DMG, release.yml, opt-in Update-Check fertig; echte Signatur/Notarisierung braucht Apple-Zertifikate + Secrets (docs/release.md) |
