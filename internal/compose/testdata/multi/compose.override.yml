@@ -1,0 +1,5 @@
+services:
+  php:
+    environment:
+      XDEBUG_MODE: debug
+      XDEBUG_CONFIG: client_host=localhost

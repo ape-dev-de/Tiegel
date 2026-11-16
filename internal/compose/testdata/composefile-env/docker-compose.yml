@@ -1,0 +1,3 @@
+services:
+  shouldnotload:
+    image: busybox
