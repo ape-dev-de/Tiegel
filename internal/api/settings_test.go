@@ -79,3 +79,32 @@ func TestAutosaveTriggerAndConfig(t *testing.T) {
 	zero := 0
 	call(t, a, "autosave.config", AutosaveConfig{IdleSeconds: &zero}, &cfg)
 }
+
+// Two Apps of one process (two project windows) share the global store:
+// a write of one is visible to the other and not lost by its next write,
+// while each App has its own project.
+func TestSharedGlobalSettings(t *testing.T) {
+	a := newTestApp(t)
+	b, err := New(Options{ConfigDir: a.ConfigDir(), GlobalSettings: a.Settings(), Interp: interpOptions(nil), GOOS: "linux", AppVersion: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	call(t, a, "settings.set", SettingsSetParams{Key: "ui.theme", Value: json.RawMessage(`"light"`)}, nil)
+	call(t, b, "settings.set", SettingsSetParams{Key: "editor.tabWidth", Value: json.RawMessage(`2`)}, nil)
+	var v SettingValue
+	call(t, b, "settings.get", SettingsParams{Key: "ui.theme"}, &v)
+	if string(v.Value) != `"light"` {
+		t.Fatalf("b sees %+v", v)
+	}
+	call(t, a, "settings.get", SettingsParams{Key: "editor.tabWidth"}, &v)
+	if string(v.Value) != `2` {
+		t.Fatalf("a sees %+v", v)
+	}
+	one, two := t.TempDir(), t.TempDir()
+	call(t, a, "project.open", PathParams{Path: one}, nil)
+	call(t, b, "project.open", PathParams{Path: two}, nil)
+	if a.ProjectRoot() == b.ProjectRoot() {
+		t.Fatal("apps share the project")
+	}
+}

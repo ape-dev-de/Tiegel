@@ -54,6 +54,29 @@ func TestCodeLine(t *testing.T) {
 	}
 }
 
+// TestCodeLineFollowsFonts checks that the cached code metrics follow
+// the editor font size and family of the theme.
+func TestCodeLineFollowsFonts(t *testing.T) {
+	base := tokens.Dark(nil)
+	height := func(th *tokens.Theme) (h int) {
+		uitest.Layout(th, area, func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+			h = molecules.CodeLineHeight(gtx, th)
+			return layout.Dimensions{Size: image.Pt(1, 1)}
+		})
+		return h
+	}
+	small := height(base.WithFonts(tokens.FontPrefs{EditorSize: 10}))
+	big := height(base.WithFonts(tokens.FontPrefs{EditorSize: 24}))
+	if big <= small {
+		t.Fatalf("code line height must grow with the font size: %d vs %d", small, big)
+	}
+	// Same size, other family (cached separately; falls back to Go Mono
+	// with the bundled shaper, so the height is the same).
+	if other := height(base.WithFonts(tokens.FontPrefs{EditorFamily: "Menlo", EditorSize: 10})); other != small {
+		t.Errorf("family fallback height %d, want %d", other, small)
+	}
+}
+
 func TestListRow(t *testing.T) {
 	r := &molecules.ListRow{Selected: true, Indent: 16}
 	d := uitest.Smoke(t, "listrow", area, func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {

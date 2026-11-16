@@ -197,7 +197,7 @@ func TestGitEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.waitFor("marker line 1", func() bool { return hasMarker(markers(), 0, editorview.MarkerGitAdded) })
-	s := e.v.editors[file]
+	s := e.v.editors[sessionKey{e.ctl.ActiveGroup(), file}]
 	s.doc.Lock()
 	s.ed.SetCaret(0)
 	s.doc.Unlock()

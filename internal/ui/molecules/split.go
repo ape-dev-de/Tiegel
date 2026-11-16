@@ -99,6 +99,10 @@ func (s *Split) Layout(gtx layout.Context, th *tokens.Theme, first, second layou
 	return layout.Dimensions{Size: size}
 }
 
+// Dragging reports whether the divider is being dragged (hosts persist
+// Ratio once the drag ended).
+func (s *Split) Dragging() bool { return s.drag.Dragging() }
+
 func (s *Split) update(gtx layout.Context, total int) {
 	axis := gesture.Horizontal
 	if s.Vertical {

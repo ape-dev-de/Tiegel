@@ -14,6 +14,6 @@ import (
 const guiAvailable = false
 
 // runGUI reports that the GUI is not part of this build.
-func runGUI(context.Context, *api.App, string) error {
+func runGUI(context.Context, *api.App, api.Options, string) error {
 	return errNoGUI
 }

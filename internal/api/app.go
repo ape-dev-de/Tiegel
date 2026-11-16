@@ -55,6 +55,12 @@ type Options struct {
 	// Extensions register additional namespaces after the built-in ones
 	// (see the package documentation).
 	Extensions []func(a *App) error
+	// GlobalSettings, if set, is the global settings store to use instead
+	// of opening one from ConfigDir. Several App instances in one process
+	// (one per project window) share it so that writes of one App are not
+	// overwritten by another's stale copy; change events are published on
+	// every sharing App's bus. Use App.Settings of the first App.
+	GlobalSettings *settings.Store
 }
 
 // App is the headless core of Tiegel: it owns the kernel services (bus,
@@ -69,6 +75,8 @@ type App struct {
 	modules *module.Registry
 	saver   *autosave.Manager
 	methods *registry
+	// detachGlobal detaches the bus from a shared global store.
+	detachGlobal func()
 
 	initErrs []error
 
@@ -110,9 +118,15 @@ func New(opts Options) (*App, error) {
 	a.hooks = hooks.New(hooks.WithErrorHandler(func(e *hooks.HookError) {
 		log.Warn("hook failed", "hook", e.Hook, "owner", e.Owner, "err", e.Err)
 	}))
-	global, err := settings.OpenGlobal(opts.ConfigDir, b)
-	if err != nil {
-		return nil, fmt.Errorf("api: global settings: %w", err)
+	global := opts.GlobalSettings
+	if global != nil {
+		a.detachGlobal = global.AttachBus(b)
+	} else {
+		g, err := settings.OpenGlobal(opts.ConfigDir, b)
+		if err != nil {
+			return nil, fmt.Errorf("api: global settings: %w", err)
+		}
+		global = g
 	}
 	a.global = global
 	a.modules = module.NewRegistry(module.Env{
@@ -167,6 +181,9 @@ func (a *App) Close() error {
 	a.preserveUnsaved("unsaved on exit", nil)
 	if err := a.modules.Stop(); err != nil {
 		errs = append(errs, err)
+	}
+	if a.detachGlobal != nil {
+		a.detachGlobal()
 	}
 	a.mu.Lock()
 	a.project = nil

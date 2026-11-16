@@ -157,6 +157,35 @@ func TestChangeEvents(t *testing.T) {
 	}
 }
 
+// A store shared by several App instances publishes on every attached bus.
+func TestAttachBus(t *testing.T) {
+	b1, b2 := bus.New(), bus.New()
+	var mu sync.Mutex
+	got := map[*bus.Bus]int{}
+	for _, b := range []*bus.Bus{b1, b2} {
+		Changed.Subscribe(b, func(Change) {
+			mu.Lock()
+			got[b]++
+			mu.Unlock()
+		})
+	}
+	s, err := OpenGlobal(t.TempDir(), b1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detach := s.AttachBus(b2)
+	_ = Set(s, "x", 1)
+	detach()
+	_ = Set(s, "x", 2)
+	_ = b1.Drain(context.Background())
+	_ = b2.Drain(context.Background())
+	mu.Lock()
+	defer mu.Unlock()
+	if got[b1] != 2 || got[b2] != 1 {
+		t.Fatalf("events %v", got)
+	}
+}
+
 func TestProjectStore(t *testing.T) {
 	base := t.TempDir()
 	proj := t.TempDir()

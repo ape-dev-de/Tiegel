@@ -16,8 +16,13 @@ const guiAvailable = true
 // runGUI starts the graphical shell (internal/app/gui). The GUI is only a
 // client of app (D41); Gio is initialised nowhere else, so the headless
 // path never touches a display. gui.Run owns the main goroutine (Gio's
-// app.Main) and exits the process when the window closes, after saving
+// app.Main) and exits the process when the last window closes, after saving
 // modified documents and closing app.
-func runGUI(ctx context.Context, app *api.App, projectPath string) error {
-	return gui.Run(ctx, app, projectPath)
+func runGUI(ctx context.Context, app *api.App, opts api.Options, projectPath string) error {
+	newApp := func() (*api.App, error) {
+		o := opts
+		o.GlobalSettings = app.Settings()
+		return api.New(o)
+	}
+	return gui.Run(ctx, app, projectPath, newApp)
 }
