@@ -1,0 +1,68 @@
+diff --git a/added.txt b/added.txt
+new file mode 100644
+index 0000000..5786b13
+--- /dev/null
++++ b/added.txt
+@@ -0,0 +1,2 @@
++brand
++new
+diff --git a/bin.dat b/bin.dat
+index 6772730..8d0cd2a 100644
+Binary files a/bin.dat and b/bin.dat differ
+diff --git a/del.txt b/del.txt
+deleted file mode 100644
+index b8962c3..0000000
+--- a/del.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-gone
+-away
+diff --git a/mod.txt b/mod.txt
+index c9e9e05..c61fe5e 100644
+--- a/mod.txt
++++ b/mod.txt
+@@ -1,5 +1,5 @@
+ one
+-two
++TWO
+ three
+ four
+ five
+@@ -8,3 +8,4 @@ seven
+ eight
+ nine
+ ten
++eleven
+diff --git a/old name.txt b/new name.txt
+similarity index 86%
+rename from old name.txt
+rename to new name.txt
+index a3fb829..fad0933 100644
+--- a/old name.txt	
++++ b/new name.txt	
+@@ -3,4 +3,4 @@ beta
+ gamma
+ delta
+ epsilon
+-zeta
++ZETA
+diff --git a/noeol.txt b/noeol.txt
+index c54071e..e699675 100644
+--- a/noeol.txt
++++ b/noeol.txt
+@@ -1,2 +1,2 @@
+ keep
+-last
+\ No newline at end of file
++last changed
+\ No newline at end of file
+diff --git a/script.sh b/script.sh
+old mode 100644
+new mode 100755
+diff --git "a/we\tird.txt" "b/we\tird.txt"
+index 8cc35a3..bac686b 100644
+--- "a/we\tird.txt"
++++ "b/we\tird.txt"
+@@ -1 +1 @@
+-tab
++tab2
