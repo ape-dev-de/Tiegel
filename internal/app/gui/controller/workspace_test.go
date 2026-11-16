@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,12 +20,12 @@ func TestFileOpsCreateRenameAndErrors(t *testing.T) {
 		if p.Path == "src/Exists.php" {
 			return nil, api.Errorf(api.CodeConflict, "src/Exists.php exists")
 		}
-		return map[string]any{"path": p.Path, "file": root + "/" + p.Path}, nil
+		return map[string]any{"path": p.Path, "file": filepath.Join(root, filepath.FromSlash(p.Path))}, nil
 	})
 	f.answer("files.createDir", map[string]any{"path": "src/Sub", "dir": true})
 	f.answer("files.rename", map[string]any{"path": "src/Renamed.php"})
 	f.answer("files.phpNamespace", PHPNamespace{Dir: "src", Namespace: `App`, Found: true})
-	f.answer("files.createPhpClass", map[string]any{"path": "src/Foo.php", "file": root + "/src/Foo.php", "class": `App\Foo`})
+	f.answer("files.createPhpClass", map[string]any{"path": "src/Foo.php", "file": filepath.Join(root, "src/Foo.php"), "class": `App\Foo`})
 	c := started(t, f)
 	w := c.Work
 
@@ -40,7 +41,7 @@ func TestFileOpsCreateRenameAndErrors(t *testing.T) {
 	}
 
 	w.CreateFile("src", " New.php ")
-	waitFor(t, c, "new file tab", func() bool { return c.Tab(root+"/src/New.php") != nil })
+	waitFor(t, c, "new file tab", func() bool { return c.Tab(filepath.Join(root, "src/New.php")) != nil })
 	var cp struct{ Path string }
 	lastParams(t, f, "files.createFile", &cp)
 	if cp.Path != "src/New.php" {
@@ -66,7 +67,7 @@ func TestFileOpsCreateRenameAndErrors(t *testing.T) {
 		t.Fatalf("namespace %+v", ns)
 	}
 	w.CreatePHPClass("src", "Foo.php", "interface", nil)
-	waitFor(t, c, "class tab", func() bool { return c.Tab(root+"/src/Foo.php") != nil })
+	waitFor(t, c, "class tab", func() bool { return c.Tab(filepath.Join(root, "src/Foo.php")) != nil })
 	var pc map[string]any
 	lastParams(t, f, "files.createPhpClass", &pc)
 	if pc["name"] != "Foo" || pc["kind"] != "interface" || pc["dir"] != "src" {
@@ -108,7 +109,7 @@ func TestDeleteTrashFallbackAndClosesTabs(t *testing.T) {
 	c.OpenFile("src/Mailer.php", nil)
 	c.OpenFile("index.php", nil)
 	waitFor(t, c, "tabs", func() bool { return len(c.Tabs) == 2 })
-	c.Tab(root + "/src/Mailer.php").Modified = true // saved before deleting
+	c.Tab(filepath.Join(root, "src/Mailer.php")).Modified = true // saved before deleting
 
 	var res DeleteResult
 	c.Work.Delete([]string{"src"}, false, func(r DeleteResult) { res = r })
@@ -163,7 +164,7 @@ func TestClipboardPasteAndPaths(t *testing.T) {
 	if mp.To != "src" || len(mp.Paths) != 1 || len(w.Clip.Paths) != 0 {
 		t.Fatalf("move %+v clip %+v", mp, w.Clip)
 	}
-	if got := w.PathText([]string{"src/Mailer.php", ""}, PathAbsolute); got != root+"/src/Mailer.php\n"+root {
+	if got := w.PathText([]string{"src/Mailer.php", ""}, PathAbsolute); got != filepath.Join(root, "src/Mailer.php")+"\n"+root {
 		t.Fatalf("absolute %q", got)
 	}
 	if got := w.PathText([]string{"src/Mailer.php"}, PathName); got != "Mailer.php" {
@@ -229,7 +230,7 @@ func TestTabsFollowDocRenamed(t *testing.T) {
 	c.OpenFile("src/Mailer.php", nil)
 	waitFor(t, c, "tab", func() bool { return len(c.Tabs) == 1 })
 	c.Split(false) // the file is open in two groups
-	from, to := root+"/src/Mailer.php", root+"/lib/Mail.php"
+	from, to := filepath.Join(root, "src/Mailer.php"), filepath.Join(root, "lib/Mail.php")
 	f.emit(api.TopicDocExternalConflict, api.DocExternalEvent{Path: "src/Mailer.php", File: from, Kind: "modified", Modified: true})
 	c.Settle(200 * time.Millisecond)
 	f.emit(api.TopicDocRenamed, api.DocRenamedEvent{From: "src/Mailer.php", To: "lib/Mail.php", FromFile: from, File: to, Language: "php"})
@@ -266,7 +267,7 @@ func TestExternalConflictFlow(t *testing.T) {
 		return nil, api.Errorf(api.CodeConflict, "changed on disk").WithData(api.ExternalChangeData{Reason: "externalChange", Path: "src/Mailer.php", Kind: "modified"})
 	})
 	c := started(t, f)
-	file := root + "/src/Mailer.php"
+	file := filepath.Join(root, "src/Mailer.php")
 	c.OpenFile(file, nil)
 	waitFor(t, c, "tab", func() bool { return len(c.Tabs) == 1 })
 	c.Tabs[0].Modified = true
@@ -315,11 +316,11 @@ func TestExternalConflictFlow(t *testing.T) {
 	}
 
 	// doc.reloaded clears a pending state silently.
-	f.emit(api.TopicDocExternalConflict, api.DocExternalEvent{Path: "index.php", File: root + "/index.php", Kind: "modified"})
+	f.emit(api.TopicDocExternalConflict, api.DocExternalEvent{Path: "index.php", File: filepath.Join(root, "index.php"), Kind: "modified"})
 	c.Settle(200 * time.Millisecond)
 	f.emit(api.TopicDocReloaded, map[string]any{"path": "index.php", "source": "watcher"})
 	c.Settle(200 * time.Millisecond)
-	if c.Work.ExternalOf(root+"/index.php") != nil {
+	if c.Work.ExternalOf(filepath.Join(root, "index.php")) != nil {
 		t.Fatal("doc.reloaded did not clear")
 	}
 
@@ -361,7 +362,7 @@ func TestDiffTabLifecycle(t *testing.T) {
 	}
 	var p map[string]any
 	lastParams(t, f, "git.fileDiff", &p)
-	if p["base"] != "HEAD" || p["target"] != "working" || p["path"] != root+"/src/Mailer.php" {
+	if p["base"] != "HEAD" || p["target"] != "working" || p["path"] != filepath.Join(root, "src/Mailer.php") {
 		t.Fatalf("fileDiff params %v", p)
 	}
 
@@ -430,7 +431,7 @@ func TestAnnotateAndHistories(t *testing.T) {
 	f.answer("files.read", map[string]any{"content": "new"})
 	f.answer("history.restore", map[string]any{})
 	c := started(t, f)
-	file := root + "/src/Mailer.php"
+	file := filepath.Join(root, "src/Mailer.php")
 
 	c.Work.ToggleAnnotate(file)
 	waitFor(t, c, "blame", func() bool { return c.Work.Blame[file] != nil && c.Work.Blame[file].Result != nil })

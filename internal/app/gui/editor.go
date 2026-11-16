@@ -87,6 +87,9 @@ func (v *View) session(g *controller.EditorGroup, t *controller.Tab) *editorSess
 	t.Doc.Lock()
 	buf := t.Doc.Buffer()
 	ed := editorview.New(buf)
+	// The editor follows the view's platform (its window chords and menus
+	// do), not the build's: one keymap per window.
+	ed.Keymap = keymap.ForOS(v.goos)
 	if lc, ok := editorview.LineComments[t.Language]; ok {
 		ed.LineComment = lc
 	}

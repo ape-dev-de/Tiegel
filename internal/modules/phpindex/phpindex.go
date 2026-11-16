@@ -84,6 +84,11 @@ type Module struct {
 	mu  sync.Mutex
 	app *api.App
 	st  *state
+	// stopped is set by Stop: late bus events or calls must not create a
+	// new index state (it would write its cache after the App closed).
+	stopped bool
+	// retiring counts states of a previous project still shutting down.
+	retiring sync.WaitGroup
 }
 
 // New creates the module.
@@ -113,7 +118,7 @@ func (m *Module) Start(ctx module.Context) error {
 		return errors.New("php-index: needs an api.App context")
 	}
 	m.mu.Lock()
-	m.app = app
+	m.app, m.stopped = app, false
 	m.mu.Unlock()
 	p := api.NewProvider(ctx)
 	api.Add(p, "index.status", "PHP symbol index: state, progress, statistics (wait: until ready)", m.status)
@@ -145,11 +150,12 @@ func (m *Module) Start(ctx module.Context) error {
 func (m *Module) Stop() error {
 	m.mu.Lock()
 	st := m.st
-	m.st = nil
+	m.st, m.stopped = nil, true
 	m.mu.Unlock()
 	if st != nil {
 		st.stop()
 	}
+	m.retiring.Wait()
 	return nil
 }
 
@@ -204,7 +210,7 @@ func (m *Module) restart() {
 func (m *Module) state() (*state, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.app == nil {
+	if m.app == nil || m.stopped {
 		return nil, api.Errorf(api.CodeModuleDisabled, "php-index stopped")
 	}
 	root, err := m.app.RequireProject()
@@ -214,8 +220,12 @@ func (m *Module) state() (*state, error) {
 	if m.st != nil && m.st.root == root {
 		return m.st, nil
 	}
-	if m.st != nil {
-		go m.st.stop()
+	if old := m.st; old != nil {
+		m.retiring.Add(1)
+		go func() {
+			defer m.retiring.Done()
+			old.stop()
+		}()
 	}
 	store := m.app.SettingsStore()
 	opts := index.Options{
