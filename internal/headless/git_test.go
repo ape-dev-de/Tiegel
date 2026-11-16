@@ -37,6 +37,7 @@ func gitProject(t *testing.T) (dir, remote string) {
 }
 
 func TestGitCommands(t *testing.T) {
+	t.Parallel()
 	dir, _ := gitProject(t)
 	if err := os.WriteFile(filepath.Join(dir, "a.php"), []byte("<?php\necho 1;\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -83,6 +84,7 @@ func TestGitCommands(t *testing.T) {
 }
 
 func TestGitE2E(t *testing.T) {
+	t.Parallel()
 	dir, remote := gitProject(t)
 	bin := buildBinary(t)
 	cfg := t.TempDir()

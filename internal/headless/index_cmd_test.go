@@ -9,6 +9,7 @@ import (
 )
 
 func TestIndexCommands(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{
 		"src/Shape.php":  "<?php\nnamespace App;\n\ninterface Shape\n{\n    public function area(): float;\n}\n",
 		"src/Square.php": "<?php\nnamespace App;\n\nclass Square implements Shape\n{\n    public function area(): float { return 1.0; }\n}\n",
@@ -99,6 +100,7 @@ func TestIndexCommands(t *testing.T) {
 }
 
 func TestParseLineCol(t *testing.T) {
+	t.Parallel()
 	if p, err := parseLineCol("3"); err != nil || p.Line != 3 || p.Col != 1 {
 		t.Fatal(p, err)
 	}

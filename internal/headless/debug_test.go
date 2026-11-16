@@ -7,6 +7,7 @@ import (
 )
 
 func TestBreakpointsCommand(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{"a.php": "<?php\n"})
 	var env Env
 	runIn := func(args ...string) (int, string, string) {
@@ -52,6 +53,7 @@ func TestBreakpointsCommand(t *testing.T) {
 }
 
 func TestBreakpointsE2E(t *testing.T) {
+	t.Parallel()
 	bin := buildBinary(t)
 	cfg := t.TempDir()
 	dir := project(t, map[string]string{"a.php": "<?php\n"})

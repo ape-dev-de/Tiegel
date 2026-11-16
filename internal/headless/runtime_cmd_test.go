@@ -6,6 +6,7 @@ import (
 )
 
 func TestRuntimeDiagnoseMappingsOverride(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{
 		"compose.yaml":  "services:\n  app:\n    image: php:8.3-fpm\n    volumes:\n      - ./:/var/www/html\n",
 		"composer.json": `{"require":{"php":"^8.0"}}`,

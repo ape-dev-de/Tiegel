@@ -11,6 +11,7 @@ import (
 )
 
 func TestLSPRefactorCommands(t *testing.T) {
+	t.Parallel()
 	fake := buildFakeLSP(t)
 	const a = "<?php\nfunction foo() {}\nfoo();  \necho 'ERR';\n"
 	dir := project(t, map[string]string{"a.php": a, "x.txt": "x"})

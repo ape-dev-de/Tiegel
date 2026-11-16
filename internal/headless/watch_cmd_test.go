@@ -43,6 +43,7 @@ func waitOutput(t *testing.T, out *syncBuffer, want string) {
 }
 
 func TestWatchCommand(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"human", "json"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := project(t, map[string]string{"a.php": "<?php\n", ".git/HEAD": "ref: refs/heads/main\n", "node_modules/x.js": ""})
@@ -92,6 +93,7 @@ func TestWatchCommand(t *testing.T) {
 }
 
 func TestWatchCommandBadBackend(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{"a.php": "<?php\n"})
 	var errOut bytes.Buffer
 	code := Run(context.Background(), []string{"watch", "--project", dir, "--backend", "nope"}, testEnv(t, nil, io.Discard, &errOut))

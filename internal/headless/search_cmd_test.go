@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 )
 
 func TestFindAndReplaceCommands(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{
 		"src/a.php":    "<?php\n$foo = 1;\n",
 		"src/b.txt":    "foo\n",
@@ -65,6 +67,11 @@ func TestFindAndReplaceCommands(t *testing.T) {
 		t.Fatalf("replace usage: %d", code)
 	}
 	ro := filepath.Join(dir, "src")
+	if runtime.GOOS == "windows" {
+		// Directory permissions do not stop writes on Windows; a
+		// read-only file cannot be replaced.
+		ro = filepath.Join(ro, "a.php")
+	}
 	if err := os.Chmod(ro, 0o555); err != nil {
 		t.Fatal(err)
 	}

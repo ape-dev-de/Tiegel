@@ -13,6 +13,7 @@ import (
 // Review 2026-11-16 #5: unsaved changes left at exit are listed by the
 // recovery command at the next start and can be dismissed.
 func TestRecoveryCommand(t *testing.T) {
+	t.Parallel()
 	dir := project(t, map[string]string{"a.php": "<?php\n"})
 	env := testEnv(t, nil, io.Discard, io.Discard)
 	a, err := api.New(env.Options)
