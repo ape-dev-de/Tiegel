@@ -139,6 +139,7 @@ type View struct {
 
 	gitd *gitDock
 	dbgd *debugDock
+	navd *navDock
 	// work is the file side: tree menu, external changes, diff and
 	// history tabs, remote git (filesdock.go and friends).
 	work *workDock
@@ -165,6 +166,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 		tabBars: map[*controller.EditorGroup]*groupView{}, splitViews: map[*controller.SplitNode]*molecules.Split{},
 		toolIDs: map[string]bool{},
 	}
+	v.Registry.SetGOOS(goos)
 	for _, a := range defaultActions() {
 		v.Registry.AddAction(a)
 	}
@@ -189,6 +191,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v.gitd = installGit(v)
 	v.dbgd = installDebug(v)
 	v.work = installWork(v)
+	v.navd = installNav(v)
 	return v
 }
 
@@ -583,6 +586,10 @@ func (v *View) handleOverlay(gtx layout.Context) {
 			}
 		case palette.ChooseEvent:
 			v.choose(e)
+		case palette.TabEvent:
+			if v.chooseMode == chooseCustom && v.custom != nil && v.custom.OnTab != nil {
+				v.chooser.Items = v.custom.OnTab(e.Index, v.chooser.Query())
+			}
 		}
 	}
 }

@@ -60,14 +60,27 @@
 //
 // The shell opens them with View.ShowContextMenu(ctx, target, builtin):
 // built-in entries first, then the registered ones separated by
-// separators. Presentation goes through View.MenuPresenter; until a
-// context menu component exists, menus show as a filterable chooser
-// (chooserMenu). A context menu component (molecules) only needs to set
-// View.MenuPresenter = func(v, title, items, pos) { … } and run the chosen
-// MenuItem (Action via the registry, otherwise Run). Today the tab row
-// (right click) and the tool window menus (stripe right click, header
-// "⋯") open menus; editor, gutter and tree right clicks are to be wired
-// by AP10.4 with the same call.
+// separators. Presentation goes through View.MenuPresenter, which shows
+// the molecules.ContextMenu popup (actionmodel.go). Menus of the action
+// model come from View.ShowActionMenu (the editor and gutter menus,
+// editormenu.go).
+//
+// # Action model (D160)
+//
+// internal/actions is the only source of menus, Find Action and the
+// native menu bar: Registry.AddAction mirrors every action into
+// Registry.Model() (standard actions keep their label and state
+// functions); the Registry keeps the handlers (ID → Run) and the key
+// bindings. An entry of a model menu without a handler is disabled, so a
+// feature docks onto existing menu entries just by registering
+// Action{ID: "vcs.annotate", Run: …}.
+//
+// # Code navigation (D161–D164)
+//
+// navdock.go, codedock.go, finddock.go and symbols.go show
+// controller.CodeNav: jumps, gutter marks, Go to Class/Symbol, Search
+// Everywhere, Usages, Structure, Hierarchy and Find tool windows, rename
+// and context action popups.
 //
 // # Docking point: virtual tabs (AP10.6)
 //

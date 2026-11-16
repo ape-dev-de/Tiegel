@@ -117,7 +117,7 @@ func TestFind(t *testing.T) {
 	if len(ms) == 0 || ms[0].ID != FileNewPHPClass || ms[0].Path != "File › New" {
 		t.Fatalf("find %+v", ms)
 	}
-	ms = r.Find("ren", Context{Paths: []string{"a.php"}}, nil, "darwin")
+	ms = r.Find("rename…", Context{Paths: []string{"a.php"}}, nil, "darwin")
 	if len(ms) == 0 || ms[0].ID != FileRename || ms[0].Disabled || ms[0].Shortcut != "Shift+F6" {
 		t.Fatalf("rename %+v", ms)
 	}
@@ -131,9 +131,12 @@ func TestFind(t *testing.T) {
 	if len(all) != len(r.All()) {
 		t.Fatalf("empty query lists %d of %d", len(all), len(r.All()))
 	}
-	// Invisible actions are not found.
-	if ms := r.Find("definition", Context{Language: "text"}, nil, "linux"); len(ms) != 0 {
+	// Invisible actions are not found, PHP-only ones are disabled.
+	if ms := r.Find("annotate", Context{Language: "text"}, nil, "linux"); len(ms) != 0 {
 		t.Fatalf("invisible found %+v", ms)
+	}
+	if ms := r.Find("go to definition", Context{Language: "text"}, nil, "linux"); len(ms) != 1 || !ms[0].Disabled {
+		t.Fatalf("php-only action %+v", ms)
 	}
 	if ms := r.Find("close", Context{}, nil, "linux"); ms[0].Label != "Close" {
 		t.Fatalf("prefix ranking %+v", ms[0])

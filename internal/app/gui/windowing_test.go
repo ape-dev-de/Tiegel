@@ -11,6 +11,7 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/layout"
 
+	"github.com/ape-dev-de/tiegel/internal/actions"
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
 	"github.com/ape-dev-de/tiegel/internal/interp"
@@ -22,9 +23,17 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/uitest"
 )
 
-// chooseLabel picks the chooser item whose label contains s.
+// chooseLabel picks the chooser item whose label contains s, or the
+// entry of the open context menu labeled s.
 func (e *env) chooseLabel(s string) {
 	e.t.Helper()
+	if e.v.navd.menus.Opened() {
+		if !e.v.navd.menus.choose(e.v, s) {
+			e.t.Fatalf("no menu entry %q", s)
+		}
+		e.frame()
+		return
+	}
 	for i, it := range e.v.chooser.Items {
 		if strings.Contains(it.Label, s) {
 			e.v.choose(palette.ChooseEvent{Index: i, Query: e.v.chooser.Query()})
@@ -40,7 +49,8 @@ func TestToolWindowShortcuts(t *testing.T) {
 	e := newEnv(t, true)
 	e.waitFor("tool layout", func() bool { return e.ctl.ToolsReady() })
 	e.frame()
-	if !e.v.ToolShown(ToolProject) || len(e.v.bench.Stripes[templates.SideLeft]) != 1 {
+	// Project and Structure on the left.
+	if !e.v.ToolShown(ToolProject) || len(e.v.bench.Stripes[templates.SideLeft]) != 2 {
 		t.Fatalf("project tree should start open on the left: %+v", e.v.bench.Stripes)
 	}
 	e.key("1", key.ModCommand)
@@ -172,10 +182,10 @@ func TestFindActionAndMenus(t *testing.T) {
 	for _, m := range menus {
 		titles = append(titles, m.title)
 	}
-	if got := strings.Join(titles, ","); got != "File,Edit,View,Navigate,Run,Window,Help" {
+	if got := strings.Join(titles, ","); got != "File,Edit,View,Navigate,Code,Refactor,Run,Window,Help" {
 		t.Fatalf("menus %s", got)
 	}
-	nm := nativeMenus(e.v.Registry, "darwin")
+	nm := nativeMenus(e.v.Registry, "darwin", e.v.actionContext(actions.CtxMain))
 	var view []string
 	for _, m := range nm {
 		if m.Title == "View" {
@@ -193,11 +203,11 @@ func TestFindActionAndMenus(t *testing.T) {
 			t.Errorf("View menu lacks %s: %s", want, got)
 		}
 	}
-	if s := e.v.Registry.ChordText("menu."+"edit.undo", "darwin"); s != "Cmd+Z" {
+	if s := e.v.Registry.ChordText("edit.undo", "darwin"); s != "Cmd+Z" {
 		t.Errorf("edit menu chord %q", s)
 	}
-	// The in-app menu bar opens a menu as a list.
-	e.v.ShowMenu("File", menus[0].items(e.v.Registry, "linux"))
+	// The in-app menu bar opens a menu as a popup menu.
+	e.v.ShowMenu("File", e.v.Registry.MainMenus(e.v.actionContext(actions.CtxMain), "linux")[0].Items)
 	e.frame()
 	e.chooseLabel("Close Project")
 	e.waitFor("welcome", func() bool { return !e.ctl.Project.Open })

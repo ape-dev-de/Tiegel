@@ -22,6 +22,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/editor/search"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
+	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/completion"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/findbar"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
@@ -51,6 +52,11 @@ type editorSession struct {
 	hoverSince time.Time
 	hoverDone  bool
 	cmdClick   *image.Point
+	// ctxClick and gutterCtx are pending context clicks (editormenu.go);
+	// menuLine is the line of the last gutter menu.
+	ctxClick  *image.Point
+	gutterCtx int
+	menuLine  int
 
 	query     *search.Query
 	findKey   [4]int
@@ -137,6 +143,9 @@ func (v *View) Close() {
 	for k, s := range v.editors {
 		v.closeSession(k, s)
 	}
+	if v.navd != nil {
+		v.navd.Close()
+	}
 }
 
 // currentLocation returns the caret location of the active editor.
@@ -222,6 +231,7 @@ func (v *View) layoutEditor(gtx layout.Context, s *editorSession, active bool) l
 	area.Pop()
 	pass.Pop()
 	v.hoverAfterLayout(gtx, s)
+	v.navd.afterEditor(gtx, s)
 	v.layoutPopups(gtx, s, dims.Size)
 	return dims
 }
@@ -304,6 +314,10 @@ func (v *View) editorEvents(gtx layout.Context, s *editorSession, active bool) {
 			}
 			v.editorAction(s, ev.Action)
 		case editorview.GutterClickEvent:
+			if isGutterContext(ev) {
+				s.gutterContextClick(ev.Line + 1)
+				continue
+			}
 			for _, h := range v.Registry.gutterClicks {
 				if h(s.file, ev) {
 					break
@@ -502,6 +516,9 @@ func (v *View) hoverInput(gtx layout.Context, s *editorSession) {
 				p := pt
 				s.cmdClick = &p
 			}
+			if molecules.IsContextClick(pe, v.goos) {
+				s.editorContextClick(pt)
+			}
 		}
 	}
 }
@@ -526,7 +543,7 @@ func (v *View) hoverAfterLayout(gtx layout.Context, s *editorSession) {
 	if p := s.cmdClick; p != nil {
 		s.cmdClick = nil
 		if off, ok := s.textOffsetAt(*p); ok {
-			c.GoToDefinition(controller.At(s.file, off), "lsp.definition")
+			v.navd.n.Navigate(controller.At(s.file, off), controller.JumpDefinition)
 		}
 	}
 	if !s.hoverIn || s.hoverDone {

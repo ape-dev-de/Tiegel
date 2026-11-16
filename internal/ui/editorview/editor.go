@@ -80,6 +80,9 @@ type Editor struct {
 	decos   []LineDecoration
 	diags   []Diagnostic
 	query   *search.Query
+	// hls are usage highlights for buffer version hlVersion.
+	hls       []Highlight
+	hlVersion uint64
 
 	events []Event
 	stale  int // events at the queue head that survived one Layout
