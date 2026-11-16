@@ -6,7 +6,7 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 
 | AP | Thema | Status | Notiz |
 | --- | --- | --- | --- |
-| M0 | Fundament, CI | 🟡 | |
+| M0 | Fundament, CI | ✅ | Makefile, CI (macOS+Linux), GitHub-Meilensteine M0–M9 |
 | 1.1–1.3 | Event-Bus, Hooks, Modul-Registry | ⬜ | |
 | 1.4–1.6 | Settings, Spracherkennung, Local History, Autosave | ⬜ | |
 | 2.1–2.4 | Tokens, Atome, Moleküle, Katalog | ⬜ | |

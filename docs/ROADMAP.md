@@ -20,6 +20,7 @@ internal/lsp          LSP-Client (JSON-RPC über stdio)
 internal/dbgp         DBGp-Server (Xdebug)
 internal/gitcli       Git-CLI-Wrapper, Diff-/Hunk-Parser, Merge
 internal/compose      Compose-Erkennung (compose-go), Pfad-Mapping
+internal/interp       Interpreter-Abstraktion (lokal, Compose, WSL)
 internal/phpver       PHP-Versionsermittlung, Feature-Tabelle
 internal/modules/     langphp, phpruntime, phpfeatures, git, debugxdebug (Modul-Hüllen + UI)
 ```
