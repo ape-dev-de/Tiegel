@@ -25,6 +25,7 @@ import (
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/bus"
+	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/lsp"
@@ -137,6 +138,7 @@ func (m *Module) Start(ctx module.Context) error {
 	restart := func(bus.Event) { go m.restart() }
 	ctx.OnStop(b.Subscribe(api.TopicInterpreterChanged, restart))
 	ctx.OnStop(b.Subscribe(api.TopicPHPVersionChanged, restart))
+	api.HookNavLSP.On(ctx.Hooks(), 0, m.navLSP, hooks.WithOwner(ID), hooks.WithTimeout(navTimeout))
 	return nil
 }
 

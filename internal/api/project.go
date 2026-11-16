@@ -15,6 +15,7 @@ import (
 
 	"github.com/ape-dev-de/tiegel/internal/compose"
 	"github.com/ape-dev-de/tiegel/internal/core/fspath"
+	"github.com/ape-dev-de/tiegel/internal/core/gitignore"
 	"github.com/ape-dev-de/tiegel/internal/core/history"
 	"github.com/ape-dev-de/tiegel/internal/core/langdetect"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
@@ -281,11 +282,11 @@ func (a *App) filesList(ctx context.Context, p FilesListParams) (FilesListResult
 	}
 	w := &walker{root: pr.root, p: p, ctx: ctx}
 	// Load .gitignore files from the root down to the requested directory.
-	w.ign.load(pr.root, "")
+	w.ign.Load(pr.root, "")
 	if rel != "" {
 		parts := strings.Split(rel, "/")
 		for i := range parts {
-			w.ign.load(pr.root, strings.Join(parts[:i+1], "/"))
+			w.ign.Load(pr.root, strings.Join(parts[:i+1], "/"))
 		}
 	}
 	name := filepath.Base(dir)
@@ -300,7 +301,7 @@ type walker struct {
 	ctx       context.Context
 	root      string
 	p         FilesListParams
-	ign       ignoreSet
+	ign       gitignore.Set
 	files     int
 	dirs      int
 	truncated bool
@@ -312,7 +313,7 @@ func (w *walker) walk(node *FileNode, depth int, inLibrary bool) error {
 	}
 	abs := filepath.Join(w.root, filepath.FromSlash(node.Path))
 	if node.Path != "" {
-		w.ign.load(w.root, node.Path)
+		w.ign.Load(w.root, node.Path)
 	}
 	entries, err := os.ReadDir(abs)
 	if err != nil {
@@ -344,7 +345,7 @@ func (w *walker) walk(node *FileNode, depth int, inLibrary bool) error {
 				isDir = st.IsDir()
 			}
 		}
-		ignored := node.Ignored || w.ign.match(rel, isDir)
+		ignored := node.Ignored || w.ign.Match(rel, isDir)
 		if ignored && !w.p.Ignored {
 			continue
 		}

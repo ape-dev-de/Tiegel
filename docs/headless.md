@@ -23,7 +23,7 @@ Flags dürfen vor oder nach dem Befehl stehen (`--name wert` oder `--name=wert`)
 | Flag | Bedeutung |
 |---|---|
 | `--json` | maschinenlesbare Ausgabe (eingerücktes JSON auf stdout) |
-| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`) nehmen ohne Angabe das Arbeitsverzeichnis. |
+| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`) nehmen ohne Angabe das Arbeitsverzeichnis. |
 | `--config-dir DIR` | Einstellungsverzeichnis statt `<UserConfigDir>/Tiegel`; alternativ Umgebungsvariable `TIEGEL_CONFIG_DIR` (Tests, CI, portable Nutzung) |
 | `--help`, `-h` | Hilfe |
 | `--version` | Version (auch `tiegel --version` ohne `--headless`) |
@@ -73,6 +73,13 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `highlights DATEI [--lines VON:BIS] [--language L]` | Syntax-Highlighting als `start ende rolle "text"` (Byte-Offsets, ohne `plain`-Bereiche) | `syntax.highlights` |
 | `folds DATEI [--language L]` | Faltbereiche als `von-bis` (Zeilen, 1-basiert) | `syntax.folds` |
 | `outline DATEI [--language L]` | Struktur (Namespaces, Klassen, Member, Funktionen) eingerückt als `zeile:spalte modifier art name signatur` | `syntax.outline` |
+| `symbols QUERY [--kind K]... [--limit N] [--no-libraries]` | Fuzzy-Suche im PHP-Symbol-Index (Klassen, Member, Funktionen, Konstanten) als `art<TAB>fqn<TAB>pfad:zeile:spalte`; `--kind type` = alle Klassenarten (Go to Class); `Klasse::member` sucht Member, ein `\` im FQN; Exit 1 ohne Treffer | `nav.symbols` |
+| `definition DATEI ZEILE[:SPALTE] [--source auto\|index\|lsp]` | Deklarationen des Symbols an der Position als `pfad:zeile:spalte: art fqn [quelle]` | `nav.definition` |
+| `implementations DATEI ZEILE[:SPALTE] [--source …]` | implementierende Klassen (transitiv), Unterklassen, Trait-Nutzer, überschreibende/implementierende Methoden | `nav.implementations` |
+| `super DATEI ZEILE[:SPALTE]` | Obertypen einer Klasse bzw. überschriebene/implementierte Methoden | `nav.super` |
+| `hierarchy FQN \| hierarchy DATEI ZEILE[:SPALTE]` | Typ-Hierarchie: Obertypen (rekursiv, nicht indizierte wie `Countable` mit `?`) und Untertypen eingerückt | `nav.typeHierarchy` |
+| `gutter DATEI` | Gutter-Marken: `zeile<TAB>art fqn<TAB>up N<TAB>down M` | `nav.gutter` |
+| `index-status [--rebuild [--full]]` | baut den Index (bzw. aktualisiert ihn aus dem Cache) und zeigt Zustand und Zahlen; `--full` verwirft Index und Cache | `index.status`, `index.rebuild` |
 | `serve [--framing ndjson\|lsp] [--concurrent] [--listen ADDR [--token-file F] [--token T] [--allow-remote]]` | JSON-RPC 2.0 über stdin/stdout, mit `--listen unix:PFAD` oder `tcp:127.0.0.1:PORT` über einen Socket (Token-Authentisierung, siehe unten) | alle |
 | `call METHOD [JSON \| -]` | beliebige API-Methode aufrufen; `-` liest die Parameter von stdin; Ausgabe immer JSON | alle |
 | `help [BEFEHL]` | Hilfe | – |
@@ -204,6 +211,7 @@ Von den Modulen veröffentlichte Topics:
 | php-features | `php.diagnostics` (`{path, file, version, phpVersion, source, diagnostics}`), `php.versionChanged` (`{override}`) |
 | lang-php | `lsp.status` (gestartet/gestoppt/abgestürzt), `lsp.diagnostics` (`{path, file, version, diagnostics}`) |
 | git | `git.changed` (`{op, paths}` nach jeder Änderung über die API), `git.committed` |
+| php-index | `index.progress` (`{phase: scanning\|indexing\|ready, done, total}`, höchstens alle 100 ms), `index.updated` (`{files, truncated, generation, reason: sync\|file\|doc\|cache}`) |
 | debug-xdebug | `debug.listening`, `debug.stopped`, `debug.sessionStarted`, `debug.sessionEnded`, `debug.break` (gemappte Host-Datei/Zeile), `debug.breakpointHit`, `debug.breakpoints.changed`, `debug.status`, `debug.output`, `debug.notification`, `debug.breakpoint.resolved` |
 
 ## Module
@@ -214,9 +222,10 @@ Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`,
 |---|---|---|---|
 | `php-runtime` | – | `interp.*`, `compose.*`, `php.version`, `runtime.*` | stellt `php.resolveVersion` und `runtime.pathMappings` (Filter) bereit |
 | `php-features` | `php-runtime` | `php.check`, `php.diagnostics`, `php.setVersionOverride` | nutzt `php.resolveVersion` |
-| `lang-php` | (`php-runtime` optional) | `lsp.*` | nutzt `php.resolveVersion` |
+| `lang-php` | (`php-runtime` optional) | `lsp.*` | nutzt `php.resolveVersion`, stellt `nav.lsp` (Filter) bereit |
 | `git` | – | `git.*` | ruft Guard `commit.before` (Kern: Autosave) und Filter `commit.message` |
 | `syntax` | – | `syntax.*` | – (folgt `doc.edited`) |
+| `php-index` | – | `index.*`, `nav.*` | ruft Filter `nav.lsp` (Anbieter: lang-php) |
 | `debug-xdebug` | `php-runtime` | `debug.*` | ruft Guard `debug.before` (Kern: Autosave), nutzt `runtime.pathMappings` |
 
 `modules.enable`/`modules.disable` wirken sofort (und dauerhaft): ein abgeschaltetes Modul räumt Hooks und Abos ab, seine Methoden antworten mit `-32006 module disabled`. `app.methods` zeigt zu jeder Methode `module` und `disabled`.
@@ -355,6 +364,20 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `syntax.highlights` | `path?`, `text?`, `language?`, Bereich `start?`/`end?` (Byte-Offsets) oder `startLine?`/`endLine?` (1-basiert, inklusiv), `plain?` (auch ungefärbte Bereiche) | `start`, `end`, `spans[{start, end, role}]` – Rollen: `keyword`, `string`, `number`, `comment`, `variable`, `function`, `type`, `constant`, `operator`, `punctuation`, `tag`, `attribute`, `property` (`plain`) |
 | `syntax.folds` | `path?`, `text?`, `language?` | `folds[{startLine, endLine}]` (1-basiert, inklusiv) |
 | `syntax.outline` | `path?`, `text?`, `language?` | `symbols[{kind, name, detail, modifiers, start, end, nameStart, children}]` mit Positionen `{offset, line, col}` (1-basiert, Spalte in Zeichen); `kind`: `namespace`, `class`, `interface`, `trait`, `enum`, `enum case`, `method`, `function`, `property`, `constant` (nur PHP) |
+
+**php-index** – projektweiter PHP-Symbol-Index auf Tree-sitter (D111): rein strukturelle Navigation ohne Typinferenz, unabhängig vom Language Server. Der Index entsteht beim Öffnen des Projekts im Hintergrund (Cache unter `projects/<hash>/index/`, danach werden nur geänderte Dateien geparst) und folgt Dokumentänderungen, Speichern, `files.changed`, `git.changed` (D112). `vendor/` wird standardmäßig mitindiziert (`library: true`, in der Suche nachrangig), `.gitignore` grob beachtet. Einzelbefehle der CLI indizieren erst beim ersten `index.*`/`nav.*`-Aufruf. Positionen wie bei `doc.*`; Quelle ist das offene Dokument, sonst die Datei. `wait: true` wartet auf die erste Indizierung, sonst ist `complete` während des Aufbaus `false`. Ergebnisse `Location`: `{path, file, range (Name), declRange, kind, name, fqn, container, detail, library, source}` mit `kind` aus `class`, `interface`, `trait`, `enum`, `method`, `property`, `classConstant`, `enumCase`, `function`, `constant` und `source` `index`, `lsp` oder `index+lsp`. Ohne cgo: `-32005`.
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `index.status` | `wait?` | `state` (`idle`, `loading`, `indexing`, `ready`, `error`), `progress`, `files`, `libraryFiles`, `classes`, `members`, `functions`, `constants`, `generation`, `fromCache`, `lastSync`, `durationMs`, `libraries`, `error` |
+| `index.config` | `libraries?`, `includeIgnored?`, `exclude?: [muster]` | aktuelle Einstellung (Projekt-Settings `index.*`); Änderungen starten den Index neu |
+| `index.rebuild` | `full?` (Index und Cache verwerfen), `wait?` | Status |
+| `nav.definition` | `path`, `at`, `source?` (`auto` = Index + laufender Language Server, `index`, `lsp`), `wait?` | `locations`, `complete`, `lsp`, `lspError` |
+| `nav.implementations` | wie `nav.definition` | Interface → implementierende Klassen/Enums (transitiv, auch über Elternklassen), Klasse → Unterklassen, Trait → Nutzer, Methode → überschreibende/implementierende Methoden |
+| `nav.super` | `path`, `at`, `wait?` | Klasse → direkte Obertypen; Methode → nächste Deklaration in der Elternkette + alle Interface-Deklarationen |
+| `nav.typeHierarchy` | `fqn` oder `path`+`at`, `wait?` | `class`, `supertypes`/`subtypes` als Bäume (`children`), `truncated` (über 5 000 Untertypen) |
+| `nav.symbols` | `query`, `kinds?` (Arten oder `type`), `limit?` (100), `libraries?` (true), `wait?` | `symbols[{…Location, score}]`, `complete` |
+| `nav.gutter` | `path`, `wait?` | `marks[{line, kind, fqn, range, up, down, upTotal, downTotal}]` – pro Klasse/Methode: `up` = implementiert/überschreibt, `down` = wird implementiert/überschrieben (Listen auf 100 gekürzt) |
 
 `session` bei `debug.*` darf fehlen, wenn genau eine Sitzung aktiv ist.
 

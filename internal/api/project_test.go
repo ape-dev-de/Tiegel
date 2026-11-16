@@ -133,36 +133,6 @@ func TestFilesList(t *testing.T) {
 	wantCode(t, a, "files.list", FilesListParams{Path: "index.php"}, CodeInvalidParams)
 }
 
-func TestIgnoreRules(t *testing.T) {
-	var s ignoreSet
-	for _, l := range []string{"*.tmp", "/root-only", "docs/*.md", "a/**/z", "logs/**", "dir/", "!important.tmp", "\\#hash", "", "/"} {
-		s.add("", l)
-	}
-	s.add("sub", "local")
-	cases := []struct {
-		path  string
-		dir   bool
-		match bool
-	}{
-		{"x.tmp", false, true}, {"deep/x.tmp", false, true}, {"important.tmp", false, false},
-		{"root-only", false, true}, {"x/root-only", false, false},
-		{"docs/a.md", false, true}, {"docs/x/a.md", false, false},
-		{"a/z", false, true}, {"a/b/z", false, true}, {"a/b/c/z", false, true}, {"b/z", false, false},
-		{"logs/x", false, true}, {"logs", true, false},
-		{"dir", true, true}, {"dir", false, false}, {"x/dir", true, true},
-		{"#hash", false, true},
-		{"sub/local", false, true}, {"local", false, false}, {"other/local", false, false},
-	}
-	for _, c := range cases {
-		if got := s.match(c.path, c.dir); got != c.match {
-			t.Errorf("match(%q, dir=%v) = %v, want %v", c.path, c.dir, got, c.match)
-		}
-	}
-	if firstSegments("a/b", 5) != "a/b" {
-		t.Fatal("firstSegments")
-	}
-}
-
 func TestFilesReadAndLanguage(t *testing.T) {
 	a := newTestApp(t)
 	dir := t.TempDir()

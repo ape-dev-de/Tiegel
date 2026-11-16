@@ -201,6 +201,31 @@ type PathMappingsQuery struct {
 	Source   string
 }
 
+// NavLSPQuery is the value of the nav.lsp filter: php-index asks the
+// language server (lang-php) for definitions or implementations so that
+// nav.definition and nav.implementations can merge both sources without
+// the modules calling each other. A provider fills Locations and sets
+// Answered; without a running server the value passes unchanged.
+type NavLSPQuery struct {
+	// Kind is "definition" or "implementation".
+	Kind string
+	// Path is the absolute path of the document, At the position.
+	Path string
+	At   Pos
+	// Locations are the server's answer.
+	Locations []NavLSPLocation
+	Answered  bool
+	// Err describes a failed server request ("" on success).
+	Err string
+}
+
+// NavLSPLocation is one location of a NavLSPQuery answer.
+type NavLSPLocation struct {
+	Path  string    `json:"path"` // display path
+	File  string    `json:"file"` // absolute path
+	Range TextRange `json:"range"`
+}
+
 // Hook points shared by kernel and modules.
 var (
 	// HookCommitBefore runs before a commit; returning an error aborts it.
@@ -215,4 +240,7 @@ var (
 	HookPHPVersion = hooks.NewFilter[PHPVersionQuery]("php.resolveVersion")
 	// HookPathMappings resolves host/container path mappings.
 	HookPathMappings = hooks.NewFilter[PathMappingsQuery]("runtime.pathMappings")
+	// HookNavLSP asks the language server for definitions/implementations
+	// (provided by lang-php, used by php-index).
+	HookNavLSP = hooks.NewFilter[NavLSPQuery]("nav.lsp")
 )
