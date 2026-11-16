@@ -108,7 +108,8 @@ Grundlage: Funktionsvergleich [vergleich.md](vergleich.md).
 - AP10.4 Kontextmenüs: Editor, Dateibaum, Tabs, Gutter, Git-Listen; Datei-Operationen (neu, umbenennen, löschen, kopieren, Pfad kopieren, im Finder zeigen) – zuerst als API/Headless.
 - AP10.5 Tree-sitter-Index: projektweiter Symbol-Index (Klassen, Interfaces, Traits, Methoden, extends/implements/use) → Go to Implementation/Definition ohne LSP, Gutter-Icons „implementiert/überschreibt“, Symbol-/Klassen-Suche.
 - AP10.6 Git-Diff-Fenster: eigenes Diff-Fenster (side-by-side, Syntax-Highlighting, Änderungsnavigation), aus Commit-Dialog, Log, Dateibaum, Editor; Datei-Historie, Annotate (blame).
-- Weitere Punkte nach Priorität aus vergleich.md.
+- P0 aus vergleich.md: AP10.7 Dateiwatcher & externe Änderungen (Datenverlust-Risiko!), AP10.8 Find in Files/Replace in Path, AP10.9 Aktionsmodell/Find Action/Search Everywhere, AP10.10 LSP-Ausbau (Find Usages, Alt+Enter, Reformat, Highlight Usages), AP10.11 Git Fetch/Pull/Update/Stash.
+- P1 aus vergleich.md: AP10.12 Sitzung & Layout, AP10.13 Hauptmenü, AP10.14 Structure & Breadcrumbs, AP10.15 Run-Konsole & -Konfigurationen, AP10.16 Terminal, AP10.17 Editor-Alltagsaktionen, AP10.18 Debug-Ergänzungen, AP10.19 Local-History-Ansicht, AP10.20 Git-Log-Graph & Operationen, AP10.21 Qualitäts-Tools, AP10.22 Neue PHP-Klasse (PSR-4).
 
 ---
 
