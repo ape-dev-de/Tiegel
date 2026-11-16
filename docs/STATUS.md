@@ -23,10 +23,11 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 | 7.1 | DBGp-Server | ✅ | 93 %; Test mit echtem Xdebug offen (lokal nicht installiert) |
 | 7.2–7.3 | Debug-Modul + UI | 🟡 | Modul debug-xdebug ✅ (Breakpoints persistent, Stepping, Variablen, Watches); Organismen ✅; Anbindung in Shell offen |
 | M8 | Mac-Paketierung | ⚠️ | Skripte, Universal-App, DMG, release.yml, opt-in Update-Check fertig; echte Signatur/Notarisierung braucht Apple-Zertifikate + Secrets (docs/release.md) |
-| M9 | Linux/WSL | ⬜ | |
+| M9 | Linux/WSL | 🟡 | Backend ✅: Socket-Transport mit Token, `api.Caller` (in-process/remote), Client, docsync, WSL-Interpreter + Pfade, `syntax.*`-API, CI Windows/Cross; GUI-Umschaltung, Pakete/Installer offen |
 
 ## Log
 - 2026-11-16: Konzept nach `docs/konzept.md` verschoben, Roadmap, Entscheidungen, Agenten-Konventionen angelegt.
 - 2026-11-16: Welle 1 gemergt: core, editor-Modell, UI-Baukasten, LSP, DBGp, interp/compose. Nutzerwunsch: Headless-Modus (D41).
 - 2026-11-16: Headless-Modus gemergt; Fix: PHP-Version fällt ohne gewählten Interpreter auf ersten lokalen zurück. M8 gemergt (ohne echte Signatur).
 - 2026-11-16: Module langphp, phpruntime, phpfeatures, git, debugxdebug als headless Backend gemergt (D42); geteilte Puffer für In-Process-GUI (`App.Document`).
+- 2026-11-16: M9-Backend gemergt (D80–D83).

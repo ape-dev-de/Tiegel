@@ -1,5 +1,5 @@
 // Package interp abstracts PHP interpreters: a local binary, a service in a
-// Docker Compose project or (later) a PHP inside WSL. All of them are driven
+// Docker Compose project or a PHP inside a WSL distribution. All of them are driven
 // through the same Interpreter interface, so callers such as the version
 // detection or the debugger do not care where PHP actually runs.
 package interp
@@ -25,8 +25,8 @@ const (
 	KindWSL     Kind = "wsl"
 )
 
-// ErrNotImplemented is returned by interpreter types that exist only as a
-// placeholder so far (WSL).
+// ErrNotImplemented is returned by interpreter operations that are not
+// supported by an interpreter type.
 var ErrNotImplemented = errors.New("interp: not implemented")
 
 // Interpreter is a PHP runtime that can execute commands.

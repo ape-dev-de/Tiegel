@@ -26,6 +26,10 @@ type Method struct {
 	// the kernel namespaces. Module methods are only callable while their
 	// module runs (see Provide).
 	Module string
+
+	// direct is the JSON-free path used by in-process callers (see
+	// InProcess); nil for methods registered with a plain HandlerFunc.
+	direct directFunc
 }
 
 // MethodInfo describes a registered method (without its handler).
@@ -128,7 +132,7 @@ func (a *App) Register(m Method) error { return a.methods.add(m) }
 //
 //	api.Handle(a, "git.status", "Working tree status", a.gitStatus)
 func Handle[P, R any](a *App, name, summary string, fn func(ctx context.Context, p P) (R, error)) error {
-	return a.Register(Method{Name: name, Summary: summary, Handler: typed(fn)})
+	return a.Register(Method{Name: name, Summary: summary, Handler: typed(fn), direct: direct(fn)})
 }
 
 // mustHandle is Handle for the built-in namespaces, whose names are fixed;
@@ -172,17 +176,26 @@ func (a *App) Methods() []MethodInfo { return a.methods.list() }
 // Call invokes method with raw JSON params outside of any session (no event
 // subscriptions). Use a Session for clients that want notifications.
 func (a *App) Call(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	m, err := a.lookup(method)
+	if err != nil {
+		return nil, err
+	}
+	return m.Handler(ctx, params)
+}
+
+// lookup returns the callable entry of method or the error a call reports.
+func (a *App) lookup(method string) (methodEntry, error) {
 	m, ok := a.methods.get(method)
 	if !ok {
 		if owner := a.claimant(method); owner != "" {
-			return nil, moduleDisabled(method, owner)
+			return m, moduleDisabled(method, owner)
 		}
-		return nil, Errorf(CodeMethodNotFound, "method not found: %s", method)
+		return m, Errorf(CodeMethodNotFound, "method not found: %s", method)
 	}
 	if m.disabled {
-		return nil, moduleDisabled(method, m.Module)
+		return m, moduleDisabled(method, m.Module)
 	}
-	return m.Handler(ctx, params)
+	return m, nil
 }
 
 // CallJSON is Call with params given as any JSON-serialisable value.

@@ -17,6 +17,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
+	"github.com/ape-dev-de/tiegel/internal/syntax"
 )
 
 // run executes the CLI in-process with an isolated config dir.
@@ -272,12 +273,14 @@ func TestRuntimeCommands(t *testing.T) {
 	if _, out, _ = run(t, "", "php-version", "--project", dir); !strings.HasPrefix(out, "8.0.0") {
 		t.Fatalf("php-version %q", out)
 	}
-	code, out, _ := run(t, "", "php-check", "e.php", "--project", dir)
-	if code != ExitError || !strings.Contains(out, "e.php:2:") {
-		t.Fatalf("php-check %d %q", code, out)
-	}
-	if code, _, _ := run(t, "", "php-check", "e.php", "--php", "8.1", "--project", dir); code != ExitOK {
-		t.Fatal("php-check 8.1 should pass")
+	if syntax.TreeSitter {
+		code, out, _ := run(t, "", "php-check", "e.php", "--project", dir)
+		if code != ExitError || !strings.Contains(out, "e.php:2:") {
+			t.Fatalf("php-check %d %q", code, out)
+		}
+		if code, _, _ := run(t, "", "php-check", "e.php", "--php", "8.1", "--project", dir); code != ExitOK {
+			t.Fatal("php-check 8.1 should pass")
+		}
 	}
 	if code, _, _ := run(t, "", "git-status", "--project", dir); code != ExitError {
 		t.Fatal("git-status outside repo")

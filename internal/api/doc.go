@@ -22,6 +22,7 @@
 //	lang-php      lsp.*
 //	git           git.*
 //	debug-xdebug  debug.*
+//	syntax        syntax.highlights, syntax.folds, syntax.outline (D80)
 //
 // All methods take a context and a JSON-serialisable params struct and return
 // a JSON-serialisable result. They live in one method table (name → handler)
@@ -31,7 +32,20 @@
 //   - App.Serve for JSON-RPC 2.0 over a stream (`tiegel --headless serve`,
 //     newline-delimited JSON or LSP Content-Length framing),
 //   - the CLI in internal/headless (`tiegel --headless call <method> <json>`
-//     plus friendly commands built on the same methods).
+//     plus friendly commands built on the same methods),
+//   - internal/api/server for sockets (`serve --listen unix:PATH|tcp:HOST:PORT`,
+//     several clients, token authentication via the "auth" request).
+//
+// # Clients: Caller
+//
+// Client code (the GUI, docsync) is written against the Caller interface:
+// Call(ctx, method, params, result) and Subscribe(ctx, topics, fn). InProcess
+// implements it on an App in the same process (direct dispatch, no JSON when
+// types match); internal/api/client implements it remotely (Dial for
+// sockets, Spawn for a stdio child such as `wsl.exe -d D -- tiegel
+// --headless serve`). The generic helper Call[R, P] gives typed results.
+// Without a shared buffer, internal/api/docsync mirrors a document locally
+// and keeps it in sync through versioned edits and doc.edited events.
 //
 // Errors are *Error values with stable codes (CodeInvalidParams,
 // CodeNotFound, CodeNoProject, CodeModuleDisabled, ...) and optional Data.

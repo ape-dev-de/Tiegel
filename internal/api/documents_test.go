@@ -50,8 +50,8 @@ func TestDocEditing(t *testing.T) {
 	if got := docText(t, a, "a.php"); got != "<?php\necho 'ä!';\n" || !st.Modified || st.Version == 0 {
 		t.Fatalf("insert: %q %+v", got, st)
 	}
-	call(t, a, "doc.insert", DocInsertParams{Path: "a.php", At: Pos{Offset: 0}, Text: "#", Version: st.Version}, &st)
-	wantCode(t, a, "doc.insert", DocInsertParams{Path: "a.php", Text: "x", Version: 1}, CodeConflict)
+	call(t, a, "doc.insert", DocInsertParams{Path: "a.php", At: Pos{Offset: 0}, Text: "#", Version: VersionOf(st.Version)}, &st)
+	wantCode(t, a, "doc.insert", DocInsertParams{Path: "a.php", Text: "x", Version: VersionOf(1)}, CodeConflict)
 	wantCode(t, a, "doc.insert", DocInsertParams{Path: "a.php", At: Pos{Line: 99}}, CodeInvalidParams)
 	wantCode(t, a, "doc.insert", DocInsertParams{Path: "a.php", At: Pos{Offset: -1}}, CodeInvalidParams)
 

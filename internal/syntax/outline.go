@@ -1,3 +1,5 @@
+//go:build cgo
+
 package syntax
 
 import (
@@ -5,52 +7,6 @@ import (
 
 	ts "github.com/tree-sitter/go-tree-sitter"
 )
-
-// SymbolKind classifies an outline entry.
-type SymbolKind uint8
-
-// Outline symbol kinds.
-const (
-	SymbolNamespace SymbolKind = iota
-	SymbolClass
-	SymbolInterface
-	SymbolTrait
-	SymbolEnum
-	SymbolEnumCase
-	SymbolMethod
-	SymbolFunction
-	SymbolProperty
-	SymbolConstant
-)
-
-var symbolKindNames = [...]string{"namespace", "class", "interface", "trait", "enum", "enum case", "method", "function", "property", "constant"}
-
-// String returns a lower-case name such as "class".
-func (k SymbolKind) String() string {
-	if int(k) < len(symbolKindNames) {
-		return symbolKindNames[k]
-	}
-	return "unknown"
-}
-
-// Symbol is one entry of the structure outline.
-type Symbol struct {
-	Kind SymbolKind
-	Name string
-	// Detail is a short signature: parameters and return type for functions
-	// and methods, the declared type for properties and typed constants, the
-	// backing type for enums.
-	Detail string
-	// Modifiers such as "public", "static", "abstract", "readonly",
-	// "private(set)" in source order.
-	Modifiers []string
-	StartByte int
-	EndByte   int
-	Start     Point // start of the whole declaration
-	End       Point
-	NameStart Point // position of the name, for navigation
-	Children  []Symbol
-}
 
 // Outline returns the PHP structure (namespaces, classes, interfaces,
 // traits, enums and their members, functions). It returns nil for other

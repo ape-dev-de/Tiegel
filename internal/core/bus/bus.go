@@ -145,6 +145,10 @@ func (b *Bus) remove(s *subscription) {
 	b.done(dropped)
 }
 
+// Match reports whether a subscription pattern ("doc.saved", "doc.*", "*")
+// matches a concrete topic, using the same rules as Subscribe.
+func Match(pattern, topic string) bool { return match(pattern, topic) }
+
 // match reports whether a subscription pattern matches a concrete topic.
 func match(pattern, topic string) bool {
 	switch {

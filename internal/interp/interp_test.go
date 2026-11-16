@@ -2,7 +2,6 @@ package interp
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -283,29 +282,6 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func TestWSLPlaceholder(t *testing.T) {
-	w := &WSL{Distro: "Ubuntu", Path: "/usr/bin/php"}
-	ctx := context.Background()
-	if w.Kind() != KindWSL || w.ID() != "wsl:Ubuntu:/usr/bin/php" || !strings.Contains(w.Label(), "Ubuntu") {
-		t.Errorf("metadata: %s %s %s", w.Kind(), w.ID(), w.Label())
-	}
-	if _, err := w.Version(ctx); !errors.Is(err, ErrNotImplemented) {
-		t.Error(err)
-	}
-	if _, err := w.Modules(ctx); !errors.Is(err, ErrNotImplemented) {
-		t.Error(err)
-	}
-	if _, err := w.Ini(ctx); !errors.Is(err, ErrNotImplemented) {
-		t.Error(err)
-	}
-	if _, err := w.Command(ctx); !errors.Is(err, ErrNotImplemented) {
-		t.Error(err)
-	}
-	if _, err := Run(ctx, w, "-v"); !errors.Is(err, ErrNotImplemented) {
-		t.Error(err)
-	}
 }
 
 // TestRealPHP exercises an installed php if there is one; it never fails
