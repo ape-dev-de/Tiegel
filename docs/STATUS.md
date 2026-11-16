@@ -42,3 +42,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - Emoji/CJK-Ersatzschrift im Editor (Entscheidung zu z.B. Noto-Fonts, Lizenz OFL).
 - Windows-GUI ↔ WSL-Backend in der GUI umschaltbar machen (Backend fertig), Linux-Paket, Windows-Installer.
 - Golden-Screenshot-Tests als Abnahme M2 (Screenshots werden erzeugt, aber nicht verglichen).
+- 2026-11-16: CI-Fixes gemergt (Windows-Pfade/EOL, Build-Tag `headless`, D84/D85). CI auf main komplett grün (macOS, Linux, Windows, Cross).
