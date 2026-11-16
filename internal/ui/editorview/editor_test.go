@@ -312,6 +312,22 @@ func TestEventsOut(t *testing.T) {
 	if _, ok := r.e.AnchorRect(r.e.Buffer().LineStart(1)); ok {
 		t.Fatal("folded line reported visible")
 	}
+	// A right click into the icon column is reported as secondary; right
+	// clicks into the text are not.
+	p := f32.Pt(float32(g.iconX+1), y+float32(g.lineH))
+	r.h.Router.Queue(r.pointer(pointer.Move, p, 0, 0), r.pointer(pointer.Press, p, key.ModAlt, pointer.ButtonSecondary), r.pointer(pointer.Release, p, 0, 0))
+	tp := f32.Pt(float32(g.size.X-20), y)
+	r.h.Router.Queue(r.pointer(pointer.Move, tp, 0, 0), r.pointer(pointer.Press, tp, 0, pointer.ButtonSecondary), r.pointer(pointer.Release, tp, 0, 0))
+	r.frame()
+	clicks = clicks[:0]
+	for _, ev := range r.takeEvents() {
+		if gc, ok := ev.(GutterClickEvent); ok {
+			clicks = append(clicks, gc)
+		}
+	}
+	if len(clicks) != 1 || !clicks[0].Secondary || clicks[0].Area != GutterIcons || clicks[0].Line != 3 || clicks[0].Mods&keymap.Alt == 0 {
+		t.Fatalf("secondary clicks %+v", clicks)
+	}
 	// Moving the caret into the fold reveals it.
 	r.e.SetCaret(r.e.Buffer().LineStart(2))
 	if r.e.Folds().IsCollapsed(0) {

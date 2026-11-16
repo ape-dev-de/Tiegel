@@ -9,8 +9,10 @@
 // the shared document buffers in-process (api.App.Document) under the
 // document lock.
 //
-// Extension points for further features (git tool window, debug panel,
-// gutter markers, actions, status items) are collected in Registry.
+// Extension points for features (tool windows, gutter markers, actions,
+// status items, per-frame handlers) are collected in Registry; the git
+// feature (gitdock.go) and the debugger (debugdock.go) dock onto the shell
+// only through them and live in controller.Git / controller.Debug.
 package gui
 
 import (
@@ -82,6 +84,11 @@ func loop(ctx context.Context, w *app.Window, be controller.Backend, projectPath
 	ctl.Invalidate = invalidate
 	v := NewView(ctl, runtime.GOOS)
 	v.Invalidate = invalidate
+	v.Raise = func() {
+		if live.Load() {
+			w.Perform(system.ActionRaise)
+		}
+	}
 	defer v.Close()
 	ctl.Start(projectPath)
 	go func() {

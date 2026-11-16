@@ -2,11 +2,13 @@ package gui
 
 import (
 	"fmt"
+	"io"
 	"path"
 	"runtime"
 	"strings"
 	"time"
 
+	"gioui.org/io/clipboard"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/text"
@@ -40,6 +42,7 @@ const (
 	chooseLine
 	chooseLocations
 	choosePHP
+	chooseCustom
 )
 
 // View is the main window content: it lays out the workbench from the
@@ -93,6 +96,16 @@ type View struct {
 	// focusEditor moves the keyboard focus to the editor on the next
 	// frame (after choosers and jumps).
 	focusEditor bool
+
+	// Raise brings the window to the front (set by the window loop).
+	Raise func()
+
+	gitd *gitDock
+	dbgd *debugDock
+
+	custom    *ChooserSpec
+	popup     *Popup
+	clipboard *string
 }
 
 // NewView returns the view for ctl. goos selects the keymap ("darwin":
@@ -104,7 +117,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v := &View{
 		ctl: ctl, goos: goos, Registry: NewRegistry(), shaper: tokens.NewShaper(),
 		editors: map[string]*editorSession{}, Invalidate: func() {},
-		systemDark: systemDarkMode,
+		systemDark: systemDarkMode, Raise: func() {},
 	}
 	for _, a := range defaultActions() {
 		v.Registry.AddAction(a)
@@ -127,6 +140,8 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v.bench.ActiveTool = toolProblems
 	v.welcome.Version = version.Version
 	v.applyTheme()
+	v.gitd = installGit(v)
+	v.dbgd = installDebug(v)
 	return v
 }
 
@@ -184,6 +199,13 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 		return v.welcome.Layout(gtx, th)
 	}
 
+	for _, h := range v.Registry.frames {
+		h(v, gtx)
+	}
+	if v.clipboard != nil {
+		gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(*v.clipboard))})
+		v.clipboard = nil
+	}
 	v.global.build(v.Registry, v.goos, ScopeGlobal, nil)
 	v.global.process(gtx, v)
 	v.handleWorkbench(gtx)
@@ -223,6 +245,9 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 	switch {
 	case v.settingsOpen:
 		slots.Overlay, slots.OverlayCentered = func(gtx layout.Context) layout.Dimensions { return v.settings.Layout(gtx, th) }, true
+	case v.popup != nil:
+		p := v.popup
+		slots.Overlay, slots.OverlayCentered = func(gtx layout.Context) layout.Dimensions { return p.Layout(gtx, th) }, p.Centered
 	case v.chooseMode != chooseNone:
 		slots.Overlay = func(gtx layout.Context) layout.Dimensions { return v.chooser.Layout(gtx, th) }
 	}
@@ -242,13 +267,39 @@ func expandHome(p string) string {
 
 // ---- workbench, tree, tabs, status ------------------------------------------
 
+// ShowTool opens the tool window id and brings it to the front.
+func (v *View) ShowTool(id string) {
+	if v.bench.ToolOpen && v.bench.ActiveTool == id {
+		return
+	}
+	v.toggleTool(id)
+}
+
+// ToolShown reports whether tool window id is open and in front.
+func (v *View) ToolShown(id string) bool { return v.bench.ToolOpen && v.bench.ActiveTool == id }
+
+// HideTool closes the tool area if id is in front.
+func (v *View) HideTool(id string) {
+	if v.bench.ActiveTool == id {
+		v.bench.ToolOpen = false
+		v.bench.ActiveTool = toolProblems
+	}
+}
+
+// ToggleTool shows or hides tool window id.
+func (v *View) ToggleTool(id string) { v.toggleTool(id) }
+
 func (v *View) toggleTool(id string) {
 	if v.bench.ToolOpen && v.bench.ActiveTool == id {
 		v.bench.ToolOpen = false
 		return
 	}
 	v.bench.ActiveTool, v.bench.ToolOpen = id, true
-	if t, ok := v.Registry.ToolWindow(id); ok && t.OnOpen != nil {
+	t, ok := v.Registry.ToolWindow(id)
+	if ok && t.Share > 0 && v.bench.ToolShare() < t.Share {
+		v.bench.SetToolShare(t.Share)
+	}
+	if ok && t.OnOpen != nil {
 		t.OnOpen()
 	}
 }
@@ -343,7 +394,6 @@ const (
 	statusEOL   = "eol"
 	statusLang  = "lang"
 	statusLSP   = "lsp"
-	statusGit   = "git"
 	statusMsg   = "notice"
 )
 
@@ -380,9 +430,6 @@ func (v *View) handleStatus(gtx layout.Context) {
 		}
 		right = append(right, statusbar.Item{ID: statusLSP, Text: st.LSP, Tooltip: st.LSPHint, Glyph: g, Tone: tone, Clickable: true})
 	}
-	if st.Branch != "" {
-		right = append(right, statusbar.Item{ID: statusGit, Text: st.Branch, Glyph: atoms.GlyphBranch, Tooltip: "Git branch"})
-	}
 	for _, p := range v.Registry.status {
 		right = append(right, p()...)
 	}
@@ -397,6 +444,12 @@ func (v *View) handleStatus(gtx layout.Context) {
 			}
 		case statusMsg:
 			v.ctl.Status.Notice = ""
+		default:
+			for _, h := range v.Registry.statusClicks {
+				if h(v, e.(statusbar.ClickEvent).ID) {
+					break
+				}
+			}
 		}
 	}
 }
@@ -460,6 +513,13 @@ func (v *View) layoutProblems(gtx layout.Context, th *tokens.Theme) layout.Dimen
 // ---- overlays: chooser and settings -------------------------------------------
 
 func (v *View) closeOverlay() {
+	if p := v.popup; p != nil {
+		v.popup = nil
+		if p.OnClose != nil {
+			p.OnClose()
+		}
+	}
+	v.custom = nil
 	v.chooseMode = chooseNone
 	v.ctl.Locations = nil
 	if v.settingsOpen {
@@ -565,6 +625,10 @@ func (v *View) handleOverlay(gtx layout.Context) {
 		v.handleSettings(gtx)
 		return
 	}
+	if v.popup != nil {
+		v.handlePopup(gtx)
+		return
+	}
 	if v.chooseMode == chooseNone {
 		return
 	}
@@ -579,6 +643,9 @@ func (v *View) handleOverlay(gtx layout.Context) {
 		case palette.QueryEvent:
 			if v.chooseMode == chooseFiles || v.chooseMode == chooseRecent {
 				v.filterFiles(e.Query)
+			}
+			if v.chooseMode == chooseCustom && v.custom != nil && v.custom.OnQuery != nil {
+				v.chooser.Items = v.custom.OnQuery(e.Query)
 			}
 		case palette.ChooseEvent:
 			v.choose(e)
@@ -600,6 +667,13 @@ func (v *View) choose(e palette.ChooseEvent) {
 	case chooseLine:
 		if line, col, ok := controller.ParseLineCol(e.Query); ok {
 			v.gotoLine(line, col)
+		}
+	case chooseCustom:
+		if cs := v.custom; cs != nil {
+			v.custom = nil
+			if cs.OnChoose != nil {
+				cs.OnChoose(e.Index, e.Query)
+			}
 		}
 	case choosePHP:
 		switch {

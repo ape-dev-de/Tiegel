@@ -88,6 +88,20 @@ func (w *Workbench) init() {
 	w.toolBtns = map[string]*widget.Clickable{}
 }
 
+// ToolShare returns the share of the editor column taken by the open tool
+// area (0..1).
+func (w *Workbench) ToolShare() float32 {
+	w.init()
+	return 1 - w.bottom.Ratio
+}
+
+// SetToolShare sets the share of the editor column taken by the tool area
+// (clamped to 0.1..0.9); the user can still drag the divider.
+func (w *Workbench) SetToolShare(share float32) {
+	w.init()
+	w.bottom.Ratio = 1 - min(max(share, 0.1), 0.9)
+}
+
 func (w *Workbench) btn(id string) *widget.Clickable {
 	b := w.toolBtns[id]
 	if b == nil {

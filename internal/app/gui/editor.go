@@ -134,7 +134,11 @@ func (v *View) layoutEditor(gtx layout.Context) layout.Dimensions {
 
 	if r := c.Reveal; r != nil && r.File == s.file {
 		c.Reveal = nil
-		s.ed.SetCaret(min(max(r.Range.Start.Offset, 0), buf.Len()))
+		off := r.Range.Start.Offset
+		if off < 0 { // by line (controller.AtLine)
+			off = buf.LineStart(min(max(r.Range.Start.Line-1, 0), buf.LineCount()-1))
+		}
+		s.ed.SetCaret(min(max(off, 0), buf.Len()))
 		v.focusEditor = true
 	}
 	if rs, ok := s.hl.TakeFolds(); ok {
