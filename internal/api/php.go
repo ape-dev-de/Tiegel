@@ -95,6 +95,10 @@ func (a *App) phpVersion(ctx context.Context, p PHPVersionParams) (PHPVersionRes
 				return PHPVersionResult{}, err
 			}
 			opts.Runner = interpRunner{i}
+		} else if def := a.defaultInterpreter(ctx); def != nil {
+			// No explicit choice: the concept puts the real interpreter
+			// first, so fall back to the first discovered local binary.
+			opts.Runner = interpRunner{def}
 		}
 	}
 	res, err := phpver.Detect(ctx, opts)
@@ -157,4 +161,12 @@ func (a *App) phpCheck(ctx context.Context, p PHPCheckParams) (PHPCheckResult, e
 		})
 	}
 	return res, nil
+}
+
+// defaultInterpreter returns the first discovered local interpreter, or nil.
+func (a *App) defaultInterpreter(ctx context.Context) interp.Interpreter {
+	if locals := interp.Discover(ctx, a.opts.Interp); len(locals) > 0 {
+		return locals[0]
+	}
+	return nil
 }
