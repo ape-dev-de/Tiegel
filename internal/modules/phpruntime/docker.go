@@ -3,8 +3,10 @@ package phpruntime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -128,21 +130,87 @@ func (m *Module) serviceState(ctx context.Context, ci *compose.Interpreter) stri
 // not available locally and was not pulled (no user action).
 const HintImageNotPulled = "image-not-pulled"
 
-// imageHint explains a failed automatic probe of an image interpreter
-// whose image is missing locally.
-func imageHint(ctx context.Context, i interp.Interpreter, start bool) *HintInfo {
-	d, ok := i.(*dockercli.ImageInterpreter)
-	if !ok || start {
-		return nil
-	}
+// HintVersionUnknown is the hint code when an automatic query needs the
+// PHP version of an image interpreter that was never probed: no container
+// is started without a user action (D250), "Re-read" (interp.probe
+// refresh) runs it once.
+const HintVersionUnknown = "version-unknown"
+
+// errNotProbed is returned by a *cachedImage without a cached probe.
+var errNotProbed = errors.New("PHP version unknown – Re-read (no container is started automatically)")
+
+// imageHint explains why an automatic query of image interpreter d has no
+// result: the image is missing locally (image-not-pulled, asked with
+// `docker image ls`, which starts no container) or it was never probed
+// (version-unknown).
+func imageHint(ctx context.Context, d *dockercli.ImageInterpreter) *HintInfo {
 	ctx, cancel := context.WithTimeout(ctx, statusTimeout)
 	defer cancel()
-	if exists, err := d.Client.ImageExists(ctx, d.Image); err != nil || exists {
-		return nil
+	if exists, err := d.Client.ImageExists(ctx, d.Image); err == nil && !exists {
+		return &HintInfo{"info", HintImageNotPulled,
+			fmt.Sprintf("image %s is not available locally; it is not pulled automatically (start it explicitly to pull)", d.Image)}
 	}
-	return &HintInfo{"info", HintImageNotPulled,
-		fmt.Sprintf("image %s is not available locally; it is not pulled automatically (start it explicitly to pull)", d.Image)}
+	return &HintInfo{"info", HintVersionUnknown,
+		fmt.Sprintf("PHP version of image %s unknown – Re-read to run it once (no container is started automatically)", d.Image)}
 }
+
+// cachedImage is an image interpreter for automatic queries (D250): it
+// answers Version, Modules and Ini from the probe cache and never runs a
+// container; without a cached probe they fail with errNotProbed. It also
+// serves as phpver.Runner for the version query.
+type cachedImage struct {
+	*dockercli.ImageInterpreter
+	entry  ProbeEntry
+	cached bool
+}
+
+var _ interp.Interpreter = (*cachedImage)(nil)
+
+// Version implements interp.Interpreter from the cache.
+func (c *cachedImage) Version(context.Context) (string, error) {
+	if !c.cached || c.entry.Info.Version == "" {
+		return "", errNotProbed
+	}
+	return c.entry.Info.Version, nil
+}
+
+// Modules implements interp.Interpreter from the cache.
+func (c *cachedImage) Modules(ctx context.Context) ([]string, error) {
+	if _, err := c.Version(ctx); err != nil {
+		return nil, err
+	}
+	return append(append([]string(nil), c.entry.Info.Extensions...), c.entry.Info.ZendExtensions...), nil
+}
+
+// Ini implements interp.Interpreter from the cache.
+func (c *cachedImage) Ini(ctx context.Context) (interp.IniValues, error) {
+	if _, err := c.Version(ctx); err != nil {
+		return nil, err
+	}
+	ini := interp.IniValues{}
+	for k, v := range c.entry.Info.Ini {
+		ini[k] = v
+	}
+	return ini, nil
+}
+
+// Command implements interp.Interpreter: it never runs a container.
+func (c *cachedImage) Command(context.Context, ...string) (*exec.Cmd, error) {
+	return nil, errNotProbed
+}
+
+// RunPHP implements phpver.Runner: it only answers the version query
+// (`-r echo PHP_VERSION;`) from the cache.
+func (c *cachedImage) RunPHP(ctx context.Context, args ...string) ([]byte, error) {
+	if len(args) != 2 || args[0] != "-r" || !strings.Contains(args[1], "PHP_VERSION") {
+		return nil, errNotProbed
+	}
+	v, err := c.Version(ctx)
+	return []byte(v), err
+}
+
+// hint explains a missing cached result (see imageHint).
+func (c *cachedImage) hint(ctx context.Context) *HintInfo { return imageHint(ctx, c.ImageInterpreter) }
 
 // ---- probe cache ------------------------------------------------------------
 
@@ -234,7 +302,9 @@ func (m *Module) cachedProbe(id string) (ProbeEntry, bool) {
 type ProbeParams struct {
 	// ID of the interpreter; empty means the selected one.
 	ID string `json:"id,omitempty"`
-	// Refresh re-reads the info even if it is cached ("re-read").
+	// Refresh re-reads the info even if it is cached ("re-read", a user
+	// action): only then (or with Start) an image interpreter runs a
+	// container (D250).
 	Refresh bool `json:"refresh,omitempty"`
 	// Start allows starting a compose container (`run`) or pulling an
 	// image; only for an explicit user action.
@@ -279,14 +349,22 @@ func (m *Module) interpProbe(ctx context.Context, p ProbeParams) (ProbeResult, e
 	if err != nil {
 		return ProbeResult{}, err
 	}
+	// Only an explicit re-read (refresh) or start may run a container of
+	// an image (D250).
+	if d, ok := i.(*dockercli.ImageInterpreter); ok && !p.Refresh && !p.Start {
+		h := imageHint(ctx, d)
+		return ProbeResult{}, api.Errorf(api.CodeUnavailable, "%s", h.Message).WithData(h)
+	}
 	pi, probed := probeInterpreter(i, p.Start)
 	info, err := interp.Probe(ctx, pi)
 	if err != nil {
 		if h := stoppedHint(ctx, probed); h != nil {
 			return ProbeResult{}, api.Errorf(api.CodeUnavailable, "%s: %w", h.Message, err).WithData(h)
 		}
-		if h := imageHint(ctx, i, p.Start); h != nil {
-			return ProbeResult{}, api.Errorf(api.CodeUnavailable, "%s: %w", h.Message, err).WithData(h)
+		if d, ok := i.(*dockercli.ImageInterpreter); ok && !p.Start {
+			if h := imageHint(ctx, d); h.Code == HintImageNotPulled {
+				return ProbeResult{}, api.Errorf(api.CodeUnavailable, "%s: %w", h.Message, err).WithData(h)
+			}
 		}
 		return ProbeResult{}, api.Errorf(api.CodeUnavailable, "probe %s: %w", id, err)
 	}

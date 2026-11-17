@@ -57,8 +57,13 @@ type Interpreter struct {
 	// Mappings translate between host and container paths. Initialised
 	// from the service's bind mounts and freely editable.
 	Mappings Mappings
-	// PHPVersion caches the last successful Version result.
+	// PHPVersion is a known version (e.g. from a cached probe); it is only
+	// set before the interpreter is shared and never written by methods.
+	// Version results go to an internal, synchronised cache (see
+	// CachedVersion).
 	PHPVersion string
+
+	detected *interp.VersionCache
 }
 
 var _ interp.Interpreter = (*Interpreter)(nil)
@@ -72,6 +77,7 @@ func NewInterpreter(p *Project, service string) *Interpreter {
 		Files:    append([]string(nil), p.Files...),
 		Profiles: append([]string(nil), p.Profiles...),
 		Service:  service,
+		detected: interp.NewVersionCache(),
 	}
 	if svc, ok := p.Service(service); ok {
 		c.Mappings = ServiceMappings(p.Dir, svc)
@@ -98,8 +104,8 @@ func (c *Interpreter) ID() string { return "compose:" + c.Project + ":" + c.Serv
 
 // Label implements interp.Interpreter.
 func (c *Interpreter) Label() string {
-	if c.PHPVersion != "" {
-		return fmt.Sprintf("PHP %s (compose %s/%s)", c.PHPVersion, c.Project, c.Service)
+	if v := c.CachedVersion(); v != "" {
+		return fmt.Sprintf("PHP %s (compose %s/%s)", v, c.Project, c.Service)
 	}
 	return fmt.Sprintf("PHP (compose %s/%s)", c.Project, c.Service)
 }
@@ -113,8 +119,18 @@ func (c *Interpreter) Version(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	c.PHPVersion = v
+	c.detected.Set(v)
 	return v, nil
+}
+
+// CachedVersion returns the version of the last successful Version call
+// (shared with copies from ExecOnly), else PHPVersion. Safe for
+// concurrent use.
+func (c *Interpreter) CachedVersion() string {
+	if v := c.detected.Get(); v != "" {
+		return v
+	}
+	return c.PHPVersion
 }
 
 // Modules implements interp.Interpreter.
