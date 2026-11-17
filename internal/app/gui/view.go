@@ -140,6 +140,7 @@ type View struct {
 	gitd *gitDock
 	dbgd *debugDock
 	navd *navDock
+	lspd *lspDock
 	// work is the file side: tree menu, external changes, diff and
 	// history tabs, remote git (filesdock.go and friends).
 	work *workDock
@@ -197,6 +198,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v.work = installWork(v)
 	v.navd = installNav(v)
 	v.installKeyNav()
+	v.lspd = installLSP(v)
 	return v
 }
 
@@ -375,11 +377,11 @@ func (v *View) handleStatus(gtx layout.Context) {
 		case statusCaret:
 			v.openGotoLine()
 		case statusLSP:
-			if !st.LSPRunning {
-				v.ctl.RestartLSP()
-			}
+			v.lspd.openMenu()
 		case statusMsg:
-			v.ctl.Status.Notice = ""
+			if !v.lspd.noticeClick() {
+				v.ctl.Status.Notice = ""
+			}
 		default:
 			for _, h := range v.Registry.statusClicks {
 				if h(v, e.(statusbar.ClickEvent).ID) {

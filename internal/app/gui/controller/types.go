@@ -94,11 +94,20 @@ type diagEvent struct {
 
 // LSPStatus is the result of lsp.start/lsp.status and the lsp.status event.
 type LSPStatus struct {
-	Running    bool   `json:"running"`
-	Server     string `json:"server"`
-	Name       string `json:"name"`
-	PHPVersion string `json:"phpVersion"`
-	Error      string `json:"error"`
+	// State is the supervisor state (LSPOff, LSPNotFound, …).
+	State      string   `json:"state"`
+	Running    bool     `json:"running"`
+	Selected   string   `json:"selected"`
+	Server     string   `json:"server"`
+	Name       string   `json:"name"`
+	Command    string   `json:"command"`
+	Plugin     string   `json:"plugin"`
+	PHPVersion string   `json:"phpVersion"`
+	Reason     string   `json:"reason"`
+	Searched   []string `json:"searched"`
+	Crashes    int      `json:"crashes"`
+	Trace      bool     `json:"trace"`
+	Error      string   `json:"error"`
 }
 
 // PHPVersion is the result of php.version.

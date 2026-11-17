@@ -197,6 +197,8 @@ type Controller struct {
 	// Work is the file side: file operations, external changes, diff
 	// and history tabs, annotations, remote git (workspace.go).
 	Work *Workspace
+	// LSP is the language server supervisor state (lspsup.go).
+	LSP LSPInfo
 }
 
 // New returns a controller for be. Call Close when done.
@@ -213,7 +215,7 @@ func New(be Backend) *Controller {
 	c.Debug = newDebug(c)
 	c.Work = newWorkspace(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
-		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed"}, func(e api.Event) {
+		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*"}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
 	})
 	if err != nil {
@@ -579,11 +581,8 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 			}
 			c.setDiagnostics(ev, src)
 		}
-	case "lsp.status":
-		var st LSPStatus
-		if json.Unmarshal(payload, &st) == nil {
-			c.applyLSPStatus(st, nil)
-		}
+	case "lsp.state", "lsp.log", "install.output", "install.done":
+		c.handleLSPEvent(topic, payload)
 	case "php.versionChanged", "interpreter.changed":
 		c.refreshRuntime()
 	case "git.changed", "git.committed", "file.saved":
@@ -712,8 +711,11 @@ func (c *Controller) startLSP() {
 	})
 }
 
-// RestartLSP starts the language server again.
-func (c *Controller) RestartLSP() { c.startLSP() }
+// RestartLSP restarts the language server (also after a crash loop).
+func (c *Controller) RestartLSP() {
+	c.Status.LSP = "LSP: starting…"
+	c.lspCall("lsp.restart", nil)
+}
 
 func (c *Controller) applyLSPStatus(st LSPStatus, err error) {
 	switch {
@@ -723,12 +725,18 @@ func (c *Controller) applyLSPStatus(st LSPStatus, err error) {
 		case api.CodeModuleDisabled, api.CodeMethodNotFound:
 			c.Status.LSP, c.Status.LSPHint = "", ""
 		case api.CodeUnavailable, api.CodeNotFound:
+			if st := c.LSP.Status.State; st != "" && st != LSPRunning && st != LSPStarting {
+				c.applyLSPState(c.LSP.Status) // the lsp.state event explains it
+				return
+			}
 			c.Status.LSP = "No language server"
 			c.Status.LSPHint = "No PHP language server found. Install Phpactor or PHPantom (e.g. via Composer or your package manager); Tiegel never downloads one. " + err.Error()
 		default:
 			c.Status.LSP = "LSP failed"
 			c.Status.LSPHint = err.Error()
 		}
+	case st.State != "":
+		c.applyLSPState(st)
 	case st.Running:
 		c.Status.LSPRunning = true
 		name := st.Name

@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/lsp/jsonrpc2"
 	"github.com/ape-dev-de/tiegel/internal/lsp/protocol"
@@ -72,6 +74,21 @@ type Config struct {
 	// example while a workspace/executeCommand runs). Without it such
 	// requests are refused with applied=false.
 	OnApplyEdit func(ctx context.Context, p protocol.ApplyWorkspaceEditParams) protocol.ApplyWorkspaceEditResult
+
+	// Stderr receives every line the server process writes to stderr
+	// (child processes started by Start only). It must not block.
+	Stderr func(line string)
+	// Trace receives every JSON-RPC message body; outgoing is true for
+	// messages sent to the server. It must not block or keep msg.
+	Trace func(outgoing bool, msg []byte)
+	// RequestTimeout bounds every request after initialize (0: no limit
+	// besides the caller's context). A server that does not answer in
+	// time is considered hung for that request.
+	RequestTimeout time.Duration
+	// OnTimeout is called when a request ran into RequestTimeout;
+	// consecutive counts such timeouts without a successful answer in
+	// between. The supervisor restarts a server that keeps hanging.
+	OnTimeout func(method string, consecutive int)
 }
 
 type document struct {
@@ -92,6 +109,11 @@ type Client struct {
 
 	mu   sync.Mutex
 	docs map[protocol.DocumentURI]*document
+
+	// timeouts counts consecutive RequestTimeout hits; ready is set after
+	// initialize (the timeout does not apply to the handshake).
+	timeouts atomic.Int32
+	ready    atomic.Bool
 }
 
 // Start launches cfg.Command as child process speaking LSP over stdio and
@@ -105,7 +127,7 @@ func Start(ctx context.Context, cfg Config) (*Client, error) {
 	if dir == "" {
 		dir = cfg.RootDir
 	}
-	p, err := startProcess(cfg.Command, cfg.Args, dir, cfg.Env, log)
+	p, err := startProcess(cfg.Command, cfg.Args, dir, cfg.Env, log, cfg.Stderr)
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +164,9 @@ func newClient(rwc io.ReadWriteCloser, cfg Config, log *slog.Logger) *Client {
 		log:  log,
 		conn: jsonrpc2.NewConn(rwc),
 		docs: make(map[protocol.DocumentURI]*document),
+	}
+	if cfg.Trace != nil {
+		c.conn.SetTrace(cfg.Trace)
 	}
 	c.registerHandlers()
 	c.conn.Start()
@@ -281,6 +306,7 @@ func (c *Client) initialize(ctx context.Context) error {
 	if err := c.notify(ctx, protocol.MethodInitialized, struct{}{}); err != nil {
 		return fmt.Errorf("lsp: initialized: %w", err)
 	}
+	c.ready.Store(true)
 	return nil
 }
 
@@ -397,7 +423,36 @@ func (c *Client) Notify(ctx context.Context, method string, params any) error {
 }
 
 func (c *Client) call(ctx context.Context, method string, params, result any) error {
-	return c.wrapExit(c.conn.Call(ctx, method, params, result))
+	d := c.cfg.RequestTimeout
+	if d <= 0 || !c.ready.Load() || method == protocol.MethodShutdown {
+		return c.wrapExit(c.conn.Call(ctx, method, params, result))
+	}
+	tctx, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
+	err := c.wrapExit(c.conn.Call(tctx, method, params, result))
+	switch {
+	case err == nil:
+		c.timeouts.Store(0)
+	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
+		// Our limit fired, not the caller's: the server hangs.
+		n := c.timeouts.Add(1)
+		c.log.Warn("lsp: request timed out", "method", method, "timeout", d, "consecutive", n)
+		if c.cfg.OnTimeout != nil {
+			c.cfg.OnTimeout(method, int(n))
+		}
+		return fmt.Errorf("lsp: %s: no answer within %s: %w", method, d, err)
+	case !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded):
+		c.timeouts.Store(0) // an (error) answer arrived: the server is alive
+	}
+	return err
+}
+
+// PID returns the process ID of a server started with Start, or 0.
+func (c *Client) PID() int {
+	if c.proc == nil {
+		return 0
+	}
+	return c.proc.pid()
 }
 
 func (c *Client) notify(ctx context.Context, method string, params any) error {

@@ -1,6 +1,7 @@
 package servers
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,6 +21,12 @@ func touch(t *testing.T, dir, name string, mode os.FileMode) string {
 	return p
 }
 
+var (
+	phpactor     = Definition{ID: "phpactor", Name: "Phpactor", Binaries: []string{"phpactor"}, Args: []string{"language-server"}, PHPVersionOption: "php.version"}
+	phpantom     = Definition{ID: "phpantom", Name: "PHPantom", Binaries: []string{"phpantom_lsp", "phpantom"}}
+	intelephense = Definition{ID: "intelephense", Binaries: []string{"intelephense"}, Args: []string{"--stdio"}, Proprietary: true, PHPVersionSetting: "intelephense.environment.phpVersion"}
+)
+
 func TestDetect(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix executable bits")
@@ -33,13 +40,9 @@ func TestDetect(t *testing.T) {
 	projPhpactor := touch(t, filepath.Join(project, "vendor", "bin"), "phpactor", 0o755)
 	homePhpactor := touch(t, filepath.Join(home, ".config", "composer", "vendor", "bin"), "phpactor", 0o755)
 	touch(t, filepath.Join(home, ".composer", "vendor", "bin"), "phpactor", 0o644) // not executable
-	phpantom := touch(t, filepath.Join(home, ".cargo", "bin"), "phpantom_lsp", 0o755)
-	intelephense := touch(t, pathDir, "intelephense", 0o755)
+	antom := touch(t, filepath.Join(home, ".cargo", "bin"), "phpantom_lsp", 0o755)
+	intel := touch(t, pathDir, "intelephense", 0o755)
 	if err := os.MkdirAll(filepath.Join(extra, "phpactor"), 0o755); err != nil { // directory, ignored
-		t.Fatal(err)
-	}
-	// Symlink to an already found binary is reported once.
-	if err := os.Symlink(projPhpactor, filepath.Join(extra, "phpactor-link")); err != nil {
 		t.Fatal(err)
 	}
 	linkDir := filepath.Join(root, "linkdir")
@@ -58,42 +61,51 @@ func TestDetect(t *testing.T) {
 		ExtraDirs:    []string{extra, linkDir},
 		NoSystemDirs: true,
 	}
-	got := Detect(opts)
+	got := Detect([]Definition{phpactor, phpantom}, opts)
 	var paths []string
 	for _, s := range got {
 		paths = append(paths, s.ID+"="+s.Path)
 	}
-	want := []string{"phpactor=" + projPhpactor, "phpactor=" + homePhpactor, "phpantom=" + phpantom}
+	want := []string{"phpactor=" + projPhpactor, "phpactor=" + homePhpactor, "phpantom=" + antom}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("got %v\nwant %v", paths, want)
 	}
 
-	opts.IncludeProprietary = true
-	got = Detect(opts)
-	last := got[len(got)-1]
-	if last.ID != Intelephense || !last.Proprietary || last.Path != intelephense {
-		t.Fatalf("intelephense: %+v", last)
+	dirs := SearchDirs(opts)
+	s, ok := Locate(intelephense, dirs)
+	if !ok || s.Path != intel {
+		t.Fatalf("locate intelephense: %+v %v", s, ok)
 	}
-	cmd, args := last.Command()
-	if cmd != intelephense || !reflect.DeepEqual(args, []string{"--stdio"}) {
+	cmd, args := s.Command()
+	if cmd != intel || !reflect.DeepEqual(args, []string{"--stdio"}) {
 		t.Fatalf("command %s %v", cmd, args)
 	}
-
-	opts.IncludeProprietary = false
-	s, ok := Find(Intelephense, opts)
-	if !ok || s.Path != intelephense {
-		t.Fatalf("find intelephense: %+v %v", s, ok)
-	}
-	s, ok = Find(Phpactor, opts)
+	s, ok = Locate(phpactor, dirs)
 	if !ok || s.Path != projPhpactor {
-		t.Fatalf("find phpactor: %+v", s)
+		t.Fatalf("locate phpactor: %+v", s)
 	}
-	cmd, args = s.Command()
-	if cmd != projPhpactor || !reflect.DeepEqual(args, []string{"language-server"}) {
-		t.Fatalf("phpactor command %s %v", cmd, args)
-	}
-	if _, ok := Find("nope", opts); ok {
+	if _, ok := Locate(Definition{ID: "nope", Binaries: []string{"nope"}}, dirs); ok {
 		t.Fatal("unknown server found")
+	}
+
+	// CheckExecutable: bare names, paths, directories, missing x bit.
+	if p, err := CheckExecutable("phpantom_lsp", dirs); err != nil || p != antom {
+		t.Fatalf("bare name %q %v", p, err)
+	}
+	if _, err := CheckExecutable("nope", dirs); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bare missing %v", err)
+	}
+	if p, err := CheckExecutable(intel, nil); err != nil || p != intel {
+		t.Fatalf("path %q %v", p, err)
+	}
+	if _, err := CheckExecutable(filepath.Join(root, "missing"), nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing %v", err)
+	}
+	if _, err := CheckExecutable(extra, nil); !errors.Is(err, ErrNotExecutable) {
+		t.Fatalf("dir %v", err)
+	}
+	if _, err := CheckExecutable(filepath.Join(home, ".composer", "vendor", "bin", "phpactor"), nil); !errors.Is(err, ErrNotExecutable) {
+		t.Fatalf("no x bit %v", err)
 	}
 }
 
@@ -102,7 +114,7 @@ func TestSearchDirs(t *testing.T) {
 	t.Setenv("COMPOSER_HOME", "/composer")
 	t.Setenv("HOME", "/h")
 	t.Setenv("USERPROFILE", "/h")
-	dirs := SearchDirs(DetectOptions{})
+	dirs := SearchDirs(DetectOptions{LoginPath: func() string { return "/login/bin" + string(os.PathListSeparator) + "/a/bin" }})
 	has := func(d string) bool {
 		for _, x := range dirs {
 			if x == filepath.Clean(d) {
@@ -111,7 +123,7 @@ func TestSearchDirs(t *testing.T) {
 		}
 		return false
 	}
-	for _, d := range []string{"/a/bin", "/composer/vendor/bin", "/h/.composer/vendor/bin", "/h/.config/composer/vendor/bin"} {
+	for _, d := range []string{"/a/bin", "/composer/vendor/bin", "/h/.composer/vendor/bin", "/h/.config/composer/vendor/bin", "/login/bin"} {
 		if !has(d) {
 			t.Errorf("missing %s in %v", d, dirs)
 		}
@@ -119,30 +131,31 @@ func TestSearchDirs(t *testing.T) {
 	if runtime.GOOS == "darwin" && !has("/opt/homebrew/bin") {
 		t.Errorf("missing homebrew in %v", dirs)
 	}
-	if dirs[0] != filepath.Clean("/a/bin") {
-		t.Errorf("PATH should come first without project: %v", dirs)
+	if dirs[0] != filepath.Clean("/a/bin") || dirs[1] != filepath.Clean("/login/bin") {
+		t.Errorf("PATH, then login PATH should come first without project: %v", dirs)
+	}
+	// Without system dirs the login shell is not asked.
+	dirs = SearchDirs(DetectOptions{NoSystemDirs: true, LoginPath: func() string { t.Fatal("login shell asked"); return "" }})
+	if has("/login/bin") {
+		t.Fatal("login path used")
 	}
 }
 
 func TestOptions(t *testing.T) {
-	defs := map[string]Definition{}
-	for _, d := range Known() {
-		defs[d.ID] = d
-	}
-	init, settings := defs[Phpactor].Options("8.3")
+	init, settings := phpactor.Options("8.3")
 	if init["php.version"] != "8.3" || len(settings) != 0 {
 		t.Fatalf("phpactor %v %v", init, settings)
 	}
-	init, settings = defs[Intelephense].Options("8.2")
+	init, settings = intelephense.Options("8.2")
 	want := map[string]any{"intelephense": map[string]any{"environment": map[string]any{"phpVersion": "8.2"}}}
 	if len(init) != 0 || !reflect.DeepEqual(settings, want) {
 		t.Fatalf("intelephense %v %v", init, settings)
 	}
-	init, settings = defs[PHPantom].Options("8.4")
+	init, settings = phpantom.Options("8.4")
 	if len(init) != 0 || len(settings) != 0 {
 		t.Fatalf("phpantom %v %v", init, settings)
 	}
-	init, settings = defs[Phpactor].Options("")
+	init, settings = phpactor.Options("")
 	if init == nil || settings == nil || len(init) != 0 {
 		t.Fatal("empty version")
 	}

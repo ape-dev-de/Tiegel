@@ -94,7 +94,7 @@ func SignatureTrigger(typed string) (request, closeHelp bool) {
 // text between start and caret.
 func (c *Controller) RequestCompletion(file string, caret, start int, prefix string) {
 	if !c.Status.LSPRunning {
-		c.Status.Notice = "Completion needs a language server"
+		c.Status.Notice = NoticeNeedsLSP("Completion")
 		return
 	}
 	c.Completion.seq++
@@ -442,7 +442,7 @@ func stripMarkdown(s string) string {
 // targets are offered in Locations.
 func (c *Controller) GoToDefinition(cur Location, method string) {
 	if !c.Status.LSPRunning {
-		c.Status.Notice = "Navigation needs a language server"
+		c.Status.Notice = NoticeNeedsLSP("Navigation")
 		return
 	}
 	c.Go(func(ctx context.Context) func() {

@@ -309,14 +309,14 @@ func TestDiagnosticsEvents(t *testing.T) {
 	if p := c.Problems(); len(p) != 2 || p[0].Severity != SevError || p[0].Path != "index.php" {
 		t.Fatalf("problems %+v", p)
 	}
-	f.emit("lsp.status", LSPStatus{Running: true, Name: "Phpactor", PHPVersion: "8.3"})
+	f.emit("lsp.state", LSPStatus{State: LSPRunning, Running: true, Name: "Phpactor", PHPVersion: "8.3"})
 	c.Settle(time.Second)
 	if !c.Status.LSPRunning || c.Status.LSP != "Phpactor" {
 		t.Fatalf("lsp %+v", c.Status)
 	}
-	f.emit("lsp.status", LSPStatus{Error: "crashed"})
+	f.emit("lsp.state", LSPStatus{State: LSPCrashed, Name: "Phpactor", Reason: "exited", Error: "exited"})
 	c.Settle(time.Second)
-	if c.Status.LSPRunning || c.Status.LSP != "LSP crashed" {
+	if c.Status.LSPRunning || c.Status.LSP != "Phpactor crashed" {
 		t.Fatalf("lsp crash %+v", c.Status)
 	}
 	f.emit("doc.changed", DocState{Path: "index.php", Modified: true})

@@ -2,7 +2,9 @@
 //
 //	php-runtime   interpreters, compose, PHP version, path mappings
 //	php-features  feature/deprecation diagnostics (→ php-runtime)
-//	lang-php      language server integration (php-runtime optional, via hooks)
+//	lang-php      language server client + supervisor (php-runtime optional, via hooks)
+//	lsp-phpactor, lsp-phpantom, lsp-intelephense
+//	              language server plugins (contribute their server via hooks; D192)
 //	git           git integration
 //	debug-xdebug  Xdebug debugger (→ php-runtime)
 //	syntax        highlighting, folds, outline over the API (D80)
@@ -21,6 +23,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/modules/docker"
 	"github.com/ape-dev-de/tiegel/internal/modules/git"
 	"github.com/ape-dev-de/tiegel/internal/modules/langphp"
+	"github.com/ape-dev-de/tiegel/internal/modules/lspplugins"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpfeatures"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpindex"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpruntime"
@@ -40,23 +43,32 @@ type Options struct {
 
 // All returns new instances of all compiled-in modules in dependency order.
 func All(opts Options) []module.Module {
-	return []module.Module{
+	mods := []module.Module{
 		phpruntime.New(opts.Runtime),
 		phpfeatures.New(opts.Features),
 		langphp.New(opts.LangPHP),
+	}
+	for _, p := range lspplugins.All() {
+		mods = append(mods, p)
+	}
+	return append(mods,
 		git.New(opts.Git),
 		debugxdebug.New(opts.Debug),
 		syntaxmod.New(),
 		phpindex.New(opts.Index),
 		docker.New(opts.Docker),
-	}
+	)
 }
 
 // Installer returns an api.Options extension that adds all modules.
 func Installer(opts Options) func(*api.App) error {
 	return func(a *api.App) error {
 		for _, m := range All(opts) {
-			if err := a.AddModule(m); err != nil {
+			var ro []module.RegisterOption
+			if d, ok := m.(interface{ RegisterOption() module.RegisterOption }); ok {
+				ro = append(ro, d.RegisterOption()) // opt-in plugins (lsp-intelephense)
+			}
+			if err := a.AddModule(m, ro...); err != nil {
 				return err
 			}
 		}

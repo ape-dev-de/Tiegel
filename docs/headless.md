@@ -23,7 +23,7 @@ Flags dürfen vor oder nach dem Befehl stehen (`--name wert` oder `--name=wert`)
 | Flag | Bedeutung |
 |---|---|
 | `--json` | maschinenlesbare Ausgabe (eingerücktes JSON auf stdout) |
-| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `interp-*`, `docker`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`) nehmen ohne Angabe das Arbeitsverzeichnis. |
+| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `lsp-status`, `lsp-restart`, `lsp-doctor`, `lsp-select`, `install`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`, `interp-*`, `docker`) nehmen ohne Angabe das Arbeitsverzeichnis. |
 | `--config-dir DIR` | Einstellungsverzeichnis statt `<UserConfigDir>/Tiegel`; alternativ Umgebungsvariable `TIEGEL_CONFIG_DIR` (Tests, CI, portable Nutzung) |
 | `--help`, `-h` | Hilfe |
 | `--version` | Version (auch `tiegel --version` ohne `--headless`) |
@@ -69,7 +69,12 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `docker status [KONTEXT]` | prüft, ob die Engine des (gewählten) Kontexts antwortet (`docker version`, Timeout `docker.timeoutSeconds`); Exit 1, wenn nicht erreichbar | `docker.status` |
 | `docker use NAME [--global]` / `docker use --clear [--global]` | Kontext fürs Projekt (bzw. global) wählen oder zurücksetzen; Compose- und Image-Interpreter verwenden ihn (`--context`) | `docker.setContext` |
 | `docker path [PFAD \| --clear]` | Docker-Binary anzeigen bzw. fest einstellen (`docker.path`) | `docker.setPath`, `docker.contexts` |
-| `lsp-servers [--all]` | installierte Language Server (`--all` inkl. proprietärer) | `lsp.servers` |
+| `lsp-servers [--all]` | installierte Language Server der eingeschalteten Plugins (`--all`: auch fehlende) | `lsp.servers` |
+| `lsp-status [--start]` | Zustand des Supervisors (`off`, `not-found`, `starting`, `running`, `crashed`, `stopped`) mit Grund und – bei `not-found` – durchsuchten Orten und Installationshinweis; `--start` startet vorher den gewählten Server; Exit 1, wenn kein Server läuft | `lsp.start`, `lsp.status` |
+| `lsp-restart [--server ID] [--command PATH] [--trace]` | startet den gewählten Server nativ neu (auch nach Crash-Schleife) und wartet auf `initialize`; `--trace` gibt Server-Log samt JSON-RPC-Trace aus; Exit 1, wenn er nicht läuft | `lsp.restart`/`lsp.start`, `lsp.trace`, `lsp.log` |
+| `lsp-doctor` | warum ein Server läuft oder nicht: Auswahl und Herkunft (Projekt/global/Standard), welcher Server gestartet würde, Befund je Server (Pfad oder Fehler), durchsuchte Orte in Reihenfolge, Installationsvorschlag | `lsp.doctor` |
+| `lsp-select auto\|none\|ID [--global]` | wählt den Language Server fürs Projekt (bzw. global) und wendet die Wahl an; `none` schaltet ihn ab (Navigation über den Index) | `lsp.select` |
+| `install PLUGIN [--scope global\|project] [--dry-run] [--yes]` | installiert das Werkzeug eines Plugins über seinen Paketmanager (D194): zeigt Befehl, Ziel, ob `composer.json` sich ändert; ausgeführt wird nur mit `--yes` (Ausgabe gestreamt, Strg+C bricht ab); `--dry-run` zeigt nur den Plan; fehlt der Paketmanager oder gibt es nur einen Hinweis (PHPantom): Hinweis, Exit 1 | `install.plan`, `install.run`, `install.wait`, Event `install.output` |
 | `modules [enable ID \| disable ID]` | Module anzeigen/schalten | `modules.*` |
 | `settings [--schema] [--module ID\|core] [--query TEXT]` | Alle deklarierten Einstellungen (D190): „Core › Seite“ und „Plugins › Modul [on/off]“ mit Schlüssel, Typ, wirksamem Wert, Quelle (`default`/`global`/`project`) und Label; `--query` sucht in Schlüssel, Label, Hilfe, Gruppe, Modul-ID; `--json` liefert das vollständige Schema | `settings.schema` |
 | `settings get KEY [--scope global\|project] [--effective]` | gespeicherten (oder mit `--effective` den wirksamen) Wert lesen | `settings.get` |
@@ -267,7 +272,7 @@ Von den Modulen veröffentlichte Topics:
 |---|---|
 | php-runtime | `interpreter.changed` (`{id, label, kind, previous}`), `interp.selected`, `runtime.mappingsChanged` (`{mappings, source}`) |
 | php-features | `php.diagnostics` (`{path, file, version, phpVersion, source, diagnostics}`), `php.versionChanged` (`{override}`) |
-| lang-php | `lsp.status` (gestartet/gestoppt/abgestürzt), `lsp.diagnostics` (`{path, file, version, diagnostics}`), `lsp.editApplied` (`{label, applied, files}` nach jeder angewendeten Workspace-Änderung: Code Action, Rename, `workspace/applyEdit` des Servers) |
+| lang-php | `lsp.state` (Supervisor-Zustand wie `lsp.status`; früher `lsp.status`), `lsp.log` (`{seq, time, kind: stderr\|send\|recv\|event, server, text}`), `lsp.diagnostics` (`{path, file, version, diagnostics}`), `lsp.editApplied` (`{label, applied, files}` nach jeder angewendeten Workspace-Änderung: Code Action, Rename, `workspace/applyEdit` des Servers) |
 | git | `git.changed` (`{op, paths}` nach jeder Änderung über die API; `op` u.a. `fetch`, `pull`, `update`, `stash`, `stashApply`, `stashPop`, `stashDrop`), `git.committed` |
 | php-index | `index.progress` (`{phase: scanning\|indexing\|ready, done, total}`, höchstens alle 100 ms), `index.updated` (`{files, truncated, generation, reason: sync\|file\|doc\|cache}`) |
 | debug-xdebug | `debug.listening`, `debug.stopped`, `debug.sessionStarted`, `debug.sessionEnded`, `debug.break` (gemappte Host-Datei/Zeile), `debug.breakpointHit`, `debug.breakpoints.changed`, `debug.status`, `debug.output`, `debug.notification`, `debug.breakpoint.resolved` |
@@ -280,7 +285,8 @@ Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`,
 |---|---|---|---|
 | `php-runtime` | – | `interp.*`, `compose.*`, `php.version`, `runtime.*` | stellt `php.resolveVersion` und `runtime.pathMappings` (Filter) bereit |
 | `php-features` | `php-runtime` | `php.check`, `php.diagnostics`, `php.setVersionOverride` | nutzt `php.resolveVersion` |
-| `lang-php` | (`php-runtime` optional) | `lsp.*` | nutzt `php.resolveVersion`, stellt `nav.lsp` (Filter) bereit |
+| `lang-php` | (`php-runtime` optional) | `lsp.*` | nutzt `php.resolveVersion` und `lsp.servers`, stellt `nav.lsp` (Filter) bereit |
+| `lsp-phpactor`, `lsp-phpantom`, `lsp-intelephense` | – | – | stellen `lsp.servers` und `install.recipes` (Filter) bereit; `lsp-intelephense` ist proprietär und standardmäßig aus |
 | `git` | – | `git.*` | ruft Guard `commit.before` (Kern: Autosave) und Filter `commit.message` |
 | `syntax` | – | `syntax.*` | – (folgt `doc.edited`) |
 | `php-index` | – | `index.*`, `nav.*` | ruft Filter `nav.lsp` (Anbieter: lang-php) |
@@ -288,7 +294,7 @@ Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`,
 
 `modules.enable`/`modules.disable` wirken sofort (und dauerhaft): ein abgeschaltetes Modul räumt Hooks und Abos ab, seine Methoden antworten mit `-32006 module disabled`. `app.methods` zeigt zu jeder Methode `module` und `disabled`.
 
-Hintergrundarbeit: php-features prüft offene PHP-Dokumente nach jeder Änderung (entprellt, inkrementelles Tree-sitter-Update aus `doc.edited`) und veröffentlicht `php.diagnostics`. lang-php hält einen gestarteten Language Server automatisch synchron: `doc.open` → didOpen, jede Änderung (auch direkt am Puffer) → didChange (inkrementell, UTF-16), `doc.close` → didClose, Speichern → didSave; bei `interpreter.changed` und `php.versionChanged` startet der Server neu.
+Hintergrundarbeit: php-features prüft offene PHP-Dokumente nach jeder Änderung (entprellt, inkrementelles Tree-sitter-Update aus `doc.edited`) und veröffentlicht `php.diagnostics`. lang-php hält einen gestarteten Language Server automatisch synchron: `doc.open` → didOpen, jede Änderung (auch direkt am Puffer) → didChange (inkrementell, UTF-16), `doc.close` → didClose, Speichern → didSave; bei `interpreter.changed` und `php.versionChanged` startet der Server neu. Der Server läuft unter einem Supervisor (D192, `internal/lsp/supervisor`): nativ gestartet (kein Container), vorher auf Vorhandensein und Ausführbarkeit geprüft (Suche: `vendor/bin`, `PATH`, PATH der Login-Shell, Composer-global, `~/.local/bin`, `~/.cargo/bin`, Homebrew), Neustart mit Backoff nach Absturz oder wiederholten Zeitüberschreitungen (`lang-php.requestTimeout`), nach 5 Abstürzen in Folge Zustand `stopped` statt Endlosschleife; nach jedem Neustart werden die offenen Dokumente neu gesendet. Wechsel des Servers (Einstellung, Plugin an/aus) wirkt sofort. Die GUI startet den Server beim Öffnen des Projekts bzw. der ersten PHP-Datei; Headless-Befehle starten ihn nur ausdrücklich.
 
 
 ## Einstellungen: Kern und Plugins
@@ -396,10 +402,17 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 
 | Methode | Parameter | Ergebnis |
 |---|---|---|
-| `lsp.servers` | `all?` | installierte Server `{id, name, path, args, license}` |
-| `lsp.known` | – | unterstützte Server |
-| `lsp.start` | `server?`, `command?`, `args?` (ohne Angabe: Einstellungen `lsp.server`/`lsp.command`/`lsp.args`, sonst erkannter Server, Phpactor bevorzugt; PHP-Version über Hook `php.resolveVersion`) | Status `{running, server, name, command, args, phpVersion, openDocs, serverInfo, generation}` |
-| `lsp.stop` / `lsp.status` | – | Status |
+| `lsp.servers` | `all?` (auch nicht installierte) | Server der eingeschalteten Plugins `{id, name, plugin, path, args, license, proprietary, found, error, selected, note, autoSelect}` |
+| `lsp.known` | – | Server der eingeschalteten Plugins (ohne Suche) |
+| `lsp.start` | `server?`, `command?`, `args?` (ohne Angabe: Einstellung `lang-php.server` – `auto`, `none` oder Server-ID, Projektwert vor globalem –, bzw. `lang-php.command`/`lang-php.args`; ein laufender Server bleibt; PHP-Version über Hook `php.resolveVersion`) | Status `{state, running, selected, server, name, command, args, pid, phpVersion, openDocs, serverInfo, generation, reason, searched, plugin, crashes, restarts, trace}`; `-32005` mit Grund, wenn nicht gefunden/abgeschaltet |
+| `lsp.stop` / `lsp.status` | – | Status (`lsp.stop` → `off`) |
+| `lsp.select` | `server` (`auto`/`none`/ID), `scope?` (`project` Standard mit Projekt, `global`) | speichert `lang-php.server` und wendet es an (Wechsel ohne Neustart von Tiegel); Status |
+| `lsp.disable` | `scope?` | wie `lsp.select` mit `none` |
+| `lsp.setPath` | `server`, `path` (leer: zurücksetzen), `scope?` | setzt `<plugin>.path`, wählt und startet den Server |
+| `lsp.restart` | – | startet neu (setzt Absturzzähler zurück, erkennt neu installierte Programme); Status |
+| `lsp.doctor` | – | `{selected, source, command?, status, resolved?, path?, reason?, servers, searched, installPlugin?}` |
+| `lsp.log` | `after?` (seq), `limit?` | Server-Log `[{seq, time, kind, server, text}]` (stderr, Supervisor-Ereignisse, JSON-RPC-Trace) |
+| `lsp.trace` | `on?` | `{trace}` – JSON-RPC-Trace ins Log ein/aus |
 | `lsp.diagnostics` | `path?` (ohne: alle) | `[{path, file, version, diagnostics[{severity, message, source, code, start, end, line, col, endLine, endCol}]}]` |
 | `lsp.completion` | `path`, `at` (Pos) | `{incomplete, items[{label, kind, detail, documentation, insertText, snippet, edit{range, newText}}]}` |
 | `lsp.hover` | `path`, `at` | `{found, kind, contents, range?}` |
@@ -418,6 +431,17 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `lsp.workspaceSymbols` | `query`, `limit?` (500) | `[{name, kind, container, path, file, range?}]` |
 
 Workspace-Änderungen des Servers (Code Actions, Rename, `workspace/applyEdit`) laufen über `App.ApplyFileOps`: Text-Edits offener Dokumente als ein Undo-Schritt je Datei (Versionsprüfung bei versionierten `documentChanges`), geschlossene Dateien atomar unter der Speicher-Sperre mit Local History, Ressourcen-Operationen `create`/`rename`/`delete` in Reihenfolge (Umbenennen wie `files.rename`: offene Dokumente folgen mit Puffer und Undo, `doc.renamed`; Gelöschtes bleibt in der Local History; `files.changed` wird veröffentlicht). Beim ersten Fehler wird abgebrochen (`failureHandling: abort`), bereits angewendete Schritte bleiben.
+
+**install** (Kern, D194) – Werkzeuge von Plugins über ihren Paketmanager installieren, nur auf ausdrückliche Bestätigung. Plugins liefern Rezepte über den Filter `install.recipes`; ohne Paketmanager-Weg ist das Rezept nur ein Hinweis (PHPantom). Fehlt Composer/npm, gibt es einen Hinweis, nie einen Download.
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `install.recipes` | – | Rezepte der laufenden Plugins `[{plugin, tool, manager, package, scopes, interpreter, hint, note}]` |
+| `install.plan` | `plugin`, `scope?` (`global`/`project`, Standard: erstes des Rezepts) | Plan `{plugin, tool, available, manager, package, scope, scopes, interpreter, command, display, dir, changesComposerJson, effects, hint, note}` – führt nichts aus |
+| `install.run` | `plugin`, `scope?`, `confirm: true` (Pflicht) | `{runId, plan}`; läuft im Hintergrund weiter, Ausgabe als Events `install.output` (`{runId, plugin, stream, text}`), Ende als `install.done` (Ergebnis wie `install.status`); ohne `confirm` `-32602`, nicht ausführbar `-32005`, schon laufend `-32004` |
+| `install.status` / `install.wait` / `install.cancel` | `runId` | `{runId, plugin, tool, state: running\|succeeded\|failed\|cancelled, display, exitCode, error, output, started, finished}` |
+
+Nach `install.done` sucht lang-php den Server neu und startet ihn ohne Neustart von Tiegel.
 
 **git** – Hunk-Indizes beziehen sich auf `git.diff` mit denselben Optionen. Jeder Hunk in `git.diff` hat `header` und `hash` (Inhalts-Hash); eine Auswahl `{hunk, header?, hash?}` mit diesen Werten wird abgelehnt (-32004 mit `data: {reason: "staleSelection", path, hunk}`), wenn sich der Diff inzwischen geändert hat (z.B. durch Formatierung beim Speichern) – statt still einen anderen Hunk zu nehmen; der Client lädt dann den Diff neu. Ohne `header`/`hash` gilt nur der Index (rückwärtskompatibel). Clients sollten beide mitschicken.
 

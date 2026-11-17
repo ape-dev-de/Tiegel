@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/bus"
@@ -16,6 +17,8 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/lsp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/fakeserver"
 	"github.com/ape-dev-de/tiegel/internal/lsp/protocol"
+	"github.com/ape-dev-de/tiegel/internal/lsp/supervisor"
+	"github.com/ape-dev-de/tiegel/internal/modules/lspplugins"
 	"github.com/ape-dev-de/tiegel/internal/modules/modtest"
 )
 
@@ -51,13 +54,28 @@ func (f *fakes) count() int {
 	return len(f.srvs)
 }
 
+// fastSupervisor shortens the restart backoff for tests.
+func fastSupervisor(o *supervisor.Options) {
+	o.Backoff = func(int) time.Duration { return 5 * time.Millisecond }
+	o.MaxCrashes = 3
+}
+
+// withPlugins returns m and the language server plugins.
+func withPlugins(m *Module) []module.Module {
+	mods := []module.Module{m}
+	for _, p := range lspplugins.All() {
+		mods = append(mods, p)
+	}
+	return mods
+}
+
 const src = "<?php\necho 'ERR';\nfunction foo(int $a, string $b) {}\nclass Foo {}\n"
 
 func setup(t *testing.T) (*api.App, *Module, *fakes, string) {
 	t.Helper()
 	f := &fakes{}
-	m := New(Options{Connect: f.connect})
-	a := modtest.NewApp(t, []module.Module{m}, nil)
+	m := New(Options{Connect: f.connect, Supervisor: fastSupervisor})
+	a := modtest.NewApp(t, withPlugins(m), nil)
 	dir := modtest.Project(t, a, map[string]string{"a.php": src, "b.txt": "text", "other.php": "<?php\n// other\n"})
 	api.HookPHPVersion.On(a.Hooks(), 0, func(_ context.Context, q api.PHPVersionQuery) (api.PHPVersionQuery, error) {
 		return api.PHPVersionQuery{Version: "8.2.1", Short: "8.2", Source: "test"}, nil
@@ -264,14 +282,15 @@ func TestRestartAndModuleToggle(t *testing.T) {
 	a.Bus().Publish(api.TopicPHPVersionChanged, api.PHPVersionChangedEvent{Override: "8.1"})
 	status.Wait(t, api.TopicLSPStatus, func(e bus.Event) bool { s := e.Payload.(Status); return s.Running && s.Generation == 3 })
 
-	// The server dies: the module notices.
+	// The server dies: the supervisor restarts it and re-syncs the documents.
 	_ = f.last().Close()
-	status.Wait(t, api.TopicLSPStatus, func(e bus.Event) bool { s := e.Payload.(Status); return !s.Running && s.Error != "" })
+	status.Wait(t, api.TopicLSPStatus, func(e bus.Event) bool {
+		s := e.Payload.(Status)
+		return s.State == supervisor.StateCrashed && s.Error != ""
+	})
+	status.Wait(t, api.TopicLSPStatus, func(e bus.Event) bool { s := e.Payload.(Status); return s.Running && s.Generation == 4 })
+	waitSynced(t, a, f, dir, "a.php")
 	var st Status
-	modtest.Call(t, a, "lsp.status", nil, &st)
-	if st.Running {
-		t.Fatal("dead server reported running")
-	}
 
 	// Disabling the module disables the namespace; enabling restores it.
 	modtest.Call(t, a, "lsp.start", StartParams{Command: "fake"}, nil)
@@ -289,9 +308,14 @@ func TestServerResolution(t *testing.T) {
 	modtest.WantCode(t, a, "lsp.start", StartParams{Server: "nope"}, api.CodeInvalidParams)
 	modtest.WantCode(t, a, "lsp.start", StartParams{Server: "phpactor"}, api.CodeUnavailable)
 	modtest.WantCode(t, a, "lsp.start", StartParams{}, api.CodeUnavailable)
+	f.mu.Lock()
 	f.fail = true
+	f.mu.Unlock()
 	modtest.WantCode(t, a, "lsp.start", StartParams{Command: "x"}, api.CodeUnavailable)
+	f.mu.Lock()
 	f.fail = false
+	f.mu.Unlock()
+	modtest.Call(t, a, "lsp.stop", nil, nil)
 	if err := settings.Set(a.SettingsStore(), SettingCommand, "from-settings"); err != nil {
 		t.Fatal(err)
 	}
@@ -302,8 +326,12 @@ func TestServerResolution(t *testing.T) {
 	}
 	var list []LSPServerInfo
 	modtest.Call(t, a, "lsp.servers", LSPServersParams{All: true}, &list)
-	if len(list) != 0 {
+	if len(list) != 3 || list[0].ID != "phpactor" || list[0].Found || list[0].Error == "" {
 		t.Fatalf("servers %+v", list)
+	}
+	modtest.Call(t, a, "lsp.servers", nil, &list)
+	if len(list) != 0 {
+		t.Fatalf("installed servers %+v", list)
 	}
 	modtest.Call(t, a, "lsp.known", nil, &list)
 	if len(list) < 3 {
@@ -330,7 +358,7 @@ func TestDetectedServerAndGapResync(t *testing.T) {
 	bin := t.TempDir()
 	modtest.WriteFile(t, filepath.Join(bin, "phpactor"), "#!/bin/sh\n")
 	_ = osChmod(filepath.Join(bin, "phpactor"))
-	a := modtest.NewApp(t, []module.Module{m}, func(o *api.Options) { o.LSP.PathEnv = bin })
+	a := modtest.NewApp(t, withPlugins(m), func(o *api.Options) { o.LSP.PathEnv = bin })
 	dir := modtest.Project(t, a, map[string]string{"a.php": src})
 	var st Status
 	modtest.Call(t, a, "lsp.start", nil, &st)
