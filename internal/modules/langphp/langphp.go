@@ -1,14 +1,25 @@
-// Package langphp is the lang-php module: it runs a PHP language server
-// (Phpactor by default), keeps it in sync with the open documents and
-// exposes completion, hover, signature help, definitions, implementations,
-// semantic tokens and diagnostics through the lsp.* namespace.
+// Package langphp is the lang-php module: the client side of the PHP
+// language server. Which server runs is chosen among the running lsp-*
+// plugins (lsp-phpactor, lsp-phpantom, lsp-intelephense; decision D192)
+// with the setting lang-php.server ("auto", "none" or a server ID; a
+// project value overrides the global one). The chosen server runs
+// natively under a supervisor (package lsp/supervisor) that checks the
+// executable, restarts crashed or hung servers with backoff and stops
+// after repeated crashes; its states are published as lsp.state events.
+// With "none" (or without a server) no process runs and navigation falls
+// back to the Tree-sitter index (php-index).
+//
+// The module keeps the server in sync with the open documents and exposes
+// completion, hover, signature help, definitions, implementations,
+// semantic tokens, diagnostics and refactorings through the lsp.*
+// namespace.
 //
 // Document sync is driven by the bus, so edits from every client (API
 // handlers, the in-process GUI editing the shared buffer) reach the server:
 // doc.opened → didOpen, doc.edited → incremental didChange (the event
 // carries the UTF-16 range), doc.closed → didClose, file.saved → didSave.
 // Before every request the module makes sure the server has the current
-// document version.
+// document version. After a restart all open documents are sent again.
 //
 // The PHP version comes from the php.resolveVersion hook (php-runtime, an
 // optional dependency); the server restarts on interpreter.changed and
@@ -30,49 +41,85 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/lsp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/protocol"
-	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
+	"github.com/ape-dev-de/tiegel/internal/lsp/supervisor"
 )
 
 // ID is the module ID.
 const ID = "lang-php"
 
-// Settings keys (project settings, global without a project).
+// Settings keys (project values override global ones).
 const (
-	// SettingServer is the preferred server ID ("phpactor", "phpantom",
-	// "intelephense").
-	SettingServer = "lsp.server"
-	// SettingCommand is a custom server executable (overrides detection).
-	SettingCommand = "lsp.command"
-	// SettingArgs are the arguments of SettingCommand ([]string).
-	SettingArgs = "lsp.args"
+	// SettingServer selects the server: "auto" (first installed server of
+	// the enabled plugins), "none" (language server off) or a server ID
+	// ("phpactor", "phpantom", "intelephense").
+	SettingServer = "lang-php.server"
+	// SettingCommand is a custom server executable (overrides the
+	// plugins); SettingArgs are its arguments ([]string).
+	SettingCommand = "lang-php.command"
+	SettingArgs    = "lang-php.args"
+	// SettingRequestTimeout bounds a single request in seconds; a server
+	// that keeps timing out is restarted (0: no limit).
+	SettingRequestTimeout = "lang-php.requestTimeout"
 )
+
+// Former keys, still read when the new ones are missing.
+const (
+	legacyServer  = "lsp.server"
+	legacyCommand = "lsp.command"
+	legacyArgs    = "lsp.args"
+)
+
+// Selection values of SettingServer besides server IDs.
+const (
+	SelectAuto = "auto"
+	SelectNone = "none"
+)
+
+// knownServerIDs are offered by the SettingServer enum (the IDs of the
+// compiled-in lsp-* plugins).
+var knownServerIDs = []string{"phpactor", "phpantom", "intelephense"}
 
 // languageID is the LSP language of synced documents.
 const languageID = "php"
-
-// shutdownTimeout bounds the shutdown handshake.
-const shutdownTimeout = 5 * time.Second
 
 // Options configure the module.
 type Options struct {
 	// Connect starts and initializes a server; nil means lsp.Start (child
 	// process). Tests connect to an in-process fake server.
 	Connect func(ctx context.Context, cfg lsp.Config) (*lsp.Client, error)
+	// AutoStart starts the language server when a project is opened or
+	// the first PHP document is opened (the GUI sets it; headless
+	// commands start it explicitly with lsp.start).
+	AutoStart bool
+	// Supervisor adjusts the supervisor options (tests: short backoff).
+	Supervisor func(*supervisor.Options)
 }
 
 // Module is the lang-php module.
 type Module struct {
 	opts Options
 	app  *api.App
+	sup  *supervisor.Supervisor
 
-	// mu guards the server lifecycle and the state below.
-	mu   sync.Mutex
-	srv  *server
-	gen  int
-	last StartParams // last start request (for restarts)
+	// applyMu serialises server selection (apply).
+	applyMu sync.Mutex
+
+	// mu guards the fields below. It is never held while calling the
+	// supervisor's lifecycle methods.
+	mu         sync.Mutex
+	srv        *server
+	phpVersion string // of the target being started
+	// active is set once the language server is wanted (lsp.start,
+	// lsp.select, automatic start) and cleared by lsp.stop and project
+	// close; while active, setting/plugin changes and installations
+	// re-select the server.
+	active bool
+	// pinned holds explicit lsp.start parameters (server or command);
+	// restarts reuse them until lsp.stop or lsp.select.
+	pinned StartParams
 
 	// diagMu guards diags; it is separate from mu because diagnostics
-	// arrive on the client's goroutine while mu may wait for a shutdown.
+	// arrive on the client's goroutine.
 	diagMu sync.Mutex
 	diags  map[string]Diagnostics // by absolute path
 
@@ -83,9 +130,10 @@ type Module struct {
 	actions actionCache
 }
 
-// server is a running language server.
+// server is a running (initialized) language server.
 type server struct {
 	client     *lsp.Client
+	inst       *supervisor.Instance
 	id         string
 	name       string
 	command    string
@@ -102,11 +150,29 @@ func New(opts Options) *Module { return &Module{opts: opts} }
 func (m *Module) ID() string { return ID }
 
 // DependsOn implements module.Module. php-runtime is optional: the PHP
-// version comes through the php.resolveVersion hook when it runs.
+// version comes through the php.resolveVersion hook when it runs. The
+// lsp-* plugins are optional too: they contribute through lsp.servers.
 func (m *Module) DependsOn() []string { return nil }
 
 // Claims implements api.Claimer.
 func (m *Module) Claims() []string { return []string{"lsp.*"} }
+
+// SettingSpecs implements module.SettingsProvider.
+func (m *Module) SettingSpecs() []settings.Spec {
+	return []settings.Spec{
+		{Key: SettingServer, Kind: settings.KindEnum, Default: SelectAuto, Scope: settings.ScopeProject,
+			Options: append([]string{SelectAuto, SelectNone}, knownServerIDs...), Label: "Language server",
+			Help:  "auto uses the first installed server of the enabled plugins; none switches the language server off (navigation then uses the index).",
+			Group: "Language server"},
+		{Key: SettingCommand, Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Label: "Custom server command",
+			Help: "Runs this executable instead of a plugin's server (advanced).", Group: "Language server"},
+		{Key: SettingArgs, Kind: settings.KindList, Default: []string{}, Scope: settings.ScopeProject, Label: "Custom server arguments",
+			Group: "Language server"},
+		{Key: SettingRequestTimeout, Kind: settings.KindInt, Default: 30, Scope: settings.ScopeGlobal, Label: "Request timeout (seconds)",
+			Help: "A server that does not answer in time repeatedly is restarted; 0 disables the limit.", Min: settings.IntPtr(0), Max: settings.IntPtr(600),
+			Group: "Language server"},
+	}
+}
 
 // Start registers the lsp namespace and the bus subscriptions.
 func (m *Module) Start(ctx module.Context) error {
@@ -116,14 +182,24 @@ func (m *Module) Start(ctx module.Context) error {
 	}
 	m.mu.Lock()
 	m.app = app
+	m.srv = nil
+	m.active = false
+	m.pinned = StartParams{}
 	m.mu.Unlock()
 	m.clearDiags()
+	m.sup = supervisor.New(m.supervisorOptions())
 	p := api.NewProvider(ctx)
-	api.Add(p, "lsp.servers", "Installed PHP language servers (no downloads)", m.lspServers)
-	api.Add(p, "lsp.known", "Supported PHP language servers", m.lspKnown)
-	api.Add(p, "lsp.start", "Start the language server (detected, from settings or a command)", m.lspStart)
+	api.Add(p, "lsp.servers", "Language servers of the enabled plugins: installed?, path, selected (no downloads)", m.lspServers)
+	api.Add(p, "lsp.known", "Language servers of the enabled plugins (without detection)", m.lspKnown)
+	api.Add(p, "lsp.start", "Start the selected language server (setting lang-php.server, a server ID or a command)", m.lspStart)
 	api.Add(p, "lsp.stop", "Stop the language server", m.lspStop)
-	api.Add(p, "lsp.status", "Language server state", m.lspStatus)
+	api.Add(p, "lsp.status", "Language server supervisor state", m.lspStatus)
+	api.Add(p, "lsp.select", "Choose the language server (auto, none or a server ID) for the project or globally and apply it", m.lspSelect)
+	api.Add(p, "lsp.disable", "Switch the language server off (lang-php.server = none)", m.lspDisable)
+	api.Add(p, "lsp.restart", "Restart the language server (also after a crash loop or an installation)", m.lspRestart)
+	api.Add(p, "lsp.doctor", "Why the language server runs or not: selection, searched locations, per-server findings", m.lspDoctor)
+	api.Add(p, "lsp.log", "Language server log: stderr, supervisor events, JSON-RPC trace (opt-in)", m.lspLog)
+	api.Add(p, "lsp.trace", "Switch the JSON-RPC trace into the server log on or off", m.lspTrace)
 	api.Add(p, "lsp.diagnostics", "Latest server diagnostics of a document (or of all)", m.lspDiagnostics)
 	api.Add(p, "lsp.completion", "Completion items at a position", m.lspCompletion)
 	api.Add(p, "lsp.hover", "Hover information at a position", m.lspHover)
@@ -133,6 +209,7 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "lsp.semanticTokens", "Semantic tokens of a document", m.lspSemanticTokens)
 	m.registerRefactoring(p)
 	if err := p.Err(); err != nil {
+		m.sup.Close()
 		return err
 	}
 	b := ctx.Bus()
@@ -140,18 +217,38 @@ func (m *Module) Start(ctx module.Context) error {
 	ctx.OnStop(b.Subscribe("doc.*", m.onDoc))
 	ctx.OnStop(b.Subscribe(api.TopicFileSaved, m.onSaved))
 	ctx.OnStop(b.Subscribe(api.TopicFilesChanged, m.onFilesChanged))
-	restart := func(bus.Event) { go m.restart() }
-	ctx.OnStop(b.Subscribe(api.TopicInterpreterChanged, restart))
-	ctx.OnStop(b.Subscribe(api.TopicPHPVersionChanged, restart))
+	reload := func(bus.Event) { go m.reload() }
+	ctx.OnStop(b.Subscribe(api.TopicInterpreterChanged, reload))
+	ctx.OnStop(b.Subscribe(api.TopicPHPVersionChanged, reload))
+	reapply := func(bus.Event) { go m.reapply() }
+	ctx.OnStop(b.Subscribe(api.TopicModuleChanged, reapply))
+	ctx.OnStop(b.Subscribe(api.TopicInstallDone, reapply))
+	ctx.OnStop(b.Subscribe(settings.Changed.Name(), m.onSettings))
+	ctx.OnStop(b.Subscribe(api.TopicProjectOpened, func(bus.Event) {
+		if m.opts.AutoStart {
+			go m.autoStart()
+		}
+	}))
+	ctx.OnStop(b.Subscribe(api.TopicProjectClosed, func(bus.Event) {
+		m.setActive(false)
+		go m.stopSup("project closed")
+	}))
 	api.HookNavLSP.On(ctx.Hooks(), 0, m.navLSP, hooks.WithOwner(ID), hooks.WithTimeout(navTimeout))
 	return nil
 }
 
 // Stop shuts the server down.
 func (m *Module) Stop() error {
+	if m.sup != nil {
+		m.sup.Close()
+	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.stopLocked()
+	if m.srv != nil {
+		m.srv.closed.Store(true)
+		m.srv = nil
+	}
+	m.mu.Unlock()
+	m.clearDiags()
 	return nil
 }
 
@@ -161,13 +258,41 @@ func (m *Module) current() *server {
 	return m.srv
 }
 
+func (m *Module) setActive(on bool) {
+	m.mu.Lock()
+	m.active = on
+	if !on {
+		m.pinned = StartParams{}
+	}
+	m.mu.Unlock()
+}
+
+func (m *Module) pin(p StartParams) {
+	m.mu.Lock()
+	m.pinned = p
+	m.mu.Unlock()
+}
+
+func (m *Module) pinnedParams() StartParams {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.pinned
+}
+
+func (m *Module) isActive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.active
+}
+
 func (m *Module) store() *settings.Store { return m.app.SettingsStore() }
 
 // StartParams are the params of "lsp.start". Without parameters the server
-// comes from the settings (lsp.server, lsp.command, lsp.args) or detection
-// (Phpactor preferred).
+// comes from the settings (lang-php.server, lang-php.command) and the
+// enabled lsp-* plugins.
 type StartParams struct {
-	// Server is a server ID (phpactor, phpantom, intelephense).
+	// Server is a server ID (phpactor, phpantom, intelephense), "auto" or
+	// "none".
 	Server string `json:"server,omitempty"`
 	// Command is a custom server executable; Args are its arguments.
 	Command string   `json:"command,omitempty"`
@@ -175,139 +300,121 @@ type StartParams struct {
 }
 
 // Status is the result of "lsp.start", "lsp.stop", "lsp.status" and the
-// payload of the lsp.status event.
+// payload of the lsp.state event.
 type Status struct {
-	Running    bool     `json:"running"`
+	// State is the supervisor state: off, not-found, starting, running,
+	// crashed or stopped.
+	State   supervisor.State `json:"state"`
+	Running bool             `json:"running"`
+	// Selected is the effective lang-php.server value.
+	Selected   string   `json:"selected,omitempty"`
 	Server     string   `json:"server,omitempty"`
 	Name       string   `json:"name,omitempty"`
 	Command    string   `json:"command,omitempty"`
 	Args       []string `json:"args,omitempty"`
+	PID        int      `json:"pid,omitempty"`
 	PHPVersion string   `json:"phpVersion,omitempty"`
 	OpenDocs   int      `json:"openDocs"`
 	// ServerInfo is the name/version the server reports.
 	ServerInfo string `json:"serverInfo,omitempty"`
 	// Generation counts server starts (restarts increase it).
-	Generation int    `json:"generation"`
-	Error      string `json:"error,omitempty"`
+	Generation int `json:"generation"`
+	// Reason explains not-found, crashed, stopped and off; Searched lists
+	// the directories searched for the executable.
+	Reason   string   `json:"reason,omitempty"`
+	Searched []string `json:"searched,omitempty"`
+	// Plugin is the lsp-* plugin of the server (for "Install…").
+	Plugin   string `json:"plugin,omitempty"`
+	Crashes  int    `json:"crashes"`
+	Restarts int    `json:"restarts"`
+	Trace    bool   `json:"trace"`
+	// Error repeats Reason for failure states (former field).
+	Error string `json:"error,omitempty"`
 }
 
-func (m *Module) statusLocked() Status {
-	st := Status{Generation: m.gen}
-	s := m.srv
-	if s == nil {
-		return st
+func (m *Module) status(st supervisor.Status) Status {
+	out := Status{
+		State: st.State, Running: st.State == supervisor.StateRunning, Server: st.Server, Name: st.Name,
+		Command: st.Command, Args: st.Args, PID: st.PID, ServerInfo: st.ServerInfo, Generation: st.Generation,
+		Reason: st.Reason, Searched: st.Searched, Crashes: st.Crashes, Restarts: st.Restarts, Trace: st.Trace,
 	}
-	st.Running, st.Server, st.Name, st.Command, st.Args, st.PHPVersion = true, s.id, s.name, s.command, s.args, s.phpVersion
-	for _, d := range m.app.Documents() {
-		if _, _, ok := s.client.Document(protocol.URIFromPath(d.File)); ok {
-			st.OpenDocs++
+	if m.app != nil {
+		out.Selected, _ = m.selection()
+	}
+	if st.Server != "" && st.Server != "custom" {
+		out.Plugin = "lsp-" + st.Server
+	}
+	switch st.State {
+	case supervisor.StateCrashed, supervisor.StateStopped, supervisor.StateNotFound:
+		out.Error = st.Reason
+	}
+	if s := m.current(); s != nil && out.Running {
+		out.PHPVersion = s.phpVersion
+		for _, d := range m.app.Documents() {
+			if _, _, ok := s.client.Document(protocol.URIFromPath(d.File)); ok {
+				out.OpenDocs++
+			}
 		}
 	}
-	if si := s.client.ServerInfo(); si != nil {
-		st.ServerInfo = strings.TrimSpace(si.Name + " " + si.Version)
-	}
-	return st
+	return out
 }
+
+func (m *Module) currentStatus() Status { return m.status(m.sup.Status()) }
 
 func (m *Module) lspStatus(context.Context, struct{}) (Status, error) {
+	return m.currentStatus(), nil
+}
+
+// supervisorOptions wires the supervisor to the module.
+func (m *Module) supervisorOptions() supervisor.Options {
+	timeout := time.Duration(-1) // off
+	if secs := m.lookupInt(SettingRequestTimeout, 30); secs > 0 {
+		timeout = secondsDuration(secs)
+	}
+	app := m.app
+	o := supervisor.Options{
+		Connect:        m.opts.Connect,
+		RequestTimeout: timeout,
+		OnState:        m.onState,
+		OnReady:        m.onReady,
+		OnDiagnostics:  m.onSupDiagnostics,
+		Log:            supervisor.NewLog(2000, func(e supervisor.Entry) { app.Bus().Publish(api.TopicLSPLog, e) }),
+		Logger:         app.Logger().With("module", ID),
+	}
+	if m.opts.Supervisor != nil {
+		m.opts.Supervisor(&o)
+	}
+	return o
+}
+
+// onState follows the supervisor: a server that is not running any more
+// is dropped (its diagnostics too) and the state is published.
+func (m *Module) onState(st supervisor.Status) {
+	if st.State != supervisor.StateRunning {
+		m.mu.Lock()
+		s := m.srv
+		m.srv = nil
+		m.mu.Unlock()
+		if s != nil {
+			s.closed.Store(true)
+			m.clearDiags()
+		}
+	}
+	m.app.Bus().Publish(api.TopicLSPState, m.status(st))
+}
+
+// onReady adopts a (re)started server and sends it all open documents.
+func (m *Module) onReady(inst *supervisor.Instance) {
+	t := inst.Target
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.statusLocked(), nil
-}
-
-// resolve finds the command to start for p.
-func (m *Module) resolve(p StartParams) (id, name, command string, args []string, def servers.Definition, err error) {
-	known := map[string]servers.Definition{}
-	for _, d := range servers.Known() {
-		known[d.ID] = d
+	s := &server{client: inst.Client(), inst: inst, id: t.ID, name: t.Name, command: t.Command, args: t.Args, phpVersion: m.phpVersion, gen: inst.Gen}
+	old := m.srv
+	m.srv = s
+	m.mu.Unlock()
+	if old != nil {
+		old.closed.Store(true)
 	}
-	def = known[servers.Phpactor]
-	if p.Command == "" && p.Server == "" {
-		p.Command = settings.Get(m.store(), SettingCommand, "")
-		p.Args = settings.Get[[]string](m.store(), SettingArgs, nil)
-		p.Server = settings.Get(m.store(), SettingServer, "")
-	}
-	if p.Command != "" {
-		id = p.Server
-		if id == "" {
-			id = "custom"
-		}
-		if d, ok := known[p.Server]; ok {
-			def = d
-		}
-		return id, id, p.Command, p.Args, def, nil
-	}
-	opts := m.app.Options().LSP
-	if root := m.app.ProjectRoot(); root != "" {
-		opts.ProjectDir = root
-	}
-	if p.Server != "" {
-		if _, ok := known[p.Server]; !ok {
-			return "", "", "", nil, def, api.Errorf(api.CodeInvalidParams, "unknown language server %q (see lsp.known)", p.Server)
-		}
-		opts.IncludeProprietary = true
-		s, ok := servers.Find(p.Server, opts)
-		if !ok {
-			return "", "", "", nil, def, api.Errorf(api.CodeUnavailable, "language server %s is not installed (no downloads; install it or set lsp.command)", p.Server)
-		}
-		cmd, a := s.Command()
-		return s.ID, s.Name, cmd, a, s.Definition, nil
-	}
-	found := servers.Detect(opts)
-	if len(found) == 0 {
-		return "", "", "", nil, def, api.Errorf(api.CodeUnavailable, "no PHP language server installed (phpactor, phpantom); pass command or set lsp.command")
-	}
-	cmd, a := found[0].Command()
-	return found[0].ID, found[0].Name, cmd, a, found[0].Definition, nil
-}
-
-func (m *Module) lspStart(ctx context.Context, p StartParams) (Status, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.srv != nil {
-		return m.statusLocked(), nil
-	}
-	if err := m.startLocked(ctx, p); err != nil {
-		return Status{}, err
-	}
-	return m.statusLocked(), nil
-}
-
-func (m *Module) startLocked(ctx context.Context, p StartParams) error {
-	id, name, command, args, def, err := m.resolve(p)
-	if err != nil {
-		return err
-	}
-	q, _ := api.HookPHPVersion.Apply(ctx, m.app.Hooks(), api.PHPVersionQuery{})
-	short := q.Short
-	if short == "" && q.Version != "" {
-		short = q.Version
-	}
-	initOpts, cfgSettings := def.Options(short)
-	if short == "" {
-		initOpts, cfgSettings = map[string]any{}, map[string]any{}
-	}
-	s := &server{id: id, name: name, command: command, args: args, phpVersion: short}
-	cfg := lsp.Config{
-		Command: command, Args: args, RootDir: m.app.ProjectRoot(),
-		InitializationOptions: initOpts, Settings: cfgSettings,
-		ClientName: "Tiegel", ClientVersion: m.app.Options().AppVersion,
-		Logger:        m.app.Logger().With("module", ID),
-		OnDiagnostics: func(dp protocol.PublishDiagnosticsParams) { m.onDiagnostics(s, dp) },
-		OnApplyEdit:   m.onApplyEdit,
-	}
-	connect := m.opts.Connect
-	if connect == nil {
-		connect = lsp.Start
-	}
-	c, err := connect(ctx, cfg)
-	if err != nil {
-		return api.Errorf(api.CodeUnavailable, "starting %s: %w", command, err)
-	}
-	m.gen++
-	s.client, s.gen = c, m.gen
-	m.srv, m.last = s, p
-	go m.watch(s)
+	m.clearDiags()
 	m.syncMu.Lock()
 	for _, d := range m.app.Documents() {
 		if d.Language == languageID {
@@ -315,68 +422,96 @@ func (m *Module) startLocked(ctx context.Context, p StartParams) error {
 		}
 	}
 	m.syncMu.Unlock()
-	m.app.Bus().Publish(api.TopicLSPStatus, m.statusLocked())
-	return nil
 }
 
-// watch notices a server that died on its own.
-func (m *Module) watch(s *server) {
-	<-s.client.Done()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.srv != s {
+func (m *Module) onSupDiagnostics(inst *supervisor.Instance, p protocol.PublishDiagnosticsParams) {
+	s := m.current()
+	if s == nil || s.inst != inst {
 		return
 	}
-	m.srv = nil
-	s.closed.Store(true)
-	m.clearDiags()
-	st := m.statusLocked()
-	if err := s.client.Err(); err != nil {
-		st.Error = err.Error()
-	}
-	m.app.Bus().Publish(api.TopicLSPStatus, st)
+	m.onDiagnostics(s, p)
 }
 
-func (m *Module) stopLocked() {
-	s := m.srv
-	if s == nil {
-		return
+func (m *Module) lspStart(ctx context.Context, p StartParams) (Status, error) {
+	m.setActive(true)
+	if p.Server == "" && p.Command == "" {
+		// "Make sure a server runs": keep a running one (switching is
+		// lsp.select's job).
+		if st := m.sup.Status().State; st == supervisor.StateRunning || st == supervisor.StateStarting {
+			return m.currentStatus(), nil
+		}
+	} else {
+		m.pin(p)
 	}
-	m.srv = nil
-	s.closed.Store(true)
-	m.clearDiags()
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	if err := s.client.Shutdown(ctx); err != nil {
-		s.client.Close()
-	}
-	if m.app != nil {
-		m.app.Bus().Publish(api.TopicLSPStatus, m.statusLocked())
-	}
+	return m.apply(ctx, p, applyExplicit)
 }
 
 func (m *Module) lspStop(context.Context, struct{}) (Status, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.stopLocked()
-	return m.statusLocked(), nil
+	m.setActive(false)
+	m.stopSup("stopped")
+	return m.currentStatus(), nil
 }
 
-// restart restarts a running server with the same choice (after the
-// interpreter or the PHP version changed).
-func (m *Module) restart() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.srv == nil {
+// stopSup switches the server off; serialised with apply so that a
+// pending re-selection cannot start it again.
+func (m *Module) stopSup(reason string) {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+	m.sup.Stop(supervisor.StateOff, reason, nil)
+}
+
+func (m *Module) lspRestart(ctx context.Context, _ struct{}) (Status, error) {
+	m.setActive(true)
+	return m.apply(ctx, StartParams{}, applyForce)
+}
+
+// reload restarts a wanted server after the interpreter or the PHP
+// version changed (new initialization options).
+func (m *Module) reload() {
+	if !m.isActive() {
 		return
 	}
-	p := m.last
-	m.stopLocked()
-	if err := m.startLocked(context.Background(), p); err != nil {
-		m.app.Logger().Warn("lang-php: restart", "err", err)
-		st := m.statusLocked()
-		st.Error = err.Error()
-		m.app.Bus().Publish(api.TopicLSPStatus, st)
+	mode := applyAuto
+	if st := m.sup.Status().State; st == supervisor.StateRunning || st == supervisor.StateStarting {
+		mode = applyForce
+	}
+	if _, err := m.apply(context.Background(), StartParams{}, mode); err != nil {
+		m.app.Logger().Info("lang-php: reload", "err", err)
+	}
+}
+
+// reapply re-selects the server after settings, plugins or installations
+// changed (switching without restarting Tiegel).
+func (m *Module) reapply() {
+	if !m.isActive() {
+		return
+	}
+	if _, err := m.apply(context.Background(), StartParams{}, applyAuto); err != nil {
+		m.app.Logger().Info("lang-php: reapply", "err", err)
+	}
+}
+
+// autoStart starts the server once (project opened, first PHP file).
+func (m *Module) autoStart() {
+	m.mu.Lock()
+	if m.active {
+		m.mu.Unlock()
+		return
+	}
+	m.active = true
+	m.mu.Unlock()
+	if _, err := m.apply(context.Background(), StartParams{}, applyAuto); err != nil {
+		m.app.Logger().Info("lang-php: automatic start", "err", err)
+	}
+}
+
+func (m *Module) onSettings(e bus.Event) {
+	ch, ok := e.Payload.(settings.Change)
+	if !ok {
+		return
+	}
+	if strings.HasPrefix(ch.Key, ID+".") || strings.HasPrefix(ch.Key, "lsp-") || strings.HasPrefix(ch.Key, "lsp.") {
+		go m.reapply()
 	}
 }
 
@@ -389,46 +524,5 @@ func lspErr(what string, err error) error {
 }
 
 func notRunning() error {
-	return api.Errorf(api.CodeUnavailable, "language server not running (use lsp.start)")
-}
-
-// LSPServersParams are the params of "lsp.servers".
-type LSPServersParams struct {
-	// All includes proprietary servers (Intelephense).
-	All bool `json:"all,omitempty"`
-}
-
-// LSPServerInfo is a detected language server.
-type LSPServerInfo struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Path        string   `json:"path"`
-	Args        []string `json:"args"`
-	License     string   `json:"license"`
-	Proprietary bool     `json:"proprietary,omitempty"`
-}
-
-func (m *Module) lspKnown(context.Context, struct{}) ([]LSPServerInfo, error) {
-	out := []LSPServerInfo{}
-	for _, d := range servers.Known() {
-		out = append(out, LSPServerInfo{ID: d.ID, Name: d.Name, Args: d.Args, License: d.License, Proprietary: d.Proprietary})
-	}
-	return out, nil
-}
-
-func (m *Module) lspServers(_ context.Context, p LSPServersParams) ([]LSPServerInfo, error) {
-	opts := m.app.Options().LSP
-	if root := m.app.ProjectRoot(); root != "" {
-		opts.ProjectDir = root
-	}
-	opts.IncludeProprietary = opts.IncludeProprietary || p.All
-	out := []LSPServerInfo{}
-	for _, s := range servers.Detect(opts) {
-		args := s.Args
-		if args == nil {
-			args = []string{}
-		}
-		out = append(out, LSPServerInfo{ID: s.ID, Name: s.Name, Path: s.Path, Args: args, License: s.License, Proprietary: s.Proprietary})
-	}
-	return out, nil
+	return api.Errorf(api.CodeUnavailable, "language server not running (use lsp.start; lsp.doctor explains why)")
 }

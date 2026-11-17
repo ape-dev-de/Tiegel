@@ -33,8 +33,8 @@ const (
 	// TopicLSPDiagnostics: diagnostics of the language server
 	// (LSPDiagnosticsEvent), published by lang-php.
 	TopicLSPDiagnostics = "lsp.diagnostics"
-	// TopicLSPStatus: the language server started or stopped (LSPStatus).
-	TopicLSPStatus = "lsp.status"
+	// TopicLSPStatus is the former name of TopicLSPState (lspcontract.go).
+	TopicLSPStatus = TopicLSPState
 	// TopicDebugSessionStarted / Ended: a debug session began or ended.
 	TopicDebugSessionStarted = "debug.sessionStarted"
 	TopicDebugSessionEnded   = "debug.sessionEnded"

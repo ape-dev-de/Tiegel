@@ -30,7 +30,7 @@ func init() {
 		&command{name: "search", usage: "search FILE PATTERN [--regex] [--case] [--word] [--limit N]", summary: "find matches in a file", minArgs: 2, maxArgs: 2, run: runSearch},
 		&command{name: "interpreters", usage: "interpreters [select ID | version [ID] [--modules] [--ini]]", summary: "list, select or query PHP interpreters", maxArgs: 2, cwdProject: true, run: runInterpreters},
 		&command{name: "compose", usage: "compose [DIR] [--profile P]", summary: "detect PHP services in Docker Compose files", maxArgs: 1, cwdProject: true, run: runCompose},
-		&command{name: "lsp-servers", usage: "lsp-servers [--all]", summary: "installed PHP language servers", maxArgs: 0, cwdProject: true, run: runLSPServers},
+		&command{name: "lsp-servers", usage: "lsp-servers [--all]", summary: "installed PHP language servers of the enabled plugins (--all: also missing ones)", maxArgs: 0, cwdProject: true, run: runLSPServers},
 		&command{name: "modules", usage: "modules [enable ID | disable ID]", summary: "list, enable or disable modules", maxArgs: 2, run: runModules},
 		&command{name: "history", usage: "history FILE [--show ID | --restore ID]", summary: "Local History of a file", minArgs: 1, maxArgs: 1, cwdProject: true, run: runHistory},
 		&command{name: "serve", usage: "serve [--framing ndjson|lsp] [--concurrent] [--listen unix:PATH|tcp:HOST:PORT [--token-file F] [--token T] [--allow-remote]]", summary: "JSON-RPC 2.0 over stdin/stdout or a socket", maxArgs: 0, watch: true, run: runServe},
@@ -415,12 +415,16 @@ func runLSPServers(c *cli) error {
 	}
 	return c.emit(list, func(w io.Writer) {
 		if len(list) == 0 {
-			fmt.Fprintln(w, "no PHP language server found (phpactor, phpantom; intelephense with --all)")
+			fmt.Fprintln(w, "no PHP language server found among the enabled plugins (--all lists missing ones; see lsp-doctor)")
 			return
 		}
 		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, s := range list {
-			fmt.Fprintf(tw, "%s\t%s\t%s\n", s.ID, s.Path, s.License)
+			path := s.Path
+			if !s.Found {
+				path = "(not installed)"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\n", s.ID, path, s.License)
 		}
 		_ = tw.Flush()
 	})

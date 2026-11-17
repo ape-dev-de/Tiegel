@@ -1,62 +1,45 @@
-// Package servers detects PHP language servers that are already installed
-// on the system. It never downloads anything (see docs/DECISIONS.md, D3).
+// Package servers locates PHP language server executables that are already
+// installed on the system. It never downloads anything (decisions D3,
+// D194: installation only through a package manager on an explicit click,
+// see package install).
+//
+// The servers themselves are declared by plugins (lsp-phpactor,
+// lsp-phpantom, lsp-intelephense; decision D192): each plugin contributes
+// a Definition, this package only knows how to find one.
 package servers
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/ape-dev-de/tiegel/internal/core/shellenv"
 )
 
-// Server IDs.
-const (
-	Phpactor     = "phpactor"
-	PHPantom     = "phpantom"
-	Intelephense = "intelephense"
-)
-
-// Definition describes a known language server.
+// Definition describes a language server.
 type Definition struct {
 	// ID is a stable identifier, e.g. "phpactor".
-	ID string
+	ID string `json:"id"`
 	// Name is the display name.
-	Name string
+	Name string `json:"name"`
 	// Binaries are executable base names to look for, in order.
-	Binaries []string
+	Binaries []string `json:"binaries"`
 	// Args are passed to the binary to start the server on stdio.
-	Args []string
+	Args []string `json:"args"`
 	// License is the SPDX identifier or a short description.
-	License string
+	License string `json:"license"`
 	// Proprietary marks servers that are not open source.
-	Proprietary bool
+	Proprietary bool `json:"proprietary,omitempty"`
 	// PHPVersionOption is the initializationOptions key that sets the PHP
 	// version, if the server supports one.
-	PHPVersionOption string
+	PHPVersionOption string `json:"phpVersionOption,omitempty"`
 	// PHPVersionSetting is the dotted workspace/configuration path that sets
 	// the PHP version, if the server reads it from there.
-	PHPVersionSetting string
-}
-
-// Known lists the supported servers in order of preference: Phpactor is
-// the default, PHPantom the open-source alternative, Intelephense optional.
-func Known() []Definition {
-	return []Definition{
-		{
-			ID: Phpactor, Name: "Phpactor", Binaries: []string{"phpactor"},
-			Args: []string{"language-server"}, License: "MIT",
-			PHPVersionOption: "php.version",
-		},
-		{
-			ID: PHPantom, Name: "PHPantom", Binaries: []string{"phpantom_lsp", "phpantom"},
-			License: "MIT",
-		},
-		{
-			ID: Intelephense, Name: "Intelephense", Binaries: []string{"intelephense"},
-			Args: []string{"--stdio"}, License: "proprietary", Proprietary: true,
-			PHPVersionSetting: "intelephense.environment.phpVersion",
-		},
-	}
+	PHPVersionSetting string `json:"phpVersionSetting,omitempty"`
 }
 
 // Server is a detected installation.
@@ -101,7 +84,7 @@ func setNested(m map[string]any, path []string, v any) {
 	m[path[len(path)-1]] = v
 }
 
-// DetectOptions control where Detect looks.
+// DetectOptions control where Locate and Detect look.
 type DetectOptions struct {
 	// ProjectDir is the project root; its vendor/bin is searched first.
 	ProjectDir string
@@ -111,16 +94,29 @@ type DetectOptions struct {
 	PathEnv string
 	// ComposerHome defaults to $COMPOSER_HOME.
 	ComposerHome string
-	// IncludeProprietary also returns proprietary servers.
-	IncludeProprietary bool
 	// ExtraDirs are searched after everything else.
 	ExtraDirs []string
 	// NoSystemDirs skips the built-in well-known directories (Homebrew,
-	// /usr/local/bin, ...); mainly for tests.
+	// /usr/local/bin, ...) and the login shell PATH; mainly for tests.
 	NoSystemDirs bool
+	// LoginPath returns the PATH of the user's login shell (macOS GUI
+	// apps start with a minimal PATH). Nil uses shellenv.Default; it is
+	// only consulted without NoSystemDirs.
+	LoginPath func() string
 }
 
-// SearchDirs returns the directories Detect searches, in order.
+func (opts DetectOptions) loginPath() string {
+	if opts.NoSystemDirs {
+		return ""
+	}
+	if opts.LoginPath != nil {
+		return opts.LoginPath()
+	}
+	p, _ := shellenv.Default().LoginPath(context.Background())
+	return p
+}
+
+// SearchDirs returns the directories Locate searches, in order.
 func SearchDirs(opts DetectOptions) []string {
 	home := opts.HomeDir
 	if home == "" {
@@ -140,20 +136,17 @@ func SearchDirs(opts DetectOptions) []string {
 		dirs = append(dirs, filepath.Join(opts.ProjectDir, "vendor", "bin"))
 	}
 	dirs = append(dirs, filepath.SplitList(pathEnv)...)
-	if composerHome != "" {
-		dirs = append(dirs, filepath.Join(composerHome, "vendor", "bin"))
-	}
+	dirs = append(dirs, filepath.SplitList(opts.loginPath())...)
+	dirs = append(dirs, ComposerBinDirs(home, composerHome)...)
 	if home != "" {
 		dirs = append(dirs,
-			filepath.Join(home, ".composer", "vendor", "bin"),
-			filepath.Join(home, ".config", "composer", "vendor", "bin"),
 			filepath.Join(home, ".local", "bin"),
 			filepath.Join(home, ".cargo", "bin"),
 			filepath.Join(home, "bin"),
 		)
 		if runtime.GOOS == "windows" {
 			if appData := os.Getenv("APPDATA"); appData != "" {
-				dirs = append(dirs, filepath.Join(appData, "Composer", "vendor", "bin"), filepath.Join(appData, "npm"))
+				dirs = append(dirs, filepath.Join(appData, "npm"))
 			}
 		}
 	}
@@ -163,9 +156,33 @@ func SearchDirs(opts DetectOptions) []string {
 		dirs = append(dirs, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
 	}
 	dirs = append(dirs, opts.ExtraDirs...)
+	return dedupe(dirs)
+}
 
+// ComposerBinDirs returns the usual bin directories of "composer global"
+// installations (COMPOSER_HOME first).
+func ComposerBinDirs(home, composerHome string) []string {
+	var dirs []string
+	if composerHome != "" {
+		dirs = append(dirs, filepath.Join(composerHome, "vendor", "bin"))
+	}
+	if home != "" {
+		dirs = append(dirs,
+			filepath.Join(home, ".composer", "vendor", "bin"),
+			filepath.Join(home, ".config", "composer", "vendor", "bin"),
+		)
+		if runtime.GOOS == "windows" {
+			if appData := os.Getenv("APPDATA"); appData != "" {
+				dirs = append(dirs, filepath.Join(appData, "Composer", "vendor", "bin"))
+			}
+		}
+	}
+	return dirs
+}
+
+func dedupe(dirs []string) []string {
 	seen := make(map[string]bool, len(dirs))
-	out := dirs[:0]
+	out := make([]string, 0, len(dirs))
 	for _, d := range dirs {
 		if d == "" {
 			continue
@@ -180,16 +197,25 @@ func SearchDirs(opts DetectOptions) []string {
 	return out
 }
 
-// Detect returns all installed servers, ordered by Known() preference and
-// then by search order. A server found in several places is listed once
-// per distinct executable.
-func Detect(opts DetectOptions) []Server {
+// Locate returns the first installation of def in dirs (see SearchDirs).
+func Locate(def Definition, dirs []string) (Server, bool) {
+	for _, dir := range dirs {
+		for _, bin := range def.Binaries {
+			if p, ok := findExecutable(dir, bin); ok {
+				return Server{Definition: def, Path: p}, true
+			}
+		}
+	}
+	return Server{}, false
+}
+
+// Detect returns all installations of defs, in the order of defs and then
+// of the search directories. A server found in several places is listed
+// once per distinct executable.
+func Detect(defs []Definition, opts DetectOptions) []Server {
 	dirs := SearchDirs(opts)
 	var out []Server
-	for _, def := range Known() {
-		if def.Proprietary && !opts.IncludeProprietary {
-			continue
-		}
+	for _, def := range defs {
 		seen := map[string]bool{}
 		for _, dir := range dirs {
 			for _, bin := range def.Binaries {
@@ -212,26 +238,36 @@ func Detect(opts DetectOptions) []Server {
 	return out
 }
 
-// Find returns the preferred installation of the server with the given ID.
-func Find(id string, opts DetectOptions) (Server, bool) {
-	if def, ok := lookup(id); ok && def.Proprietary {
-		opts.IncludeProprietary = true
-	}
-	for _, s := range Detect(opts) {
-		if s.ID == id {
-			return s, true
-		}
-	}
-	return Server{}, false
-}
+// Errors of CheckExecutable.
+var (
+	ErrNotFound      = errors.New("not found")
+	ErrNotExecutable = errors.New("not executable")
+)
 
-func lookup(id string) (Definition, bool) {
-	for _, d := range Known() {
-		if d.ID == id {
-			return d, true
+// CheckExecutable reports whether path is an existing executable file. A
+// bare name (no separator) is looked up in dirs.
+func CheckExecutable(path string, dirs []string) (string, error) {
+	if !strings.ContainsAny(path, `/\`) {
+		for _, d := range dirs {
+			if p, ok := findExecutable(d, path); ok {
+				return p, nil
+			}
 		}
+		return "", fmt.Errorf("%s: %w in %d searched directories", path, ErrNotFound, len(dirs))
 	}
-	return Definition{}, false
+	fi, err := os.Stat(path)
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("%s: %w", path, ErrNotFound)
+	case fi.IsDir():
+		return "", fmt.Errorf("%s is a directory: %w", path, ErrNotExecutable)
+	case !isExecutable(path):
+		return "", fmt.Errorf("%s: %w (missing execute permission)", path, ErrNotExecutable)
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	return path, nil
 }
 
 func findExecutable(dir, name string) (string, bool) {

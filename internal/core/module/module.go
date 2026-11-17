@@ -125,6 +125,11 @@ type RegisterOption func(*entry)
 // DefaultEnabled marks a module as enabled when no stored state exists.
 func DefaultEnabled() RegisterOption { return func(e *entry) { e.defaultOn = true } }
 
+// DefaultDisabled marks a module as disabled when no stored state exists
+// (the default without options; useful where an option list is required,
+// e.g. for opt-in plugins such as proprietary tools).
+func DefaultDisabled() RegisterOption { return func(e *entry) { e.defaultOn = false } }
+
 // Info describes a registered module.
 type Info struct {
 	ID        string

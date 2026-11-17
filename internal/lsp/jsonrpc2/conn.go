@@ -53,6 +53,23 @@ type Conn struct {
 	baseCancel context.CancelFunc
 	done       chan struct{}
 	closeOnce  sync.Once
+
+	trace func(outgoing bool, body []byte)
+}
+
+// SetTrace installs fn to receive every message body sent (outgoing true)
+// or received. It must be called before Start; fn must not block and must
+// not keep body.
+func (c *Conn) SetTrace(fn func(outgoing bool, body []byte)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.trace = fn
+}
+
+func (c *Conn) tracer() func(bool, []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.trace
 }
 
 // NewConn wraps rwc using HeaderFraming. Handlers should be registered before
@@ -265,6 +282,9 @@ func (c *Conn) send(msg *wireMessage) error {
 	if err != nil {
 		return fmt.Errorf("jsonrpc2: encoding message: %w", err)
 	}
+	if tr := c.tracer(); tr != nil {
+		tr(true, body)
+	}
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	return c.framing.WriteMessage(c.rwc, body)
@@ -276,6 +296,9 @@ func (c *Conn) readLoop() {
 		if err != nil {
 			_ = c.shutdown(err)
 			return
+		}
+		if tr := c.tracer(); tr != nil {
+			tr(false, body)
 		}
 		var msg wireMessage
 		if err := json.Unmarshal(body, &msg); err != nil {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -270,7 +271,7 @@ func TestRuntimeCommands(t *testing.T) {
 	if _, out, _ = run(t, "", "lsp-servers", "--project", dir); !strings.Contains(out, "no PHP language server") {
 		t.Fatalf("lsp %q", out)
 	}
-	if _, out, _ = run(t, "", "modules"); !strings.Contains(out, "debug-xdebug  running  php-runtime") {
+	if _, out, _ = run(t, "", "modules"); !regexp.MustCompile(`debug-xdebug +running +php-runtime`).MatchString(out) || !regexp.MustCompile(`lsp-intelephense +off`).MatchString(out) {
 		t.Fatalf("modules %q", out)
 	}
 	if code, _, _ := run(t, "", "modules", "enable"); code != ExitUsage {

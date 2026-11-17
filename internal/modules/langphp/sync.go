@@ -19,6 +19,9 @@ func syncCtx() (context.Context, context.CancelFunc) {
 
 // onDoc handles doc.* events in publish order.
 func (m *Module) onDoc(e bus.Event) {
+	if ds, ok := e.Payload.(api.DocState); ok && m.opts.AutoStart && e.Topic == api.TopicDocOpened && ds.Language == languageID && !m.isActive() {
+		go m.autoStart() // first PHP file
+	}
 	s := m.current()
 	if s == nil {
 		return

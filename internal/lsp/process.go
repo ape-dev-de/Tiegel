@@ -28,7 +28,7 @@ type process struct {
 	closeOnce sync.Once
 }
 
-func startProcess(command string, args []string, dir string, env []string, log *slog.Logger) (*process, error) {
+func startProcess(command string, args []string, dir string, env []string, log *slog.Logger, onStderr func(string)) (*process, error) {
 	inR, inW, err := os.Pipe()
 	if err != nil {
 		return nil, fmt.Errorf("lsp: creating pipe: %w", err)
@@ -65,6 +65,9 @@ func startProcess(command string, args []string, dir string, env []string, log *
 		sc.Buffer(make([]byte, 64<<10), 1<<20)
 		for sc.Scan() {
 			log.Info("lsp: server stderr", "server", command, "line", sc.Text())
+			if onStderr != nil {
+				onStderr(sc.Text())
+			}
 		}
 		_ = errR.Close()
 	}()
@@ -114,6 +117,13 @@ func (p *process) exitStatus() (bool, error) {
 	default:
 		return false, nil
 	}
+}
+
+func (p *process) pid() int {
+	if p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
 }
 
 func (p *process) kill() {

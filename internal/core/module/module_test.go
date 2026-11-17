@@ -85,6 +85,16 @@ func mustRegister(t *testing.T, r *Registry, m Module, opts ...RegisterOption) {
 	}
 }
 
+func TestDefaultDisabled(t *testing.T) {
+	r := NewRegistry(Env{})
+	j := &journal{}
+	mustRegister(t, r, newMod(j, "opt-in"), DefaultEnabled(), DefaultDisabled())
+	mustRegister(t, r, newMod(j, "on"), DefaultEnabled())
+	if r.IsEnabled("opt-in") || !r.IsEnabled("on") {
+		t.Fatal("DefaultDisabled ignored")
+	}
+}
+
 func TestRegisterValidation(t *testing.T) {
 	r := NewRegistry(Env{})
 	j := &journal{}

@@ -18,6 +18,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/core/trash"
 	"github.com/ape-dev-de/tiegel/internal/core/watch"
+	"github.com/ape-dev-de/tiegel/internal/install"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
 	"github.com/ape-dev-de/tiegel/internal/update"
@@ -102,6 +103,7 @@ type App struct {
 	closing  chan struct{} // closed by Close
 	closeMu  sync.Once
 	searches searchRegistry // running project searches (search.cancel)
+	installs install.Runner // tool installations (install.*, D194)
 	// trash moves a path to the trash (files.delete); start launches a
 	// detached program (files.reveal). Tests replace both.
 	trash func(path string) error
@@ -187,6 +189,7 @@ func New(opts Options) (*App, error) {
 	a.registerModules()
 	a.registerVersion()
 	a.registerSettings()
+	a.registerInstall()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)
@@ -209,6 +212,7 @@ func (a *App) Close() error {
 	a.closeMu.Do(func() { close(a.closing) })
 	a.stopWatch()
 	a.saver.Close()
+	a.installs.CancelAll()
 	a.preserveUnsaved("unsaved on exit", nil)
 	if err := a.modules.Stop(); err != nil {
 		errs = append(errs, err)
