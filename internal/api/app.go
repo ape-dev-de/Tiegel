@@ -90,6 +90,9 @@ type App struct {
 	methods *registry
 	// detachGlobal detaches the bus from a shared global store.
 	detachGlobal func()
+	// warnedSettings remembers the invalid stored values already logged
+	// (key, scope and raw value), so each is logged once per App.
+	warnedSettings sync.Map
 
 	initErrs []error
 

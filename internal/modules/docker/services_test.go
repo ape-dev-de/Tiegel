@@ -234,6 +234,22 @@ func TestLogs(t *testing.T) {
 	modtest.Call(t, a, "docker.setContext", SetContextParams{Name: "desktop-linux"}, nil)
 	rec.Wait(t, TopicLog, func(e bus.Event) bool { ev := e.Payload.(LogEvent); return ev.ID == id2 && ev.Done })
 
+	// A project event delivered late (the bus is asynchronous: headless
+	// opens the project and runs the command right away) does not end a
+	// stream started for that project.
+	modtest.Call(t, a, "docker.logs", LogsParams{Follow: true}, &res)
+	id3 := res.ID
+	a.Bus().Publish(api.TopicProjectOpened, api.ProjectEvent{Root: a.ProjectRoot()})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := a.Bus().Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	modtest.Call(t, a, "docker.logsStop", IDParams{ID: id3}, &st)
+	if !st.Stopped {
+		t.Fatal("late project event ended the stream")
+	}
+
 	// A failing stream reports its error.
 	f.Write(t, "logs.txt", "")
 	modtest.Call(t, a, "docker.logs", LogsParams{Follow: true, Container: "x"}, &res)

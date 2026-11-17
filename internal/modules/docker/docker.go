@@ -160,7 +160,7 @@ func (m *Module) Start(ctx module.Context) error {
 			// Followed logs belong to the old engine; a watch restarts
 			// with the new context or interval.
 			if ch.Key != SettingRefresh {
-				m.stopLogs()
+				m.stopStaleLogs()
 			}
 			go m.restartWatch()
 		}
@@ -170,7 +170,7 @@ func (m *Module) Start(ctx module.Context) error {
 		m.mu.Lock()
 		m.last = cur
 		m.mu.Unlock()
-		m.stopLogs()
+		m.stopStaleLogs()
 		go m.restartWatch()
 	}
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicProjectOpened, reset))

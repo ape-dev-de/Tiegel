@@ -152,6 +152,7 @@ type proc struct {
 	dropped  bool
 	stopping bool
 	pid      string
+	pidSet   chan struct{} // closed when pid arrived (PIDMarker launches)
 	tree     *proctree.Tree
 	launch   *Launch
 	stopOnce sync.Once
@@ -210,7 +211,7 @@ func (m *Manager) Start(ctx context.Context, spec Spec, launcher Launcher, opts 
 		exists = FileExists
 	}
 	dirs := append([]string{cmd.Dir}, opts.LinkDirs...)
-	p := &proc{id: id, launcher: launcher, done: make(chan struct{}), launch: l,
+	p := &proc{id: id, launcher: launcher, done: make(chan struct{}), pidSet: make(chan struct{}), launch: l,
 		linker: Linker{Mappings: l.Mappings, Dirs: dirs, Exists: exists},
 		info: Info{ID: id, Name: spec.Name, Config: spec.Config, Type: spec.Type, Display: l.Display, Where: l.Where,
 			Dir: cmd.Dir, Project: opts.Project, State: StateRunning, ExitCode: -1, Started: m.now(), Replaces: opts.Replaces, Spec: spec}}
@@ -371,6 +372,11 @@ func (m *Manager) addLine(p *proc, stream, raw string) {
 	if stream == StreamStderr && p.launch.PIDMarker != "" && p.pid == "" {
 		if pid, ok := strings.CutPrefix(text, p.launch.PIDMarker); ok {
 			p.pid = strings.TrimSpace(pid)
+			select {
+			case <-p.pidSet: // an earlier marker without a PID
+			default:
+				close(p.pidSet)
+			}
 			return
 		}
 	}
@@ -504,10 +510,11 @@ func (m *Manager) stop(p *proc) {
 	p.stopOnce.Do(func() {
 		p.mu.Lock()
 		p.stopping = true
-		pid, remote := p.pid, p.launch.StopRemote
+		remote, marker := p.launch.StopRemote, p.launch.PIDMarker
 		p.mu.Unlock()
 		go func() {
 			if remote != nil {
+				pid := p.waitPID(marker)
 				ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 				_ = remote(ctx, pid)
 				cancel()
@@ -522,6 +529,27 @@ func (m *Manager) stop(p *proc) {
 			_ = p.tree.Kill()
 		}()
 	})
+}
+
+// pidWait bounds how long a stop waits for the PID marker line.
+const pidWait = 2 * time.Second
+
+// waitPID returns the PID announced by the marker line. The marker is on
+// stderr and the program's first output on stdout: the two pipes are read
+// concurrently, so a stop right after the first output may come before
+// the marker was parsed. It waits for it (at most pidWait, or until the run
+// ended); "" if none arrived.
+func (p *proc) waitPID(marker string) string {
+	if marker != "" {
+		select {
+		case <-p.pidSet:
+		case <-p.done:
+		case <-time.After(pidWait):
+		}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pid
 }
 
 // StopAll stops the active runs for which match returns true (nil: all).
