@@ -57,6 +57,8 @@ const (
 	Copy               Action = "edit.copy"
 	Cut                Action = "edit.cut"
 	Paste              Action = "edit.paste"
+	JoinLines          Action = "edit.joinLines"
+	ToggleCase         Action = "edit.toggleCase"
 
 	// Folding.
 	FoldCollapse    Action = "fold.collapse"
@@ -73,11 +75,14 @@ const (
 	Replace  Action = "search.replace"
 	GotoLine Action = "navigate.gotoLine"
 	Save     Action = "file.save"
+	// PasteFromHistory asks the host to offer the clipboard history.
+	PasteFromHistory Action = "edit.pasteFromHistory"
 )
 
 // External lists the actions the editor widget does not execute itself
-// but reports to its host (search bar, go-to-line dialog, saving).
-var External = []Action{Find, Replace, GotoLine, Save}
+// but reports to its host (search bar, go-to-line dialog, saving, the
+// clipboard history).
+var External = []Action{Find, Replace, GotoLine, Save, PasteFromHistory}
 
 // IsExternal reports whether a is one of External.
 func IsExternal(a Action) bool {

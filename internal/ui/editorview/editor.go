@@ -62,6 +62,9 @@ type Editor struct {
 	// action, e.g. "//" for PHP or "#" for YAML (see LineComments).
 	// Empty disables the action.
 	LineComment string
+	// OnCopy, if set, receives every text the editor copies or cuts to
+	// the clipboard (the host keeps the clipboard history with it).
+	OnCopy func(text string)
 	// ReadOnly disables all modifications; selection and copy still work.
 	ReadOnly bool
 	// AutoClose inserts closing brackets and quotes (default true).

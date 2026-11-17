@@ -60,6 +60,8 @@ var macPairs = [][2]string{
 	{"Cmd+L", string(GotoLine)}, {"Cmd+S", string(Save)},
 	{"Cmd+Alt+-", string(FoldCollapse)}, {"Cmd+Alt+=", string(FoldExpand)},
 	{"Cmd+Shift+-", string(FoldCollapseAll)}, {"Cmd+Shift+=", string(FoldExpandAll)},
+	{"Ctrl+Shift+J", string(JoinLines)}, {"Cmd+Shift+U", string(ToggleCase)},
+	{"Cmd+Shift+V", string(PasteFromHistory)},
 }
 
 // PC returns the default keymap for Windows and Linux: Ctrl for commands
@@ -89,6 +91,8 @@ var pcPairs = [][2]string{
 	{"Ctrl+G", string(GotoLine)}, {"Ctrl+S", string(Save)},
 	{"Ctrl+Alt+-", string(FoldCollapse)}, {"Ctrl+Alt+=", string(FoldExpand)},
 	{"Ctrl+Shift+-", string(FoldCollapseAll)}, {"Ctrl+Shift+=", string(FoldExpandAll)},
+	{"Ctrl+Shift+J", string(JoinLines)}, {"Ctrl+Shift+U", string(ToggleCase)},
+	{"Ctrl+Shift+V", string(PasteFromHistory)},
 }
 
 // ForOS returns the default keymap for a GOOS value.

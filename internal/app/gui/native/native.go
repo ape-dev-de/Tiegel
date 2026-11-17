@@ -1,5 +1,6 @@
 // Package native is a tiny bridge to platform UI that Gio does not
-// provide: the native folder chooser and the native menu bar. Only macOS
+// provide: the native folder chooser, the native menu bar and the mouse
+// side buttons and trackpad swipes on macOS. Only macOS
 // (cgo, Cocoa) has an implementation; on every other platform, and when
 // cgo is disabled, the functions are stubs and the *Supported functions
 // report false so callers can fall back to Gio UI.
@@ -222,4 +223,29 @@ func encodeMenus(menus []Menu, gen uint32) ([]byte, []string) {
 		e.end()
 	}
 	return e.buf, e.ids
+}
+
+// Navigation gestures reported to the handler of SetGestureHandler, named
+// like the keymap's pointer inputs (keymap.KeyMouseBack, …).
+const (
+	GestureMouseBack    = "MouseBack"
+	GestureMouseForward = "MouseForward"
+	GestureSwipeBack    = "SwipeBack"
+	GestureSwipeForward = "SwipeForward"
+)
+
+// gestureName maps the codes of the Cocoa event monitor (1 mouse button
+// 4, 2 mouse button 5, 3 swipe back, 4 swipe forward) to gesture names.
+func gestureName(code int) string {
+	switch code {
+	case 1:
+		return GestureMouseBack
+	case 2:
+		return GestureMouseForward
+	case 3:
+		return GestureSwipeBack
+	case 4:
+		return GestureSwipeForward
+	}
+	return ""
 }

@@ -398,7 +398,7 @@ func (d *navDock) shiftKeys(gtx layout.Context) {
 		case key.Press:
 			if !d.shiftUp.IsZero() && gtx.Now.Sub(d.shiftUp) <= doubleShift && mark == d.shiftMark {
 				d.shiftUp, d.shiftSkip = time.Time{}, true
-				d.openSymbols(symEverywhere)
+				d.v.Gesture(keymap.KeyDoubleShift) // Search Everywhere unless rebound
 			}
 		}
 	}

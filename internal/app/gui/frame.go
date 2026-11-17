@@ -23,6 +23,7 @@ var newShaper = tokens.NewShaper
 func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 	v.runPosted()
 	v.ctl.Drain()
+	v.syncKeymap()
 	v.applyTheme()
 	th := v.th
 	if v.clipboard != nil {
@@ -38,7 +39,7 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 		h(v, gtx)
 	}
 	v.syncTools()
-	v.global.build(v.Registry, v.goos, ScopeGlobal, nil)
+	v.global.build(v.Registry, ScopeGlobal, nil)
 	v.global.process(gtx, v)
 	v.handleBench(gtx)
 	v.handleTree(gtx)
@@ -58,6 +59,7 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 	v.toolSlots(&slots)
 	v.overlaySlot(&slots)
 	d := v.bench.Layout(gtx, th, slots)
+	v.pointerNav(gtx)
 	v.escapeKeys(gtx)
 	v.ctl.PersistToolLayout()
 	return d
@@ -83,7 +85,7 @@ func (v *View) frameWelcome(gtx layout.Context) layout.Dimensions {
 			v.ctl.RemoveRecentProject(e.Path)
 		}
 	}
-	v.global.build(v.Registry, v.goos, ScopeGlobal, nil)
+	v.global.build(v.Registry, ScopeGlobal, nil)
 	v.global.process(gtx, v)
 	for _, e := range v.bench.Update(gtx) {
 		if _, ok := e.(templates.DismissEvent); ok {

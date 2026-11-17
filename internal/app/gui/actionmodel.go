@@ -73,6 +73,8 @@ func (r *Registry) mirror(a Action) {
 		na.Label = id
 	}
 	switch {
+	case r.Scheme().Has(a.ID):
+		na.Shortcut = actions.Shortcut{Mac: r.schemeFor("darwin").ChordText(a.ID), PC: r.schemeFor("linux").ChordText(a.ID)}
 	case a.Mac != "" || a.PC != "":
 		na.Shortcut = actions.Shortcut{Mac: a.Mac, PC: a.PC}
 	case a.KeyHint != "":

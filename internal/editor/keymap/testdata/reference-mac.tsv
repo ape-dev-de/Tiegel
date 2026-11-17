@@ -1,0 +1,106 @@
+# Default macOS shortcuts of the reference IDE (docs/einstellungen-abgleich.md §2).
+# Columns (tab separated): description, chords (" | " separated), Tiegel action id or later:<milestone>.
+# The parity test checks that every chord is bound to the action in the mac preset.
+Back	Cmd+[ | Cmd+Alt+Left | MouseBack | SwipeBack	navigate.back
+Forward	Cmd+] | Cmd+Alt+Right | MouseForward | SwipeForward	navigate.forward
+Last Edit Location	Cmd+Shift+Backspace	navigate.lastEditLocation
+Recent Locations	Cmd+Shift+E	navigate.recentLocations
+Recent Files	Cmd+E	file.recent
+Move caret to previous word	Alt+Left	cursor.wordLeft
+Move caret to next word	Alt+Right	cursor.wordRight
+Previous word with selection	Alt+Shift+Left	cursor.selectWordLeft
+Next word with selection	Alt+Shift+Right	cursor.selectWordRight
+Delete to word start	Alt+Backspace	edit.deleteWordBackward
+Delete to word end	Alt+Delete	edit.deleteWordForward
+Move caret to line start	Cmd+Left	cursor.lineStart
+Move caret to line end	Cmd+Right	cursor.lineEnd
+Line start with selection	Cmd+Shift+Left	cursor.selectLineStart
+Line end with selection	Cmd+Shift+Right	cursor.selectLineEnd
+Move caret to text start	Cmd+Up | Cmd+Home	cursor.docStart
+Move caret to text end	Cmd+Down | Cmd+End	cursor.docEnd
+Extend selection	Alt+Up	selection.expand
+Shrink selection	Alt+Down	selection.shrink
+Move line up	Alt+Shift+Up	edit.moveLinesUp
+Move line down	Alt+Shift+Down	edit.moveLinesDown
+Move statement up	Cmd+Shift+Up	edit.moveLinesUp
+Move statement down	Cmd+Shift+Down	edit.moveLinesDown
+Delete line	Cmd+Backspace	edit.deleteLine
+Duplicate line or selection	Cmd+D	edit.duplicateLines
+Comment with line comment	Cmd+/	edit.toggleComment
+Add selection for next occurrence	Ctrl+G	selection.addNextOccurrence
+Select all occurrences	Ctrl+Cmd+G	selection.allOccurrences
+Undo	Cmd+Z	edit.undo
+Redo	Cmd+Shift+Z	edit.redo
+Find	Cmd+F	search.find
+Replace	Cmd+R	search.replace
+Find next	Cmd+G	search.next
+Find previous	Cmd+Shift+G	search.previous
+Go to line	Cmd+L	navigate.gotoLine
+Save all	Cmd+S	file.save
+Collapse	Cmd+Alt+-	fold.collapse
+Expand	Cmd+Alt+=	fold.expand
+Collapse all	Cmd+Shift+-	fold.collapseAll
+Expand all	Cmd+Shift+=	fold.expandAll
+Go to Class	Cmd+O	navigate.gotoClass
+Go to File	Cmd+Shift+O	file.quickOpen
+Go to Symbol	Cmd+Alt+O	navigate.gotoSymbol
+Search Everywhere	DoubleShift	navigate.searchEverywhere
+Find Action	Cmd+Shift+A	app.findAction
+Find in Files	Cmd+Shift+F	find.inPath
+Replace in Files	Cmd+Shift+R	find.replaceInPath
+Find Usages	Alt+F7	navigate.usages
+Show Context Actions	Alt+Enter	code.contextActions
+Reformat Code	Cmd+Alt+L	code.reformat
+Rename	Shift+F6	refactor.rename
+Go to Declaration	Cmd+B	navigate.definition
+Go to Implementation	Cmd+Alt+B	navigate.implementation
+Go to Super Method	Cmd+U	navigate.super
+Type Hierarchy	Ctrl+H	navigate.typeHierarchy
+Basic Completion	Ctrl+Space	editor.complete
+File Structure popup	Cmd+F12	navigate.fileStructure
+Parameter Info	Cmd+P	editor.parameterInfo
+Quick Documentation	F1 | Ctrl+J	editor.quickDocumentation
+Next Highlighted Error	F2	navigate.nextError
+Previous Highlighted Error	Shift+F2	navigate.previousError
+Join Lines	Ctrl+Shift+J	edit.joinLines
+Toggle Case	Cmd+Shift+U	edit.toggleCase
+Paste from History	Cmd+Shift+V	edit.pasteFromHistory
+Complete Current Statement	Cmd+Shift+Enter	later:M17
+Go to Test / Create Test	Cmd+Shift+T	later:M15
+Run	Ctrl+R	later:M15
+Debug	Ctrl+D	later:M15
+Run Context Configuration	Ctrl+Shift+R	later:M15
+Rerun (Run window)	Cmd+R	later:M15
+Generate	Cmd+N	later:M17
+Surround With	Cmd+Alt+T	later:M17
+Insert Live Template	Cmd+J	later:M17
+Extract Variable	Cmd+Alt+V	later:M17
+Extract Method	Cmd+Alt+M	later:M17
+Terminal tool window	Alt+F12	later:M15
+Run tool window	Cmd+4	later:M15
+Bookmarks tool window	Cmd+2	later:M17
+Services tool window	Cmd+8	later:M14
+Commit tool window	Cmd+0	view.commit
+Project tool window	Cmd+1	view.project
+Find tool window	Cmd+3	view.find
+Debug tool window	Cmd+5	view.debug
+Problems tool window	Cmd+6	view.problems
+Structure tool window	Cmd+7	view.structure
+Git tool window	Cmd+9	view.git
+Hide all tool windows	Cmd+Shift+F12	view.maximizeEditor
+Select In Project View	Cmd+Shift+1	view.selectInProject
+Settings	Cmd+,	app.settings
+Close tab	Cmd+W	tab.close
+Switcher	Ctrl+Tab	tab.next
+Commit	Cmd+K	git.commit
+Push	Cmd+Shift+K	git.push
+Update Project	Cmd+T	git.updateProject
+Rollback	Cmd+Alt+Z	git.rollback
+Show Diff (VCS views)	Cmd+D	git.showDiff
+Copy Absolute Path	Cmd+Shift+C	file.copyPath
+Resume Program	F9	debug.resume
+Step Over	F8	debug.stepOver
+Step Into	F7	debug.stepInto
+Step Out	Shift+F8	debug.stepOut
+Stop	Cmd+F2	debug.stop
+Toggle Line Breakpoint	Cmd+F8	debug.toggleBreakpoint

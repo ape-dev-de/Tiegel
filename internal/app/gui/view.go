@@ -151,6 +151,10 @@ type View struct {
 	custom    *ChooserSpec
 	popup     *Popup
 	clipboard *string
+
+	// keys is the state of keymap sync, pointer navigation and the M13
+	// popups (keynav.go).
+	keys keyNav
 }
 
 // NewView returns the view for ctl. goos selects the keymap ("darwin":
@@ -192,6 +196,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v.dbgd = installDebug(v)
 	v.work = installWork(v)
 	v.navd = installNav(v)
+	v.installKeyNav()
 	return v
 }
 

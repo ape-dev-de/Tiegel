@@ -187,3 +187,28 @@ int tiegel_choose_folder(const char *title, const char *dir, char **out) {
 	*out = result;
 	return result != NULL ? 1 : 0;
 }
+
+// tiegel_install_gestures reports mouse buttons 4/5 (buttonNumber 3/4)
+// and swipe events to Go; the events continue to the window.
+static id gestureMonitor;
+
+void tiegel_install_gestures(void) {
+	dispatch_async(dispatch_get_main_queue(), ^{
+		if (gestureMonitor != nil) return;
+		gestureMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskOtherMouseDown | NSEventMaskSwipe)
+			handler:^NSEvent *(NSEvent *e) {
+				int code = 0;
+				if (e.type == NSEventTypeOtherMouseDown) {
+					if (e.buttonNumber == 3) code = 1;
+					else if (e.buttonNumber == 4) code = 2;
+				} else if (e.type == NSEventTypeSwipe) {
+					// Like the browsers: a positive deltaX goes back.
+					if (e.deltaX > 0) code = 3;
+					else if (e.deltaX < 0) code = 4;
+				}
+				if (code != 0) tiegelGesture(code);
+				return e;
+			}];
+	});
+	CFRunLoopWakeUp(CFRunLoopGetMain());
+}

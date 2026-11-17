@@ -23,3 +23,11 @@ func MenuSupported() bool { return false }
 
 // SetMenus does nothing on this platform.
 func SetMenus(menus []Menu, onAction func(id string)) {}
+
+// GesturesSupported reports whether SetGestureHandler delivers mouse side
+// buttons and swipes. It is always false on this platform (Gio reports
+// the side buttons itself on Windows and Wayland).
+func GesturesSupported() bool { return false }
+
+// SetGestureHandler does nothing on this platform.
+func SetGestureHandler(fn func(gesture string)) {}
