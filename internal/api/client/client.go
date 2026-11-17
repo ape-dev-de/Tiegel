@@ -159,6 +159,8 @@ func Spawn(ctx context.Context, argv []string, opts ...Option) (*Client, error) 
 	if o.stderr != nil {
 		cmd.Stderr = o.stderr
 	}
+	// Wait must not block on I/O copies of a killed server (Windows).
+	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("client: spawn %s: %w", argv[0], err)
 	}
@@ -336,8 +338,17 @@ func (c *Client) Close() error {
 		select {
 		case <-c.exited:
 		case <-time.After(c.opts.wait):
-			_ = c.cmd.Process.Kill()
-			<-c.exited
+			// Kill can fail right after start on Windows; retry until the
+			// process is gone.
+			for {
+				_ = c.cmd.Process.Kill()
+				select {
+				case <-c.exited:
+				case <-time.After(time.Second):
+					continue
+				}
+				break
+			}
 		}
 		var ee *exec.ExitError
 		if c.waitErr != nil && !errors.As(c.waitErr, &ee) {

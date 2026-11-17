@@ -2,7 +2,7 @@ package gui
 
 import (
 	"fmt"
-	"path"
+	"path/filepath"
 	"strings"
 
 	"gioui.org/io/event"
@@ -194,9 +194,9 @@ func (v *View) openRecentLocations() {
 		var out []palette.Item
 		q = strings.ToLower(q)
 		for _, p := range places {
-			label := fmt.Sprintf("%s:%d", path.Base(p.File), p.Line)
+			label := fmt.Sprintf("%s:%d", filepath.Base(p.File), p.Line)
 			if p.Line == 0 {
-				label = path.Base(p.File)
+				label = filepath.Base(p.File)
 			}
 			if q != "" && !strings.Contains(strings.ToLower(label+" "+p.Snippet), q) {
 				continue
@@ -298,7 +298,7 @@ func (v *View) syncFileStructure() {
 	}
 	cur := v.currentLocation()
 	v.OpenChooser(ChooserSpec{
-		Title: "File Structure – " + path.Base(file), Hint: "Filter members", Items: items(""), OnQuery: items,
+		Title: "File Structure – " + filepath.Base(file), Hint: "Filter members", Items: items(""), OnQuery: items,
 		OnChoose: func(i int, _ string) {
 			if i >= 0 && i < len(shown) {
 				v.ctl.GoTo(cur, controller.At(file, shown[i].node.Offset))
