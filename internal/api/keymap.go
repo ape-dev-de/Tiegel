@@ -30,6 +30,9 @@ type KeymapBinding struct {
 	Defaults []string `json:"defaults"`
 	// Source is "default" or "user" (overridden).
 	Source string `json:"source"`
+	// Shadowed are chords of the action that another action of the same
+	// context wins (e.g. a default chord the user bound elsewhere, D247).
+	Shadowed []string `json:"shadowed,omitempty"`
 }
 
 // KeymapConflict is a chord bound to two actions with overlapping
@@ -68,12 +71,19 @@ type KeymapListParams struct {
 
 // KeymapSetParams are the params of keymap.set: Chords replace the
 // action's chords (an empty list unbinds it; Add appends to the current
-// ones instead). Preset alone switches the preset.
+// ones instead, Remove takes them out). Preset alone switches the preset.
 type KeymapSetParams struct {
 	Action string   `json:"action,omitempty"`
 	Chords []string `json:"chords,omitempty"`
 	Add    bool     `json:"add,omitempty"`
-	Preset string   `json:"preset,omitempty"`
+	// Remove removes Chords from the action's current chords (each must
+	// be bound to it). If the rest equals the preset's defaults, the
+	// override is dropped (source default again).
+	Remove bool `json:"remove,omitempty"`
+	// Exclusive removes the set or added chords from the other actions
+	// whose contexts overlap (resolves the conflicts in the same step).
+	Exclusive bool   `json:"exclusive,omitempty"`
+	Preset    string `json:"preset,omitempty"`
 }
 
 // KeymapSetResult is the result of keymap.set.
@@ -83,12 +93,23 @@ type KeymapSetResult struct {
 	// Conflicts are the conflicts of the changed action (bindings are
 	// stored nevertheless; the client warns).
 	Conflicts []KeymapConflict `json:"conflicts"`
+	// RemovedFrom lists the actions that lost a chord (Exclusive).
+	RemovedFrom []string `json:"removedFrom,omitempty"`
+}
+
+// KeymapCheckParams are the params of keymap.check.
+type KeymapCheckParams struct {
+	Action string `json:"action"`
+	Chord  string `json:"chord"`
 }
 
 // KeymapResetParams are the params of keymap.reset: one action back to
-// its defaults, or (no action) all overrides and the preset.
+// its defaults, or (no action) all overrides and the preset. Invalid
+// removes one unparseable stored line instead (verbatim, as listed in
+// KeymapState.Invalid).
 type KeymapResetParams struct {
-	Action string `json:"action,omitempty"`
+	Action  string `json:"action,omitempty"`
+	Invalid string `json:"invalid,omitempty"`
 }
 
 // KeymapResetResult is the result of keymap.reset.
@@ -101,7 +122,8 @@ type KeymapResetResult struct {
 func (a *App) registerKeymap() {
 	mustHandle(a, "keymap.list", "Keymap: actions with chords, context and source default/user (filters context, query, chord, user)", a.keymapList)
 	mustHandle(a, "keymap.set", "Bind chords to an action (replace, or add:true; [] unbinds) or switch the preset (mac, pc)", a.keymapSet)
-	mustHandle(a, "keymap.reset", "Reset one action (or all overrides and the preset) to the defaults", a.keymapReset)
+	mustHandle(a, "keymap.reset", "Reset one action (or all overrides and the preset) to the defaults; invalid: drop one unparseable stored line", a.keymapReset)
+	mustHandle(a, "keymap.check", "Conflicts that binding chord to action would cause (nothing is stored)", a.keymapCheck)
 	mustHandle(a, "keymap.conflicts", "Chords bound to two actions in overlapping contexts", a.keymapConflicts)
 }
 
@@ -123,9 +145,13 @@ func chordStrings(cs []keymap.Chord) []string {
 	return out
 }
 
-func toBinding(e keymap.Entry) KeymapBinding {
-	return KeymapBinding{Action: string(e.ID), Title: e.Title, Context: string(e.Context),
+func toBinding(s *keymap.Scheme, e keymap.Entry) KeymapBinding {
+	b := KeymapBinding{Action: string(e.ID), Title: e.Title, Context: string(e.Context),
 		Chords: chordStrings(e.Chords), Defaults: chordStrings(e.Defaults), Source: string(e.Source)}
+	if sh := s.Shadowed(e.ID); len(sh) > 0 {
+		b.Shadowed = chordStrings(sh)
+	}
+	return b
 }
 
 func toConflicts(cs []keymap.Conflict) []KeymapConflict {
@@ -139,7 +165,7 @@ func toConflicts(cs []keymap.Conflict) []KeymapConflict {
 func (a *App) keymapState(s *keymap.Scheme, ks keymap.State) KeymapState {
 	st := KeymapState{Preset: string(s.Preset()), Bindings: []KeymapBinding{}, Invalid: ks.Invalid}
 	for _, e := range s.Entries() {
-		st.Bindings = append(st.Bindings, toBinding(e))
+		st.Bindings = append(st.Bindings, toBinding(s, e))
 	}
 	return st
 }
@@ -167,7 +193,7 @@ func (a *App) keymapList(_ context.Context, p KeymapListParams) (KeymapState, er
 			q != "" && !strings.Contains(strings.ToLower(string(e.ID)), q) && !strings.Contains(strings.ToLower(e.Title), q):
 			continue
 		}
-		st.Bindings = append(st.Bindings, toBinding(e))
+		st.Bindings = append(st.Bindings, toBinding(s, e))
 	}
 	return st, nil
 }
@@ -185,40 +211,46 @@ func (a *App) keymapSet(_ context.Context, p KeymapSetParams) (KeymapSetResult, 
 	if p.Action == "" && p.Preset == "" {
 		return KeymapSetResult{}, Errorf(CodeInvalidParams, "action or preset is required")
 	}
+	if p.Add && p.Remove {
+		return KeymapSetResult{}, Errorf(CodeInvalidParams, "add and remove exclude each other")
+	}
 	id := keymap.Action(p.Action)
+	var removedFrom []string
 	if p.Action != "" {
 		if !s.Has(id) {
 			return KeymapSetResult{}, Errorf(CodeNotFound, "unknown action %q (see keymap.list)", p.Action)
 		}
-		var cs []keymap.Chord
-		if p.Add {
-			if cur, ok := ks.Overrides[id]; ok {
-				cs = cur
-			} else {
-				cs = s.Chords(id)
-			}
-		}
+		given := make([]keymap.Chord, 0, len(p.Chords))
 		for _, str := range p.Chords {
 			c, err := keymap.ParseChord(str)
 			if err != nil {
 				return KeymapSetResult{}, Errorf(CodeInvalidParams, "%w", err)
 			}
-			if !slices.Contains(cs, c) {
-				cs = append(cs, c)
-			}
+			given = append(given, c)
+		}
+		cs, err := keymapChords(s, id, given, p.Add, p.Remove)
+		if err != nil {
+			return KeymapSetResult{}, err
 		}
 		ks.Drop(id) // also replaces an unparseable stored line of id
 		ks.Overrides = ks.Overrides.Clone()
-		ks.Overrides[id] = cs
+		if e, _ := s.Entry(id); p.Remove && slices.Equal(cs, e.Defaults) {
+			delete(ks.Overrides, id) // back to the defaults
+		} else {
+			ks.Overrides[id] = cs
+		}
+		if p.Exclusive && !p.Remove {
+			removedFrom = keymapSteal(s, ks.Overrides, id, given)
+		}
 	}
 	if err := keymap.SaveState(a.global, ks); err != nil {
 		return KeymapSetResult{}, Errorf(CodeFailed, "%w", err)
 	}
 	ns := keymap.NewScheme(ks.Preset, ks.Overrides)
-	res := KeymapSetResult{Preset: string(ks.Preset), Conflicts: []KeymapConflict{}}
+	res := KeymapSetResult{Preset: string(ks.Preset), Conflicts: []KeymapConflict{}, RemovedFrom: removedFrom}
 	if p.Action != "" {
 		e, _ := ns.Entry(id)
-		b := toBinding(e)
+		b := toBinding(ns, e)
 		res.Binding = &b
 		res.Conflicts = toConflicts(ns.ConflictsOf(id))
 	}
@@ -226,10 +258,76 @@ func (a *App) keymapSet(_ context.Context, p KeymapSetParams) (KeymapSetResult, 
 	return res, nil
 }
 
+// keymapChords returns the new chords of id: given (set), the current
+// ones plus given (add) or without given (remove; each must be bound).
+func keymapChords(s *keymap.Scheme, id keymap.Action, given []keymap.Chord, add, remove bool) ([]keymap.Chord, error) {
+	var cs []keymap.Chord
+	if add || remove {
+		cs = s.Chords(id)
+	}
+	if remove {
+		for _, c := range given {
+			i := slices.Index(cs, c)
+			if i < 0 {
+				return nil, Errorf(CodeInvalidParams, "%s is not bound to %s", c, id)
+			}
+			cs = slices.Delete(cs, i, i+1)
+		}
+		return cs, nil
+	}
+	for _, c := range given {
+		if !slices.Contains(cs, c) {
+			cs = append(cs, c)
+		}
+	}
+	return cs, nil
+}
+
+// keymapSteal removes chords from every other action of s that would
+// conflict with id (updating ov) and returns those actions, sorted.
+func keymapSteal(s *keymap.Scheme, ov keymap.Overrides, id keymap.Action, chords []keymap.Chord) []string {
+	var out []string
+	for _, c := range chords {
+		for _, k := range s.ConflictsWith(id, c) {
+			cur, ok := ov[k.B]
+			if !ok {
+				cur = s.Chords(k.B)
+			}
+			ov[k.B] = slices.DeleteFunc(slices.Clone(cur), func(x keymap.Chord) bool { return x == c })
+			if !slices.Contains(out, string(k.B)) {
+				out = append(out, string(k.B))
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func (a *App) keymapCheck(_ context.Context, p KeymapCheckParams) ([]KeymapConflict, error) {
+	c, err := keymap.ParseChord(p.Chord)
+	if err != nil {
+		return nil, Errorf(CodeInvalidParams, "%w", err)
+	}
+	s, _ := a.keymapScheme()
+	id := keymap.Action(p.Action)
+	if !s.Has(id) {
+		return nil, Errorf(CodeNotFound, "unknown action %q (see keymap.list)", p.Action)
+	}
+	return toConflicts(s.ConflictsWith(id, c)), nil
+}
+
 func (a *App) keymapReset(_ context.Context, p KeymapResetParams) (KeymapResetResult, error) {
 	s, ks := a.keymapScheme()
 	res := KeymapResetResult{Reset: []string{}}
-	if p.Action != "" {
+	if p.Invalid != "" {
+		if p.Action != "" {
+			return KeymapResetResult{}, Errorf(CodeInvalidParams, "action and invalid exclude each other")
+		}
+		if !ks.DropInvalid(p.Invalid) {
+			return KeymapResetResult{}, Errorf(CodeNotFound, "no invalid stored line %q (see keymap.list)", p.Invalid)
+		}
+		res.Reset = append(res.Reset, p.Invalid)
+	} else if p.Action != "" {
 		id := keymap.Action(p.Action)
 		if !s.Has(id) {
 			return KeymapResetResult{}, Errorf(CodeNotFound, "unknown action %q (see keymap.list)", p.Action)

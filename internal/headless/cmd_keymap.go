@@ -10,11 +10,11 @@ import (
 )
 
 func init() {
-	for name, takes := range map[string]bool{"context": true, "query": true, "chord": true, "user": false, "from": true, "to": true, "write": false} {
+	for name, takes := range map[string]bool{"context": true, "query": true, "chord": true, "user": false, "from": true, "to": true, "write": false, "exclusive": false} {
 		flagSpec[name] = takes
 	}
 	register(
-		&command{name: "keymap", usage: "keymap [list [--context C] [--query Q] [--chord CHORD] [--user] | set ACTION [CHORD...] | add ACTION CHORD... | reset [ACTION] | preset mac|pc | conflicts]",
+		&command{name: "keymap", usage: "keymap [list [--context C] [--query Q] [--chord CHORD] [--user] | set [--exclusive] ACTION [CHORD...] | add [--exclusive] ACTION CHORD... | remove ACTION CHORD... | check ACTION CHORD | reset [ACTION] | drop-invalid LINE | preset mac|pc | conflicts]",
 			summary: "list and change keyboard shortcuts (user overrides, presets, conflicts)", maxArgs: -1, run: runKeymap},
 		&command{name: "join-lines", usage: "join-lines FILE --from LINE[:COL] [--to LINE[:COL]] [--write]",
 			summary: "join the selected lines (or the line with the next); prints the result, --write saves", minArgs: 1, maxArgs: 1, cwdProject: true, run: runJoinLines},
@@ -44,6 +44,9 @@ func runKeymap(c *cli) error {
 				if b.Source == "user" {
 					src = "user"
 				}
+				if len(b.Shadowed) > 0 {
+					src = strings.TrimSpace(src + " shadowed: " + strings.Join(b.Shadowed, ", "))
+				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", b.Action, b.Context, strings.Join(b.Chords, ", "), src, b.Title)
 			}
 			for _, l := range st.Invalid {
@@ -51,11 +54,12 @@ func runKeymap(c *cli) error {
 			}
 			_ = tw.Flush()
 		})
-	case "set", "add":
-		if len(args) == 0 || (sub == "add" && len(args) < 2) {
+	case "set", "add", "remove":
+		if len(args) == 0 || (sub != "set" && len(args) < 2) {
 			return usagef("keymap %s needs ACTION and chords", sub)
 		}
-		p := api.KeymapSetParams{Action: args[0], Chords: append([]string{}, args[1:]...), Add: sub == "add"}
+		p := api.KeymapSetParams{Action: args[0], Chords: append([]string{}, args[1:]...), Add: sub == "add", Remove: sub == "remove",
+			Exclusive: c.p.has("exclusive")}
 		var res api.KeymapSetResult
 		if err := c.call("keymap.set", p, &res); err != nil {
 			return err
@@ -68,8 +72,34 @@ func runKeymap(c *cli) error {
 				}
 				fmt.Fprintf(w, "%s: %s\n", b.Action, chords)
 			}
+			if len(res.RemovedFrom) > 0 {
+				fmt.Fprintf(w, "removed from %s\n", strings.Join(res.RemovedFrom, ", "))
+			}
 			printConflicts(w, res.Conflicts)
 		})
+	case "check":
+		if len(args) != 2 {
+			return usagef("keymap check needs ACTION and CHORD")
+		}
+		var cs []api.KeymapConflict
+		if err := c.call("keymap.check", api.KeymapCheckParams{Action: args[0], Chord: args[1]}, &cs); err != nil {
+			return err
+		}
+		return c.emit(cs, func(w io.Writer) {
+			if len(cs) == 0 {
+				fmt.Fprintln(w, "free")
+			}
+			printConflicts(w, cs)
+		})
+	case "drop-invalid":
+		if len(args) != 1 {
+			return usagef("keymap drop-invalid needs the stored LINE (quoted)")
+		}
+		var res api.KeymapResetResult
+		if err := c.call("keymap.reset", api.KeymapResetParams{Invalid: args[0]}, &res); err != nil {
+			return err
+		}
+		return c.emit(res, func(w io.Writer) { fmt.Fprintf(w, "removed %q\n", args[0]) })
 	case "preset":
 		if len(args) != 1 {
 			return usagef("keymap preset needs mac or pc")
@@ -106,7 +136,7 @@ func runKeymap(c *cli) error {
 			printConflicts(w, cs)
 		})
 	}
-	return usagef("unknown keymap command %q (list, set, add, reset, preset, conflicts)", sub)
+	return usagef("unknown keymap command %q (list, set, add, remove, check, reset, drop-invalid, preset, conflicts)", sub)
 }
 
 func printConflicts(w io.Writer, cs []api.KeymapConflict) {

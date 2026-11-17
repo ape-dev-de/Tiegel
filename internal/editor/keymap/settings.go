@@ -92,6 +92,17 @@ func (s *State) Drop(a Action) {
 	s.Invalid = slices.DeleteFunc(slices.Clone(s.Invalid), func(l string) bool { return overrideAction(l) == a })
 }
 
+// DropInvalid removes the invalid stored line (verbatim, as listed in
+// Invalid); it reports whether the line was present.
+func (s *State) DropInvalid(line string) bool {
+	i := slices.Index(s.Invalid, line)
+	if i < 0 {
+		return false
+	}
+	s.Invalid = slices.Delete(slices.Clone(s.Invalid), i, i+1)
+	return true
+}
+
 // Lines returns the stored form of the state's overrides: the valid
 // overrides (Overrides.Format) followed by the invalid lines of actions
 // without a valid override.

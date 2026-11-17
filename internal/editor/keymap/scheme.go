@@ -328,3 +328,42 @@ func (s *Scheme) ConflictsOf(a Action) []Conflict {
 	}
 	return out
 }
+
+// Shadowed returns the chords of a that do not reach it: another action
+// of the same context wins the chord in the lookup (a user binding over a
+// default, D247, or the earlier catalog entry). Global chords that an
+// editor or tool window binding covers only in that context are not
+// counted (D223).
+func (s *Scheme) Shadowed(a Action) []Chord {
+	i, ok := s.index[a]
+	if !ok {
+		return nil
+	}
+	e := s.entries[i]
+	var out []Chord
+	for _, c := range e.Chords {
+		if w, ok := s.lookup[e.Context][c]; ok && w != a && !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// ConflictsWith returns the conflicts that binding c to a would cause:
+// one per other action that has c in an overlapping context. The result
+// is empty if c is free for a (or a is unknown).
+func (s *Scheme) ConflictsWith(a Action, c Chord) []Conflict {
+	i, ok := s.index[a]
+	if !ok {
+		return nil
+	}
+	ctx := s.entries[i].Context
+	var out []Conflict
+	for _, e := range s.entries {
+		if e.ID == a || !e.Context.Overlaps(ctx) || !slices.Contains(e.Chords, c) {
+			continue
+		}
+		out = append(out, Conflict{Chord: c, A: a, B: e.ID, CtxA: ctx, CtxB: e.Context})
+	}
+	return out
+}

@@ -141,6 +141,8 @@ type Controller struct {
 	Nav Navigation
 	// Keymap are the keymap settings (keynav.go).
 	Keymap KeymapPrefs
+	// KeymapEdit is the state of the keymap editor (keymapedit.go).
+	KeymapEdit KeymapEdit
 
 	// Diagnostics per absolute file.
 	diags map[string]*fileDiags
