@@ -292,3 +292,23 @@ func TestStash(t *testing.T) {
 		t.Fatalf("entry dropped despite conflict: %v", list)
 	}
 }
+
+func TestClassifyForbiddenOnlyAsHTTPStatus(t *testing.T) {
+	for _, s := range []string{
+		"fatal: unable to access 'https://x/': The requested URL returned error: 403",
+		"remote: HTTP/2 403\nfatal: ...",
+		"403 Forbidden",
+	} {
+		if !httpForbidden.MatchString(strings.ToLower(s)) {
+			t.Errorf("%q: want match", s)
+		}
+	}
+	for _, s := range []string{
+		"fatal: '/tmp/TestFetch190540399/005/missing.git' does not appear to be a git repository",
+		"fatal: '/tmp/403/missing.git' does not appear to be a git repository",
+	} {
+		if httpForbidden.MatchString(strings.ToLower(s)) {
+			t.Errorf("%q: unexpected match", s)
+		}
+	}
+}

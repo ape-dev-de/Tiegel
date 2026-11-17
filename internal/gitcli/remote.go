@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -60,9 +61,13 @@ func classifyRemoteError(op string, err error, stdout string) *RemoteError {
 	case strings.Contains(low, "not possible to fast-forward") || strings.Contains(low, "not possible to fast forward"):
 		re.Kind = RemoteDiverged
 		re.Message = "the branches have diverged and cannot be fast-forwarded. Use merge or rebase."
+	case strings.Contains(low, "does not appear to be a git repository") || strings.Contains(low, "repository not found") ||
+		strings.Contains(low, "no such remote"):
+		re.Kind = RemoteRepoNotFound
+		re.Message = "the remote repository does not exist or is not accessible. Check the remote URL."
 	case strings.Contains(low, "authentication failed") || strings.Contains(low, "could not read username") ||
 		strings.Contains(low, "could not read password") || strings.Contains(low, "permission denied") ||
-		strings.Contains(low, "terminal prompts disabled") || strings.Contains(low, "403"):
+		strings.Contains(low, "terminal prompts disabled") || httpForbidden.MatchString(low):
 		re.Kind = RemoteAuth
 		re.Message = "authentication failed. Configure a credential helper or an SSH key (ssh-agent); interactive password prompts are not supported."
 	case strings.Contains(low, "could not resolve host") || strings.Contains(low, "connection refused") ||
@@ -70,10 +75,6 @@ func classifyRemoteError(op string, err error, stdout string) *RemoteError {
 		strings.Contains(low, "unable to access") || strings.Contains(low, "connection reset"):
 		re.Kind = RemoteNetwork
 		re.Message = "the remote could not be reached. Check the network connection and the remote URL."
-	case strings.Contains(low, "does not appear to be a git repository") || strings.Contains(low, "repository not found") ||
-		strings.Contains(low, "no such remote"):
-		re.Kind = RemoteRepoNotFound
-		re.Message = "the remote repository does not exist or is not accessible. Check the remote URL."
 	default:
 		re.Message = firstLines(strings.TrimSpace(stderr), 3)
 		if re.Message == "" {
@@ -85,6 +86,10 @@ func classifyRemoteError(op string, err error, stdout string) *RemoteError {
 	}
 	return re
 }
+
+// httpForbidden matches an HTTP 403 status in git output, not any "403"
+// inside a path or hash.
+var httpForbidden = regexp.MustCompile(`error: 403\b|\bhttp[/0-9.]* 403\b|\b403 forbidden`)
 
 // --- fetch -------------------------------------------------------------------
 
