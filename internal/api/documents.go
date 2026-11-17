@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/ape-dev-de/tiegel/internal/core/autosave"
+	"github.com/ape-dev-de/tiegel/internal/core/editorconfig"
 	"github.com/ape-dev-de/tiegel/internal/core/history"
 	"github.com/ape-dev-de/tiegel/internal/core/langdetect"
 	"github.com/ape-dev-de/tiegel/internal/editor/buffer"
@@ -91,7 +92,7 @@ func (a *App) newDoc(abs string, data []byte, disk diskStamp) *Doc {
 	a.docSeq++
 	gen := a.docSeq
 	a.mu.Unlock()
-	d := &Doc{app: a, gen: gen, path: abs, lang: langdetect.Detect(abs, head(data)), buf: buffer.New(data), disk: disk}
+	d := &Doc{app: a, gen: gen, path: abs, lang: a.detectLang(abs, head(data)), buf: buffer.New(data), disk: disk}
 	d.buf.OnEdit(func(e buffer.Edit) { a.onEdit(d, e) })
 	return d
 }
@@ -253,6 +254,14 @@ type DocOpenResult struct {
 	// AlreadyOpen is true if the document was open before.
 	AlreadyOpen bool   `json:"alreadyOpen,omitempty"`
 	Text        string `json:"text,omitempty"`
+	// EditorConfig are the .editorconfig properties of the file (absent
+	// when none apply or files.editorconfig is off). Clients apply indent
+	// style/size and tab width; final newline and trailing whitespace are
+	// applied by the kernel on save.
+	EditorConfig *editorconfig.Props `json:"editorconfig,omitempty"`
+	// CharsetWarning reports content not matching the .editorconfig
+	// charset (read check only).
+	CharsetWarning string `json:"charsetWarning,omitempty"`
 }
 
 func (a *App) docOpen(_ context.Context, p DocOpenParams) (DocOpenResult, error) {
@@ -280,10 +289,17 @@ func (a *App) docOpen(_ context.Context, p DocOpenParams) (DocOpenResult, error)
 		}
 		a.mu.Unlock()
 	}
+	ec, hasEC := a.editorConfig(abs)
 	d.mu.Lock()
 	res := DocOpenResult{DocState: a.stateLocked(d), AlreadyOpen: already}
 	if p.Text {
 		res.Text = d.buf.String()
+	}
+	if hasEC {
+		res.EditorConfig = &ec
+		if ec.Charset != "" {
+			res.CharsetWarning = editorconfig.CheckCharset(ec.Charset, d.buf.Bytes())
+		}
 	}
 	if !already {
 		a.bus.Publish(TopicDocOpened, res.DocState)

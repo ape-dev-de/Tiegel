@@ -138,6 +138,8 @@ type Info struct {
 type entry struct {
 	mod       Module
 	deps      []string
+	specs     []settings.Spec // valid declared settings (SettingsProvider)
+	specErrs  []error
 	defaultOn bool
 	enabled   bool
 	running   bool
@@ -182,6 +184,17 @@ func (r *Registry) Register(m Module, opts ...RegisterOption) error {
 		return fmt.Errorf("%w: %s", ErrDuplicate, id)
 	}
 	e := &entry{mod: m, deps: append([]string(nil), m.DependsOn()...)}
+	if sp, ok := m.(SettingsProvider); ok {
+		var specs []settings.Spec
+		if err := safeCall(func() error { specs = sp.SettingSpecs(); return nil }); err != nil {
+			e.specErrs = []error{fmt.Errorf("module %s: SettingSpecs: %w", id, err)}
+		} else {
+			e.specs, e.specErrs = CheckSpecs(id, specs)
+		}
+		for _, err := range e.specErrs {
+			r.env.Logger.Warn("module setting rejected", "module", id, "err", err)
+		}
+	}
 	for _, o := range opts {
 		o(e)
 	}
@@ -207,6 +220,71 @@ func (r *Registry) Modules() []Info {
 	for _, id := range r.order {
 		e := r.mods[id]
 		out = append(out, Info{ID: id, DependsOn: append([]string(nil), e.deps...), Enabled: e.enabled, Running: e.running, Err: e.err})
+	}
+	return out
+}
+
+// ErrSpec marks a rejected setting declaration of a module.
+var ErrSpec = errors.New("module: invalid setting spec")
+
+// CheckSpecs validates the setting declarations of module id: every spec
+// must be valid (settings.Spec.Validate), its key must live in the module
+// namespace "<id>." and must be unique. It returns the valid specs and one
+// error (wrapping ErrSpec) per rejected spec.
+func CheckSpecs(id string, specs []settings.Spec) ([]settings.Spec, []error) {
+	var ok []settings.Spec
+	var errs []error
+	seen := map[string]bool{}
+	for _, s := range specs {
+		switch err := s.Validate(); {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("%w: %s: %w", ErrSpec, id, err))
+		case !strings.HasPrefix(s.Key, id+".") || len(s.Key) == len(id)+1:
+			errs = append(errs, fmt.Errorf("%w: %s: key %q outside the module namespace %q", ErrSpec, id, s.Key, id+"."))
+		case seen[s.Key]:
+			errs = append(errs, fmt.Errorf("%w: %s: key %q declared twice", ErrSpec, id, s.Key))
+		default:
+			seen[s.Key] = true
+			ok = append(ok, s)
+		}
+	}
+	return ok, errs
+}
+
+// SettingSpecs returns the valid setting declarations of module id (nil if
+// it declares none or is not registered). Specs are collected once at
+// registration, independent of the enabled state.
+func (r *Registry) SettingSpecs(id string) []settings.Spec {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.mods[id]
+	if !ok || len(e.specs) == 0 {
+		return nil
+	}
+	return append([]settings.Spec(nil), e.specs...)
+}
+
+// SettingSpec returns the module spec declaring key and its module ID.
+func (r *Registry) SettingSpec(key string) (spec settings.Spec, moduleID string, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, id := range r.order {
+		for _, s := range r.mods[id].specs {
+			if s.Key == key {
+				return s, id, true
+			}
+		}
+	}
+	return settings.Spec{}, "", false
+}
+
+// SpecErrors returns the rejected setting declarations of all modules.
+func (r *Registry) SpecErrors() []error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []error
+	for _, id := range r.order {
+		out = append(out, r.mods[id].specErrs...)
 	}
 	return out
 }

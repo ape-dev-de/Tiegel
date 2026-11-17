@@ -31,10 +31,10 @@ Einstellungen werden in **Kern** und **Plugins** getrennt (D190):
 | UI-Schriftgröße | ✅ `ui.fontSize` | Kern | ✔ | M16 |
 | Native Datei-Dialoge | ✅ (`native`) | Kern | – | – |
 | Bestätigung beim Schließen laufender Prozesse | ❌ | Kern | ✔ (`processCloseConfirmation`) | M15 |
-| Projekt in neuem/diesem Fenster öffnen (Nachfrage) | 🟡 Aktionen vorhanden, keine Standard-Einstellung | Kern | ✔ (`confirmOpenNewProject2`) | M12 |
+| Projekt in neuem/diesem Fenster öffnen (Nachfrage) | ✅ `projects.openIn` (ask/new/this) | Kern | ✔ (`confirmOpenNewProject2`) | M12 |
 | Zuletzt geöffnete Projekte | ✅ `ui.recentProjects` | Kern | ✔ (`recentProjects.xml`, nur existierende Pfade, opt-in) | M16 |
 | Tipps beim Start, Statusleisten-Widgets | ⛔ / 🟡 | Kern | – | – |
-| Einstellungsdialog mit Baum + Suche | 🟡 flaches Overlay, keine Suche | Kern | – | M12 |
+| Einstellungsdialog mit Baum + Suche | ✅ Baum „Core“/„Plugins“, Suche, Quelle + Zurücksetzen (D216) | Kern | – | M12 |
 
 ## 2. Keymap (Kern)
 
@@ -70,20 +70,20 @@ Tiegel-Stand: Editor-Keymap als Code-Tabelle (`keymap/defaults.go`), GUI-Aktione
 | Konsolen-/Terminal-Schrift | ❌ | Kern | ✔ (`console-font.xml`, `terminal-font.xml`) | M15 |
 | Tab-Breite | ✅ `editor.tabWidth` | Kern | ✔ (`codestyles`) | M16 |
 | Soft Wrap, Whitespace anzeigen, Zeilennummern, Lineal | 🟡 Zeilennummern | Kern | ✔ | M12 |
-| `.editorconfig` | ❌ | Kern | – (Datei im Projekt) | M12 |
+| `.editorconfig` | ✅ `files.editorconfig` (D214) | Kern | – (Datei im Projekt) | M12 |
 | Farbschema (eigene Farben) | 🟡 Palette „crucible“, nicht einstellbar | Kern | ~ hell/dunkel | – |
 | Code Style PHP (umfangreich) | ⛔ (Projekt-Formatter, siehe Plugins Pint/CS-Fixer) | – | – | – |
 | Inspektionen | ⛔ (Diagnosen kommen aus LSP + Plugins) | – | – | – |
 | Datei- und Code-Vorlagen | 🟡 nur „New PHP Class“ | Kern | ~ (`fileTemplates/`) | M17 |
 | Live Templates | ❌ | Plugin `snippets` | ~ | M17 |
-| Dateitypen/Zuordnungen | 🟡 `langdetect` fest | Kern | ✔ (`filetypes.xml`) | M12 |
+| Dateitypen/Zuordnungen | ✅ `files.associations` (D213) | Kern | ✔ (`filetypes.xml`) | M12 |
 | Inlay Hints | ❌ | Plugin `lang-php` | – | M17 |
 
 ## 4. Versionskontrolle (Plugin `git`)
 
 | Einstellung | Tiegel | Import | MS |
 | --- | --- | --- | --- |
-| Git-Pfad, Update-Methode (Merge/Rebase), Auto-Fetch | 🟡 Pull-Optionen im Dialog, nicht gespeichert | ✔ (`vcs.xml`) | M12 |
+| Git-Pfad, Update-Methode (Merge/Rebase), Auto-Fetch | 🟡 `git.updateMethod` ✅; Git-Pfad, Auto-Fetch fehlen | ✔ (`vcs.xml`) | M12 |
 | Log-Spalten, Änderungen von Eltern zeigen | ❌ | ✔ | – (mit AP10.20) |
 | GitHub/GitLab-Konten | ⛔ (Privacy; nur Git-CLI) | – | – |
 

@@ -2,13 +2,54 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 )
 
-// LoadSettingsData loads modules, interpreters, mappings and the Xdebug
-// diagnosis for the settings dialog.
+// SettingSpec mirrors a declared setting of settings.schema with its
+// stored and effective values.
+type SettingSpec struct {
+	Key     string          `json:"key"`
+	Kind    string          `json:"kind"`
+	Default json.RawMessage `json:"default,omitempty"`
+	Scope   string          `json:"scope"`
+	Label   string          `json:"label"`
+	Help    string          `json:"help,omitempty"`
+	Group   string          `json:"group,omitempty"`
+	Options []string        `json:"options,omitempty"`
+	Min     *int            `json:"min,omitempty"`
+	Max     *int            `json:"max,omitempty"`
+	Global  json.RawMessage `json:"global,omitempty"`
+	Project json.RawMessage `json:"project,omitempty"`
+	Value   json.RawMessage `json:"value,omitempty"`
+	Source  string          `json:"source"`
+	Invalid string          `json:"invalid,omitempty"`
+}
+
+// ModuleSettings are the settings of one plugin.
+type ModuleSettings struct {
+	ID        string        `json:"id"`
+	Enabled   bool          `json:"enabled"`
+	Running   bool          `json:"running"`
+	Error     string        `json:"error"`
+	DependsOn []string      `json:"dependsOn"`
+	Settings  []SettingSpec `json:"settings"`
+}
+
+// SettingsSchema is the result of settings.schema.
+type SettingsSchema struct {
+	Project string           `json:"project"`
+	Pages   []string         `json:"pages"`
+	Core    []SettingSpec    `json:"core"`
+	Modules []ModuleSettings `json:"modules"`
+}
+
+// LoadSettingsData loads the settings schema, modules, interpreters,
+// mappings and the Xdebug diagnosis for the settings dialog.
 func (c *Controller) LoadSettingsData() {
 	c.Go(func(ctx context.Context) func() {
+		var schema SettingsSchema
+		serr := c.call(ctx, "settings.schema", nil, &schema)
 		var mods []ModuleInfo
 		merr := c.call(ctx, "modules.list", nil, &mods)
 		var interps []Interpreter
@@ -20,6 +61,9 @@ func (c *Controller) LoadSettingsData() {
 			_ = c.call(ctx, "runtime.diagnose", nil, &diag)
 		}
 		return func() {
+			if serr == nil {
+				c.Schema = &schema
+			}
 			if merr == nil {
 				sort.SliceStable(mods, func(i, j int) bool { return mods[i].ID < mods[j].ID })
 				c.Modules = mods
@@ -92,4 +136,52 @@ func (c *Controller) SetMappings(ms []Mapping, reset bool) {
 			c.Mappings = res
 		}
 	})
+}
+
+// SetSettingValue writes a declared setting (validated by the kernel) and
+// reloads the schema and the preferences; value nil resets it (deletes the
+// value of scope).
+func (c *Controller) SetSettingValue(key, scope string, value any) {
+	params := map[string]any{"key": key, "scope": scope}
+	if value != nil {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			c.notice(err)
+			return
+		}
+		params["value"] = json.RawMessage(raw)
+	}
+	c.Go(func(ctx context.Context) func() {
+		err := c.call(ctx, "settings.set", params, nil)
+		p := c.loadPrefs(ctx)
+		return func() {
+			c.notice(err)
+			c.Prefs = p
+			c.LoadSettingsData()
+		}
+	})
+}
+
+// ResetSetting removes the value of key in scope.
+func (c *Controller) ResetSetting(key, scope string) { c.SetSettingValue(key, scope, nil) }
+
+// EffectiveSetting returns the effective value of key from the loaded
+// schema (nil if unknown or not loaded).
+func (c *Controller) EffectiveSetting(key string) json.RawMessage {
+	if c.Schema == nil {
+		return nil
+	}
+	for _, s := range c.Schema.Core {
+		if s.Key == key {
+			return s.Value
+		}
+	}
+	for _, m := range c.Schema.Modules {
+		for _, s := range m.Settings {
+			if s.Key == key {
+				return s.Value
+			}
+		}
+	}
+	return nil
 }

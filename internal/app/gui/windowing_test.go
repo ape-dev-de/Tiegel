@@ -381,10 +381,18 @@ func TestWindowingScreenshots(t *testing.T) {
 	e.settle()
 	e.shot("windowing-workbench")
 	e.v.openSettings()
-	e.v.settings.Section = 2 // Editor: fonts
+	e.v.settings.Selected = "core:Editor"
 	e.waitFor("mono fonts", func() bool { return e.ctl.MonoFonts != nil && len(e.ctl.MonoFonts) > 0 })
+	e.waitFor("settings schema", func() bool { return e.ctl.Schema != nil })
 	e.settle()
 	e.shot("windowing-settings-fonts")
+	e.v.settings.Selected = "plugin:git"
+	e.settle()
+	e.shot("windowing-settings-plugin")
+	e.v.settings.SetQuery("tab")
+	e.settle()
+	e.shot("windowing-settings-search")
+	e.v.settings.SetQuery("")
 	e.v.closeOverlay()
 	e.v.closeProject()
 	e.waitFor("welcome", func() bool { return !e.ctl.Project.Open })

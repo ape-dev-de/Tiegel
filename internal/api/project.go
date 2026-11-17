@@ -434,7 +434,7 @@ func (a *App) filesRead(_ context.Context, p FilesReadParams) (FileContent, erro
 	}
 	res := FileContent{
 		Path:      a.displayPath(abs),
-		Language:  string(langdetect.Detect(abs, head(data))),
+		Language:  string(a.detectLang(abs, head(data))),
 		Size:      st.Size(),
 		Encoding:  "utf-8",
 		Content:   string(data),
@@ -481,5 +481,5 @@ func (a *App) filesDetectLanguage(_ context.Context, p DetectLanguageParams) (La
 		_ = f.Close()
 		h = buf[:n]
 	}
-	return LanguageResult{Path: a.displayPath(abs), Language: string(langdetect.Detect(abs, h))}, nil
+	return LanguageResult{Path: a.displayPath(abs), Language: string(a.detectLang(abs, h))}, nil
 }

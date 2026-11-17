@@ -53,7 +53,7 @@ const (
 
 // SettingWatchExclude (project or global settings): directory names or
 // project-relative paths the watcher skips (default ["node_modules"]).
-const SettingWatchExclude = "watch.exclude"
+const SettingWatchExclude = settings.KeyWatchExclude
 
 // DocReloadedEvent is the payload of doc.reloaded.
 type DocReloadedEvent struct {
@@ -569,7 +569,7 @@ func (a *App) watchStatus() WatchStatus {
 func (a *App) startWatch(root string, be watch.Backend, exclude []string) error {
 	a.stopWatch()
 	if exclude == nil {
-		exclude = settings.Get[[]string](a.settingsStore(), SettingWatchExclude, nil)
+		exclude = Setting[[]string](a, SettingWatchExclude, nil) // project over global over default
 	}
 	w, err := watch.Start(root, watch.Options{
 		Backend:      be,

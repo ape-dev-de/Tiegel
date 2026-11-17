@@ -89,6 +89,20 @@ func (m *Module) Claims() []string {
 	return []string{"php.check", "php.diagnostics", "php.setVersionOverride"}
 }
 
+// SettingBackground switches the background check of open documents
+// (php.diagnostics events); php.check works regardless.
+const SettingBackground = ID + ".background"
+
+// SettingSpecs implements module.SettingsProvider. The version override
+// (php.versionOverride) is project state changed with
+// php.setVersionOverride, not a declared setting.
+func (m *Module) SettingSpecs() []settings.Spec {
+	return []settings.Spec{
+		{Key: SettingBackground, Kind: settings.KindBool, Default: true, Scope: settings.ScopeProject,
+			Label: "Check open files", Help: "Report language features newer than the project's PHP version and deprecated ones while editing."},
+	}
+}
+
 // Start registers the API and starts tracking open documents.
 func (m *Module) Start(ctx module.Context) error {
 	app, ok := api.AppFrom(ctx)
@@ -342,6 +356,16 @@ func (m *Module) runCheck(t *tracked) {
 	ctx := m.ctx
 	m.mu.Unlock()
 	if ctx == nil || ctx.Err() != nil || m.waitChecker(ctx) != nil {
+		return
+	}
+	if !api.Setting(m.app, SettingBackground, true) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.docs[t.file] == t {
+			ev := Diagnostics{Path: m.app.DisplayPath(t.file), File: t.file, Version: t.version, Diagnostics: []Diagnostic{}}
+			m.diags[t.file] = ev
+			m.app.Bus().Publish(api.TopicPHPDiagnostics, ev)
+		}
 		return
 	}
 	v, err := m.phpVersion(ctx)

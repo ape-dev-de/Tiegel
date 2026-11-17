@@ -65,6 +65,14 @@ func (v *View) requestProject(dir string) {
 		v.ctl.OpenProject(dir)
 		return
 	}
+	switch v.ctl.Prefs.OpenProjectIn { // setting projects.openIn
+	case "this":
+		v.ctl.OpenProject(dir)
+		return
+	case "new":
+		v.openWindow(dir)
+		return
+	}
 	v.OpenPopup(&Popup{
 		Title:    "Open Project",
 		Detail:   "Open " + filepath.Base(dir) + " in this window (closing " + v.ctl.Project.Name + ") or in a new window?",

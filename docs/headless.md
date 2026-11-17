@@ -71,6 +71,11 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `docker path [PFAD \| --clear]` | Docker-Binary anzeigen bzw. fest einstellen (`docker.path`) | `docker.setPath`, `docker.contexts` |
 | `lsp-servers [--all]` | installierte Language Server (`--all` inkl. proprietärer) | `lsp.servers` |
 | `modules [enable ID \| disable ID]` | Module anzeigen/schalten | `modules.*` |
+| `settings [--schema] [--module ID\|core] [--query TEXT]` | Alle deklarierten Einstellungen (D190): „Core › Seite“ und „Plugins › Modul [on/off]“ mit Schlüssel, Typ, wirksamem Wert, Quelle (`default`/`global`/`project`) und Label; `--query` sucht in Schlüssel, Label, Hilfe, Gruppe, Modul-ID; `--json` liefert das vollständige Schema | `settings.schema` |
+| `settings get KEY [--scope global\|project] [--effective]` | gespeicherten (oder mit `--effective` den wirksamen) Wert lesen | `settings.get` |
+| `settings set KEY VALUE [--scope S]` | Wert schreiben; `VALUE` ist JSON, einfache Wörter gelten als Zeichenkette (`settings set ui.theme light`); deklarierte Schlüssel werden gegen ihre Spec geprüft (Exit 1 mit Grund) | `settings.set` |
+| `settings reset KEY [--scope S]` | Wert im Bereich löschen (dann gilt der globale Wert bzw. der Standard) | `settings.set` mit `null` |
+| `editorconfig FILE` | wirksame `.editorconfig`-Eigenschaften einer Datei (Einrückung, Tab-Breite, Zeilenende, Zeichensatz-Prüfung, abschließende Leerzeile, Leerzeichen am Zeilenende) mit den gelesenen Dateien | `files.editorconfig` |
 | `history FILE [--show ID \| --restore ID]` | Local History: Liste, Inhalt einer Revision, Wiederherstellen | `history.*` |
 | `recovery [--dismiss [FILE...]]` | Wiederherstellungspunkte: ungespeicherte Änderungen, die beim Schließen nicht gespeichert werden konnten (bzw. beim Beenden noch offen waren), liegen in der Local History; `--dismiss` entfernt die Hinweise (ohne Dateien: alle), die Revisionen bleiben | `history.recovery`, `history.recoveryDismiss` |
 | `git-status` | Branch und geänderte Dateien (`XY pfad`) | `git.status` |
@@ -281,6 +286,22 @@ Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`,
 Hintergrundarbeit: php-features prüft offene PHP-Dokumente nach jeder Änderung (entprellt, inkrementelles Tree-sitter-Update aus `doc.edited`) und veröffentlicht `php.diagnostics`. lang-php hält einen gestarteten Language Server automatisch synchron: `doc.open` → didOpen, jede Änderung (auch direkt am Puffer) → didChange (inkrementell, UTF-16), `doc.close` → didClose, Speichern → didSave; bei `interpreter.changed` und `php.versionChanged` startet der Server neu.
 
 
+## Einstellungen: Kern und Plugins
+
+Einstellungen werden deklariert (D190, D210–D212): der Kern in `internal/core/settings/corespecs.go` (weitere Kernpakete per `settings.RegisterCore`), jedes Modul über `SettingSpecs()` im eigenen Namensraum `<modul-id>.*` (die Registry lehnt fremde Schlüssel ab). `settings.schema`, der Einstellungsdialog und `tiegel --headless settings` entstehen daraus. Werkzeugspezifisches gehört immer in ein Modul; ein Test stellt sicher, dass kein Kernschlüssel einen Werkzeugnamen enthält.
+
+| Bereich | Schlüssel |
+| --- | --- |
+| Kern › Appearance | `ui.theme` (dark/light/system), `ui.fontSize` |
+| Kern › Editor | `editor.fontFamily`, `editor.fontSize`, `editor.lineHeight`, `editor.tabWidth`, `editor.insertSpaces` |
+| Kern › Files | `files.editorconfig` (Projekt), `files.associations` (Projekt, `muster=sprache`, z.B. `*.tpl=php`), `watch.exclude` (Projekt) |
+| Kern › Autosave / Projects / Updates | `autosave.idleSeconds`, `projects.openIn` (ask/new/this), `update.checkOnStart` |
+| Plugin `git` | `git.updateMethod` (merge/rebase, Projekt) |
+| Plugin `debug-xdebug` | `debug-xdebug.port` (Projekt, Standard 9003) |
+| Plugin `php-features` | `php-features.background` (offene Dateien prüfen, Projekt) |
+| Plugin `syntax` | `syntax.maxFileKB` (größere Dateien als Klartext) |
+| Plugin `php-index` | `php-index.libraries`, `php-index.includeIgnored`, `php-index.exclude` (Projekt) |
+
 ## Methoden
 
 Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative Pfade beziehen sich auf das Projektverzeichnis (ohne Projekt: auf das Arbeitsverzeichnis). Pfade in Ergebnissen sind innerhalb des Projekts relativ mit `/`, sonst absolut.
@@ -309,7 +330,7 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `files.copyPath` | `path` oder `paths` | `{paths: [{absolute, relative, name, uri}], text, relativeText}` – die GUI kopiert in die Zwischenablage |
 | `files.createPhpClass` | `dir?`, `name`, `kind?` (`class` = `final class`, `abstract`, `interface`, `trait`, `enum`), `namespace?`, `open?` | Datei + `namespace`, `class` (FQCN) |
 | `files.phpNamespace` | `path?` (Ordner) | `{dir, namespace, found, mapping}` aus `composer.json` PSR-4 |
-| `doc.open` | `path`, `create?`, `text?` | Dokumentzustand (+ `text`, `alreadyOpen`); jeder Dokumentzustand enthält `generation` (eindeutig pro geöffneter Instanz, neu nach Schließen + Öffnen) |
+| `doc.open` | `path`, `create?`, `text?` | Dokumentzustand (+ `text`, `alreadyOpen`, `editorconfig?` mit den `.editorconfig`-Eigenschaften, `charsetWarning?`); jeder Dokumentzustand enthält `generation` (eindeutig pro geöffneter Instanz, neu nach Schließen + Öffnen). Die Sprache berücksichtigt `files.associations`; `trim_trailing_whitespace`/`insert_final_newline` wendet der Kern beim Speichern an (Filter `file.beforeSave`, nach Formatierern) |
 | `doc.close` | `path`, `generation?`, `discard?` | `path`, `generation`, `discarded`; mit ungespeicherten Änderungen nur mit `discard: true` (sonst -32004, `data` = Dokumentzustand); mit `generation` nur, wenn sie zur offenen Instanz passt (sonst -32004 – ein verspätetes Close trifft kein neu geöffnetes Dokument) |
 | `doc.list` | – | Dokumentzustände (mit `external`, solange eine externe Änderung offen ist) |
 | `doc.text` | `path`, `start?`, `end?` | `text`, `version` |
@@ -330,8 +351,10 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `history.recoveryDismiss` | `paths?` (ohne: alle) | verbleibende Wiederherstellungspunkte (die Revisionen bleiben in der Local History) |
 | `autosave.trigger` | `trigger?` (`focusLost` Standard, `idle`, `beforeRun`, `beforeDebug`, `beforeCommit`, `close`) | `saved: [..]` – alle geänderten Dokumente über Autosave (Hooks, Local History mit Label `autosave: <trigger>`); mit `close` werden nicht speicherbare Dokumente als Wiederherstellungspunkt gesichert, der Fehler (-32000) nennt das und trägt die Punkte als `data` |
 | `autosave.config` | `idleSeconds?` (0 = aus) | `idleSeconds` (dauerhaft in den globalen Settings; jede Pufferänderung startet den Leerlauf-Timer neu) |
-| `settings.get` | `key`, `scope?` (`global`, `project`) | `key`, `scope`, `found`, `value` |
-| `settings.set` | `key` (nur `ui.*`, `editor.*`, `update.*`, `watch.*`), `scope?`, `value` (`null` löscht) | wie `settings.get` |
+| `settings.get` | `key`, `scope?` (`global`, `project`), `effective?` (wirksamer Wert: Projekt vor global vor Standard) | `key`, `scope`, `found`, `value`, `source?` |
+| `settings.set` | `key`, `scope?`, `value` (`null` löscht = zurücksetzen) | wie `settings.get`; deklarierte Schlüssel (siehe `settings.schema`) werden geprüft (Typ, Optionen, Min/Max, nur-global → `-32602`), nicht deklarierte nur in den Client-Namensräumen `ui.*`, `editor.*`, `update.*`, `watch.*`; unbekannte gespeicherte Schlüssel bleiben erhalten |
+| `settings.schema` | `query?`, `module?` (Modul-ID oder `core`) | `{project, pages[], core[], modules[{id, enabled, running, error, dependsOn, settings[]}], problems[]}`; jede Einstellung: Spec (`key, kind, default, scope, label, help, group, options, min, max`) plus `global?`, `project?` (gespeicherte Werte), `value` (wirksam), `source` (`default`, `global`, `project`), `invalid?` (ignorierter gespeicherter Wert). Kern-Einstellungen tragen ihre Dialogseite in `group`; `problems` nennt abgelehnte Modul-Deklarationen |
+| `files.editorconfig` | `path` | `{path, enabled, indentStyle, indentSize, tabWidth, endOfLine, charset, trimTrailingWhitespace, insertFinalNewline, files[], charsetWarning?}`; Suche bis `root = true` bzw. bis zur Projektwurzel |
 | `search.inDoc` | `path`, `pattern`, `regex?`, `caseSensitive?`, `wholeWord?`, `limit?` | Treffer mit `line`, `col`, `text`, `lineText` (offenes Dokument oder Datei) |
 | `search.replaceInDoc` | wie `search.inDoc` + `replacement` | Zustand + `replaced` (ein Undo-Schritt) |
 | `search.inProject` | `pattern`, `regex?`, `caseSensitive?`, `wholeWord?`, `mask?` (`"*.php,*.inc,!*.min.js"`; mit `/` gegen den Projektpfad), `scope?` (`project`, `directory` + `dir`, `openFiles`), `paths?` (nur diese Dateien), `libraries?`, `ignored?`, `limit?` (5000), `maxFileSize?` (4 MiB), `stream?`, `id?` | `{id, files[{path, file, open, version, matches[{start, end, line, col, text, lineText, previewStart?}]}], matches, filesMatched, filesSearched, skippedBinary, skippedLarge, limited, cancelled, durationMs}`; offene Dokumente werden im Puffer durchsucht (auch ungespeicherte neue). Mit `stream: true` kommt sofort `{id, running: true}`, die Treffer folgen als Events `search.results` (Stapel; das letzte hat `done: true` und `summary`) |
@@ -413,7 +436,7 @@ Workspace-Änderungen des Servers (Code Actions, Rename, `workspace/applyEdit`) 
 | `git.conflicts` | – | Dateien mit Konflikt |
 | `git.mergeData` | `path` | `base`, `ours`, `theirs`, `has*`, `blocks[{index, kind, conflict, base, ours, theirs, *Start}]`, `merged` (mit Markern), `conflicts` |
 | `git.fetch` | `remote?` (ohne: alle), `prune?`, `tags?` | `{remotes, updated[{ref, old?, new?}]}` (Netzwerkzugriff nur hier) |
-| `git.pull` | `remote?`, `branch?` (Standard: Upstream), `strategy?` (`merge` Standard, `rebase`, `ff-only`), `autostash?`, `prune?` | `{branch, remote, remoteBranch, before, after, upToDate, fastForward, changed, conflicts, state, fetched, ahead, behind}`; vorher werden offene Dokumente gespeichert, das Holen läuft außerhalb, das Integrieren unter der Speicher-Sperre, danach werden offene, ungeänderte Dokumente neu geladen. Konflikte sind kein Fehler (`conflicts`, `state` `merging`/`rebasing`) |
+| `git.pull` | `remote?`, `branch?` (Standard: Upstream), `strategy?` (`merge`, `rebase`, `ff-only`; ohne Angabe die Einstellung `git.updateMethod`, Standard `merge`), `autostash?`, `prune?` | `{branch, remote, remoteBranch, before, after, upToDate, fastForward, changed, conflicts, state, fetched, ahead, behind}`; vorher werden offene Dokumente gespeichert, das Holen läuft außerhalb, das Integrieren unter der Speicher-Sperre, danach werden offene, ungeänderte Dokumente neu geladen. Konflikte sind kein Fehler (`conflicts`, `state` `merging`/`rebasing`) |
 | `git.updateProject` | `strategy?`, `prune?`, `autostash?` | wie `git.pull` für den Upstream des aktuellen Branches (`git.changed` mit `op: "update"` und den geänderten Pfaden) |
 | `git.stash` | `message?`, `includeUntracked?`, `keepIndex?`, `paths?` | `{created, entry?}` (Dokumente werden vorher gespeichert) |
 | `git.stashList` | – | `[{index, ref, hash, message, date}]`, neueste zuerst |
@@ -429,7 +452,7 @@ Workspace-Änderungen des Servers (Code Actions, Rename, `workspace/applyEdit`) 
 
 | Methode | Parameter | Ergebnis |
 |---|---|---|
-| `debug.listen` | `addr?`, `mappings?: [{host, remote}]` (ohne: Mappings aus php-runtime, folgt `runtime.mappingsChanged`) | `listening`, `addr`, `mappings`; vorher Guard `debug.before` (speichert offene Dokumente) |
+| `debug.listen` | `addr?` (Standard `127.0.0.1:<debug-xdebug.port>`, Port-Standard 9003), `mappings?: [{host, remote}]` (ohne: Mappings aus php-runtime, folgt `runtime.mappingsChanged`) | `listening`, `addr`, `mappings`; vorher Guard `debug.before` (speichert offene Dokumente) |
 | `debug.stop` | – | Listener beenden (alle Sitzungen enden) |
 | `debug.sessions` | – | Sitzungen `{id, file, ideKey, engine, status, …}` |
 | `debug.run` / `debug.stepInto` / `debug.stepOver` / `debug.stepOut` / `debug.stopSession` / `debug.detach` | `session?` | Status mit Host-Datei/Zeile |
@@ -457,7 +480,7 @@ Workspace-Änderungen des Servers (Code Actions, Rename, `workspace/applyEdit`) 
 | Methode | Parameter | Ergebnis |
 |---|---|---|
 | `index.status` | `wait?` | `state` (`idle`, `loading`, `indexing`, `ready`, `error`), `progress`, `files`, `libraryFiles`, `classes`, `members`, `functions`, `constants`, `generation`, `fromCache`, `lastSync`, `durationMs`, `libraries`, `error` |
-| `index.config` | `libraries?`, `includeIgnored?`, `exclude?: [muster]` | aktuelle Einstellung (Projekt-Settings `index.*`); Änderungen starten den Index neu |
+| `index.config` | `libraries?`, `includeIgnored?`, `exclude?: [muster]` | aktuelle Einstellung (deklarierte Einstellungen `php-index.*`, Projekt vor global; alte Schlüssel `index.*` werden beim Start übernommen); Änderungen – auch über `settings.set` – starten den Index neu |
 | `index.rebuild` | `full?` (Index und Cache verwerfen), `wait?` | Status |
 | `nav.definition` | `path`, `at`, `source?` (`auto` = Index + laufender Language Server, `index`, `lsp`), `wait?` | `locations`, `complete`, `lsp`, `lspError` |
 | `nav.implementations` | wie `nav.definition` | Interface → implementierende Klassen/Enums (transitiv, auch über Elternklassen), Klasse → Unterklassen, Trait → Nutzer, Methode → überschreibende/implementierende Methoden |

@@ -96,7 +96,8 @@ type PullParams struct {
 	// Remote and Branch default to the upstream of the current branch.
 	Remote string `json:"remote,omitempty"`
 	Branch string `json:"branch,omitempty"`
-	// Strategy is merge (default), rebase or ff-only.
+	// Strategy is merge, rebase or ff-only; empty uses the setting
+	// git.updateMethod (default merge).
 	Strategy  string `json:"strategy,omitempty"`
 	Autostash bool   `json:"autostash,omitempty"`
 	Prune     bool   `json:"prune,omitempty"`
@@ -104,6 +105,7 @@ type PullParams struct {
 
 // UpdateParams are the params of "git.updateProject".
 type UpdateParams struct {
+	// Strategy as in PullParams (empty: git.updateMethod).
 	Strategy  string `json:"strategy,omitempty"`
 	Prune     bool   `json:"prune,omitempty"`
 	Autostash bool   `json:"autostash,omitempty"`
@@ -139,6 +141,9 @@ func (m *Module) gitUpdateProject(ctx context.Context, p UpdateParams) (PullResu
 // pull saves the documents, fetches (outside the save lock: network), then
 // integrates and reloads the open documents under the save lock.
 func (m *Module) pull(ctx context.Context, op string, opts gitcli.PullOptions, strategy string) (PullResult, error) {
+	if strategy == "" {
+		strategy = api.Setting(m.app, SettingUpdateMethod, "merge")
+	}
 	s, err := gitcli.ParseStrategy(strategy)
 	if err != nil {
 		return PullResult{}, api.Errorf(api.CodeInvalidParams, "%v", err)

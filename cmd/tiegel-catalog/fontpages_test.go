@@ -50,20 +50,31 @@ func TestScreenshotsSystemFonts(t *testing.T) {
 	}
 }
 
-func TestSettingsHostAppliesFontEvents(t *testing.T) {
-	h := &settingsHost{}
+func TestSettingsHostAppliesEvents(t *testing.T) {
+	h := &settingsHost{p: settings.Panel{Pages: samplePages()}}
 	for _, ev := range []settings.Event{
-		settings.FontFamilyEvent{Family: "Menlo"}, settings.FontSizeEvent{Size: 16},
-		settings.LineHeightEvent{Value: 1.8}, settings.UIFontSizeEvent{Size: 15},
-		settings.TabWidthEvent{Width: 2}, settings.ThemeEvent{Theme: "light"}, settings.CloseEvent{},
+		settings.SetEvent{Key: "editor.fontFamily", Scope: "global", Value: "Menlo"},
+		settings.SetEvent{Key: "editor.fontSize", Scope: "global", Value: 16.0},
+		settings.SetEvent{Key: "editor.lineHeight", Scope: "global", Value: 1.8},
+		settings.SetEvent{Key: "ui.fontSize", Scope: "global", Value: 15},
+		settings.SetEvent{Key: "git.updateMethod", Scope: "project", Value: "merge"},
+		settings.ResetEvent{Key: "ui.theme", Scope: "global"},
+		settings.ModuleEvent{ID: "debug-xdebug", Enable: true},
+		settings.CloseEvent{},
 	} {
 		h.apply(ev)
 	}
 	want := tokens.FontPrefs{EditorFamily: "Menlo", EditorSize: 16, LineHeight: 1.8, UISize: 15}
-	if h.prefs != want || h.p.EditorFont != "Menlo" || h.p.TabWidth != 2 || h.p.Theme != "light" {
-		t.Fatalf("prefs %+v panel %+v", h.prefs, h.p)
+	if h.prefs != want {
+		t.Fatalf("prefs %+v", h.prefs)
 	}
-	if !strings.Contains(h.last, "ThemeEvent") {
+	if f := h.p.Pages[0].Fields[0]; f.Value != nil || f.Source != settings.SourceDefault || f.HasGlobal {
+		t.Fatalf("reset %+v", f)
+	}
+	if m := h.p.Pages[len(h.p.Pages)-1].Module; !m.Enabled {
+		t.Fatal("module not enabled")
+	}
+	if !strings.Contains(h.last, "ModuleEvent") {
 		t.Fatalf("last %q", h.last)
 	}
 }
