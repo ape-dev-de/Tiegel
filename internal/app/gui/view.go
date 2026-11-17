@@ -142,6 +142,7 @@ type View struct {
 	dbgd *debugDock
 	navd *navDock
 	lspd *lspDock
+	svcd *servicesDock
 	// work is the file side: tree menu, external changes, diff and
 	// history tabs, remote git (filesdock.go and friends).
 	work *workDock
@@ -200,6 +201,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v.navd = installNav(v)
 	v.installKeyNav()
 	v.lspd = installLSP(v)
+	v.svcd = installServices(v)
 	return v
 }
 

@@ -69,6 +69,13 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `docker status [KONTEXT]` | prüft, ob die Engine des (gewählten) Kontexts antwortet (`docker version`, Timeout `docker.timeoutSeconds`); Exit 1, wenn nicht erreichbar | `docker.status` |
 | `docker use NAME [--global]` / `docker use --clear [--global]` | Kontext fürs Projekt (bzw. global) wählen oder zurücksetzen; Compose- und Image-Interpreter verwenden ihn (`--context`) | `docker.setContext` |
 | `docker path [PFAD \| --clear]` | Docker-Binary anzeigen bzw. fest einstellen (`docker.path`) | `docker.setPath`, `docker.contexts` |
+| `docker ps [--all]` | Compose-Projekt des Projekts mit Diensten (Zustand `running`/`stopped`/`missing`, Health, Ports als `http://…`-Links) und Containern; `--all` auch die übrigen Container (`docker ps --all`); fragt die Engine; Exit 1 bei Engine- oder Compose-Fehler | `docker.services` |
+| `docker up\|start\|stop\|restart [DIENST] [--container]` | Aktion fürs ganze Compose-Projekt bzw. einen Dienst (`up` = `up --detach`); mit `--container` für einen einzelnen Container (ID/Name, ohne `up`) | `docker.serviceAction` |
+| `docker down --yes` | `docker compose down` fürs ganze Projekt (Container und Netzwerke weg, benannte Volumes bleiben); ohne `--yes` Exit 2 | `docker.serviceAction` (`confirm: true`) |
+| `docker logs [DIENST] [-f] [--tail N\|all] [--filter TEXT] [--timestamps] [--container]` | Logs (Standard: letzte 200 Zeilen, alle Dienste) als `container \| text`; `--filter` behält nur Zeilen mit dem Text (ohne Groß-/Kleinschreibung); `-f` folgt bis Ctrl+C (Events `docker.log`, danach `docker.logsStop`) | `docker.logs`, `docker.logsStop` |
+| `docker shell DIENST [--shell SH] [--container]` | öffnet eine Shell (`sh`) im Dienst/Container in einem **externen** Terminal (`docker.terminal`; macOS `open -a Terminal`, Linux `$TERMINAL`/`x-terminal-emulator`/…, Windows `wt`/`cmd`) – Übergang bis zum eingebetteten Terminal (M15.5) | `docker.shell` |
+| `docker open URL` | öffnet eine `http(s)`-URL (veröffentlichter Port) im Standardbrowser | `docker.openURL` |
+| `docker watch [--all]` | gibt bei jeder Änderung den Stand aus (`docker events` des Compose-Projekts, sonst Polling alle `docker.servicesRefreshSeconds`), bis Ctrl+C | `docker.watchStart`, `docker.watchStop`, Event `docker.servicesChanged` |
 | `lsp-servers [--all]` | installierte Language Server der eingeschalteten Plugins (`--all`: auch fehlende) | `lsp.servers` |
 | `lsp-status [--start]` | Zustand des Supervisors (`off`, `not-found`, `starting`, `running`, `crashed`, `stopped`) mit Grund und – bei `not-found` – durchsuchten Orten und Installationshinweis; `--start` startet vorher den gewählten Server; Exit 1, wenn kein Server läuft | `lsp.start`, `lsp.status` |
 | `lsp-restart [--server ID] [--command PATH] [--trace]` | startet den gewählten Server nativ neu (auch nach Crash-Schleife) und wartet auf `initialize`; `--trace` gibt Server-Log samt JSON-RPC-Trace aus; Exit 1, wenn er nicht läuft | `lsp.restart`/`lsp.start`, `lsp.trace`, `lsp.log` |
@@ -278,6 +285,7 @@ Von den Modulen veröffentlichte Topics:
 | lang-php | `lsp.state` (Supervisor-Zustand wie `lsp.status`; früher `lsp.status`), `lsp.log` (`{seq, time, kind: stderr\|send\|recv\|event, server, text}`), `lsp.diagnostics` (`{path, file, version, diagnostics}`), `lsp.editApplied` (`{label, applied, files}` nach jeder angewendeten Workspace-Änderung: Code Action, Rename, `workspace/applyEdit` des Servers) |
 | git | `git.changed` (`{op, paths}` nach jeder Änderung über die API; `op` u.a. `fetch`, `pull`, `update`, `stash`, `stashApply`, `stashPop`, `stashDrop`), `git.committed` |
 | php-index | `index.progress` (`{phase: scanning\|indexing\|ready, done, total}`, höchstens alle 100 ms), `index.updated` (`{files, truncated, generation, reason: sync\|file\|doc\|cache}`) |
+| docker | `docker.contextChanged` (`{context, scope, previous}`), `docker.servicesChanged` (Stand wie `docker.services` plus `refresh: events\|poll`; nur während einer Beobachtung per `docker.watchStart`), `docker.log` (`{id, lines: [{container, text, stream}], done?, error?}`; gebündelt alle 100 ms) |
 | debug-xdebug | `debug.listening`, `debug.stopped`, `debug.sessionStarted`, `debug.sessionEnded`, `debug.break` (gemappte Host-Datei/Zeile), `debug.breakpointHit`, `debug.breakpoints.changed`, `debug.status`, `debug.output`, `debug.notification`, `debug.breakpoint.resolved` |
 
 ## Module
@@ -392,6 +400,19 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `runtime.mappings.set` | `mappings` oder `reset: true` | wie `get` (dauerhaft pro Projekt; Event `runtime.mappingsChanged`) |
 | `runtime.execMode` | `mode?` (`auto`, `exec`, `run`) | `mode` – wie PHP im Compose-Dienst läuft (`docker compose exec`/`run --rm`) |
 | `runtime.diagnose` | `interpreter?`, `start?` (wie bei `php.version`; ohne nur `exec`, bei gestopptem Dienst Hinweis `container-not-running`) | `interpreter`, `version`, `ini` (`xdebug.mode`, `xdebug.client_host`, `xdebug.client_port`, `xdebug.start_with_request`), `execMode`, `mappings`, `hints[{severity, code, message}]` (Compose-Hinweise + INI-Prüfung) |
+
+**docker** (Services-Fenster, D270–D276; jede Methode außer `docker.contexts` spricht die Engine an und läuft nur auf Nutzeraktion bzw. während das Fenster sichtbar ist)
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `docker.services` | `standalone?` | `context`, `endpoint`, `remote`, `projects[{name, dir, files, error?, services[{name, image, state, health?, ports[{ip, published, target, protocol, url?}], defined, containers[{id, name, state, status, health, image, exitCode, ports}]}]}]`, `standalone[{id, name, image, state, status, ports, composeProject?, composeService?}]`, `error?` |
+| `docker.serviceAction` | `action` (`up`, `start`, `stop`, `restart`, `down`), `service?`/`services?`, `container?`, `confirm?` (Pflicht bei `down`) | `action`, `target`, `output` (Fortschritt von Compose) |
+| `docker.logs` | `service?`/`services?`, `container?`, `tail?` (0 = 200, negativ = alle), `follow?`, `filter?`, `timestamps?` | ohne `follow`: `lines[{container, text, stream?}]`, `truncated?`; mit `follow`: `id`, Zeilen als Event `docker.log` |
+| `docker.logsStop` | `id` | `stopped` |
+| `docker.watchStart` | `standalone?` | `id`, `intervalSeconds`; sofort und bei jeder Änderung Event `docker.servicesChanged` |
+| `docker.watchStop` | `id` | `stopped` – ohne Beobachter endet `docker events` bzw. das Polling |
+| `docker.shell` | `service` oder `container`, `shell?` | `command` (Docker-Befehl), `launched` (Terminal-Aufruf) |
+| `docker.openURL` | `url` (nur `http`/`https`) | `launched` |
 
 **php-features**
 

@@ -102,14 +102,15 @@ var appDefs = []Def{
 	// Editor display toggles: no default chord (bindable in the keymap).
 	{ID: ViewSoftWrap, Title: "Soft-Wrap", Context: CtxGlobal},
 	{ID: ViewShowWhitespace, Title: "Show Whitespaces", Context: CtxGlobal},
-	// Tool windows: Cmd/Alt + digit like the reference layout (2 Bookmarks,
-	// 4 Run and 8 Services follow with their milestones).
+	// Tool windows: Cmd/Alt + digit like the reference layout (2 Bookmarks
+	// and 4 Run follow with their milestones).
 	{ID: "view.commit", Title: "Commit", Context: CtxGlobal, Mac: []string{"Cmd+0"}, PC: []string{"Alt+0"}},
 	{ID: "view.project", Title: "Project", Context: CtxGlobal, Mac: []string{"Cmd+1"}, PC: []string{"Alt+1"}},
 	{ID: ViewFind, Title: "Find", Context: CtxGlobal, Mac: []string{"Cmd+3"}, PC: []string{"Alt+3"}},
 	{ID: "view.debug", Title: "Debug", Context: CtxGlobal, Mac: []string{"Cmd+5"}, PC: []string{"Alt+5"}},
 	{ID: "view.problems", Title: "Problems", Context: CtxGlobal, Mac: []string{"Cmd+6"}, PC: []string{"Alt+6"}},
 	{ID: "view.structure", Title: "Structure", Context: CtxGlobal, Mac: []string{"Cmd+7"}, PC: []string{"Alt+7"}},
+	{ID: "view.services", Title: "Services", Context: CtxGlobal, Mac: []string{"Cmd+8"}, PC: []string{"Alt+8"}},
 	{ID: "view.git", Title: "Git", Context: CtxGlobal, Mac: []string{"Cmd+9"}, PC: []string{"Alt+9"}},
 	// Navigation.
 	{ID: "file.quickOpen", Title: "Go to File…", Context: CtxGlobal, Mac: []string{"Cmd+Shift+O"}, PC: []string{"Ctrl+Shift+N"}},
