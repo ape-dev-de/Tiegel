@@ -166,7 +166,7 @@ type sink struct {
 	done  []Result
 }
 
-func (s *sink) line(l Line) { s.mu.Lock(); s.lines = append(s.lines, l); s.mu.Unlock() }
+func (s *sink) line(l Line)  { s.mu.Lock(); s.lines = append(s.lines, l); s.mu.Unlock() }
 func (s *sink) fin(r Result) { s.mu.Lock(); s.done = append(s.done, r); s.mu.Unlock() }
 
 func TestRunAgainstFakeComposer(t *testing.T) {
