@@ -175,8 +175,14 @@ func TestWorkbenchSmokeBothThemes(t *testing.T) {
 	})
 	// Overlays render as well.
 	e.v.openSettings()
-	for _, sec := range []int{0, 1, 2, 3, 4} {
-		e.v.settings.Section = sec
+	e.waitFor("settings schema", func() bool { return e.ctl.Schema != nil })
+	e.settle()
+	pages := settingsPages(e.ctl)
+	if len(pages) < 6 {
+		t.Fatalf("settings pages %d", len(pages))
+	}
+	for _, pg := range pages {
+		e.v.settings.Selected = pg.ID
 		e.settle()
 	}
 	e.v.closeOverlay()

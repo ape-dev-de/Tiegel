@@ -10,6 +10,7 @@ import (
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
+	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/gitcli"
 )
 
@@ -36,6 +37,18 @@ func (m *Module) DependsOn() []string { return nil }
 
 // Claims implements api.Claimer.
 func (m *Module) Claims() []string { return []string{"git.*"} }
+
+// SettingUpdateMethod is how git.pull and git.updateProject integrate
+// remote changes when no strategy is given: merge or rebase.
+const SettingUpdateMethod = ID + ".updateMethod"
+
+// SettingSpecs implements module.SettingsProvider.
+func (m *Module) SettingSpecs() []settings.Spec {
+	return []settings.Spec{
+		{Key: SettingUpdateMethod, Kind: settings.KindEnum, Default: "merge", Options: []string{"merge", "rebase"}, Scope: settings.ScopeProject,
+			Label: "Update method", Help: "How Pull and Update Project integrate remote changes when no strategy is chosen.", Group: "Update"},
+	}
+}
 
 // Start registers the git namespace.
 func (m *Module) Start(ctx module.Context) error {

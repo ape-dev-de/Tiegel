@@ -1,13 +1,20 @@
-// Package settings provides the settings dialog: modules on/off with their
-// dependencies, the PHP interpreter (picker, path mappings, Xdebug hints),
-// editor options (tab width, theme, fonts), autosave and the opt-in update check.
-// Everything is stored in Tiegel's internal settings by the host; there is
-// no file for the user to edit.
+// Package settings provides the settings dialog (decision D190, D216): a
+// tree with "Core" pages (Appearance, Editor, Files, Interpreter, …) and
+// "Plugins" pages (one per module, with its on/off switch), all generated
+// from declared setting specs, a search across every setting, the source of
+// each value (default, global, project) and a reset per value.
+//
+// The organism knows no setting by name: the host converts the
+// settings.schema result into Pages and turns the reported events into
+// settings.set calls. Special pages (the interpreter list with path
+// mappings, the update check) are drawn from Page.Extra.
 package settings
 
 import (
 	"fmt"
 	"image"
+	"math"
+	"strconv"
 	"strings"
 
 	"gioui.org/layout"
@@ -19,7 +26,60 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
 
-// Module is a module row.
+// Value kinds of a Field (the settings.Kind values).
+const (
+	KindBool   = "bool"
+	KindInt    = "int"
+	KindFloat  = "float"
+	KindString = "string"
+	KindEnum   = "enum"
+	KindPath   = "path"
+	KindList   = "list"
+)
+
+// Scopes and sources.
+const (
+	ScopeGlobal   = "global"
+	ScopeProject  = "project"
+	SourceDefault = "default"
+)
+
+// Extras are the special page parts the dialog draws itself.
+const (
+	ExtraInterpreter = "interpreter" // interpreter picker, path mappings, Xdebug hints
+	ExtraUpdates     = "updates"     // "Check now" with status
+	ExtraFontPreview = "fontPreview" // sample line in the editor font
+)
+
+// Field is one declared setting with its current value.
+type Field struct {
+	Key   string
+	Kind  string
+	Label string
+	Help  string
+	// Group is an optional sub-heading inside the page.
+	Group   string
+	Options []string
+	Min     *int
+	Max     *int
+	// ProjectScope is true when the setting may have a project value.
+	ProjectScope bool
+	// Value is the effective value (decoded JSON: bool, float64, string,
+	// []any or []string); Source is default, global or project.
+	Value  any
+	Source string
+	// HasGlobal and HasProject tell which scopes store a value.
+	HasGlobal  bool
+	HasProject bool
+	// Invalid describes an ignored stored value.
+	Invalid string
+	// Choices offers values for a string field as a dropdown (e.g. the
+	// installed fonts); ChoiceDefault labels the empty value.
+	Choices       []string
+	ChoiceDefault string
+}
+
+// Module describes the plugin of a plugin page.
 type Module struct {
 	ID        string
 	DependsOn []string
@@ -30,133 +90,108 @@ type Module struct {
 	Error      string
 }
 
+// Page is one node of the tree.
+type Page struct {
+	// ID is unique ("core:Editor", "plugin:git").
+	ID    string
+	Title string
+	// Module is set for plugin pages.
+	Module *Module
+	Fields []Field
+	// Extra names a special part drawn after the fields (Extra*).
+	Extra string
+}
+
+// Plugin reports whether p is a plugin page.
+func (p Page) Plugin() bool { return p.Module != nil }
+
 // Event is reported by Panel.Update.
 type Event interface{ isSettingsEvent() }
 
-// ModuleEvent: a module checkbox was toggled.
+// SetEvent: a value was entered. Value is bool, int, float64, string or
+// []string; Scope is global or project.
+type SetEvent struct {
+	Key   string
+	Scope string
+	Value any
+}
+
+// ResetEvent: the value of Key in Scope should be removed (back to the
+// value of the next scope or the default).
+type ResetEvent struct {
+	Key   string
+	Scope string
+}
+
+// ChoosePathEvent: the chooser button of a path field was clicked; the
+// host shows a file dialog and answers with a SetEvent-equivalent write.
+type ChoosePathEvent struct {
+	Key   string
+	Scope string
+}
+
+// ModuleEvent: a plugin switch was toggled.
 type ModuleEvent struct {
 	ID     string
 	Enable bool
 }
 
-// TabWidthEvent: the tab width was chosen.
-type TabWidthEvent struct{ Width int }
-
-// ThemeEvent: "dark", "light" or "system" was chosen.
-type ThemeEvent struct{ Theme string }
-
-// FontFamilyEvent: an editor font family was chosen ("" = the default
-// fallback chain).
-type FontFamilyEvent struct{ Family string }
-
-// FontSizeEvent: an editor font size (sp) was chosen.
-type FontSizeEvent struct{ Size float32 }
-
-// LineHeightEvent: an editor line height multiplier was chosen.
-type LineHeightEvent struct{ Value float32 }
-
-// UIFontSizeEvent: a UI font size (sp) was chosen.
-type UIFontSizeEvent struct{ Size float32 }
-
-// IdleEvent: the autosave idle delay was chosen (0 = off).
-type IdleEvent struct{ Seconds int }
-
-// UpdateCheckEvent: the update check option was toggled.
-type UpdateCheckEvent struct{ On bool }
-
-// CheckNowEvent: "Check now" was clicked.
+// CheckNowEvent: "Check now" was clicked (updates page).
 type CheckNowEvent struct{}
 
-// RuntimeEvent wraps an event of the interpreter section.
+// RuntimeEvent wraps an event of the interpreter page.
 type RuntimeEvent struct{ Event runtime.Event }
 
 // CloseEvent: the dialog was closed.
 type CloseEvent struct{}
 
-func (ModuleEvent) isSettingsEvent()      {}
-func (TabWidthEvent) isSettingsEvent()    {}
-func (ThemeEvent) isSettingsEvent()       {}
-func (FontFamilyEvent) isSettingsEvent()  {}
-func (FontSizeEvent) isSettingsEvent()    {}
-func (LineHeightEvent) isSettingsEvent()  {}
-func (UIFontSizeEvent) isSettingsEvent()  {}
-func (IdleEvent) isSettingsEvent()        {}
-func (UpdateCheckEvent) isSettingsEvent() {}
-func (CheckNowEvent) isSettingsEvent()    {}
-func (RuntimeEvent) isSettingsEvent()     {}
-func (CloseEvent) isSettingsEvent()       {}
+func (SetEvent) isSettingsEvent()        {}
+func (ResetEvent) isSettingsEvent()      {}
+func (ChoosePathEvent) isSettingsEvent() {}
+func (ModuleEvent) isSettingsEvent()     {}
+func (CheckNowEvent) isSettingsEvent()   {}
+func (RuntimeEvent) isSettingsEvent()    {}
+func (CloseEvent) isSettingsEvent()      {}
 
-// Sections of the dialog.
-var Sections = []string{"Modules", "PHP Interpreter", "Editor", "Autosave", "Updates"}
-
-// TabWidths, Themes, FontSizes, LineHeights, UIFontSizes and IdleChoices
-// are the offered values.
-var (
-	TabWidths   = []int{2, 4, 8}
-	Themes      = []string{"dark", "light", "system"}
-	FontSizes   = []float32{10, 11, 12, 13, 14, 15, 16, 18, 20, 24}
-	LineHeights = []float32{1.0, 1.2, 1.4, 1.6, 1.8, 2.0}
-	UIFontSizes = []float32{11, 12, 13, 14, 15, 16}
-	IdleChoices = []int{0, 5, 15, 30, 60, 300}
-)
-
-// FontPreview is the sample line shown in the editor font: Latin with
-// accents, PHP syntax, CJK and a symbol from the fallback fonts.
+// FontPreview is the sample line of ExtraFontPreview: Latin with accents,
+// PHP syntax, CJK and a symbol from the fallback fonts.
 const FontPreview = "<?php $café = fn(int $x) => $x * 2; // 漢字 ✓"
 
-// DefaultFontLabel names the default editor font chain in the family list.
-const DefaultFontLabel = "System default"
+// Size is the dialog size.
+var Size = image.Pt(880, 600)
 
-// Panel is the settings organism.
+// Panel is the settings organism. The host fills Pages (and the
+// interpreter organisms) every frame; the panel keeps the widget state per
+// setting key.
 type Panel struct {
-	Section int
-
-	Modules  []Module
-	TabWidth int
-	Theme    string
-	// EditorFont is the chosen editor font family ("" = default chain).
-	EditorFont string
-	// EditorFonts lists the installed monospace families offered in the
-	// family dropdown (the host fills it, e.g. from
-	// tokens.MonospaceFamilies in the background). An empty list offers
-	// only the default and the current family.
-	EditorFonts []string
-	// EditorFontSize and UIFontSize are font sizes in sp, LineHeight the
-	// editor row height multiplier; zero values show the defaults.
-	EditorFontSize float32
-	LineHeight     float32
-	UIFontSize     float32
-	IdleSeconds    int
-	UpdateCheck    bool
+	Pages []Page
+	// Selected is the ID of the shown page ("" = the first).
+	Selected string
+	// Scope is where edits go: global (default) or project. ScopeProject
+	// needs an open project (NoProject false).
+	Scope     string
+	NoProject bool
 	// UpdateStatus is shown next to "Check now".
 	UpdateStatus string
-	// NoProject disables the interpreter section.
-	NoProject bool
 
-	// The interpreter section reuses the runtime organisms; the host owns
+	// The interpreter page reuses the runtime organisms; the host owns
 	// them and fills their data.
 	Interpreter runtime.InterpreterPicker
 	Mappings    runtime.PathMappingEditor
 	Hints       runtime.XdebugHintsList
 
-	nav       []molecules.ListRow
-	modBoxes  map[string]*atoms.Checkbox
-	tabSel    *molecules.Dropdown
-	themeSel  *molecules.Dropdown
-	fontSel   *molecules.Dropdown
-	sizeSel   *molecules.Dropdown
-	lineSel   *molecules.Dropdown
-	uiSizeSel *molecules.Dropdown
-	idleSel   *molecules.Dropdown
-	// fontValues maps fontSel options to families; fontKey is the state
-	// (current family and list) they were built from.
-	fontValues []string
-	fontKey    string
-	updateBox  atoms.Checkbox
-	checkNow   atoms.Button
-	closeBtn   atoms.IconButton
-	scroll     molecules.ScrollList
-	inited     bool
+	search   *molecules.SearchField
+	scopeSel *molecules.Dropdown
+	nav      map[string]*molecules.TreeRow
+	coreRow  molecules.TreeRow
+	plugRow  molecules.TreeRow
+	fields   map[string]*fieldState
+	modBoxes map[string]*atoms.Checkbox
+	checkNow atoms.Button
+	closeBtn atoms.IconButton
+	scroll   molecules.ScrollList
+	navList  molecules.ScrollList
+	inited   bool
 }
 
 func (p *Panel) init() {
@@ -164,165 +199,203 @@ func (p *Panel) init() {
 		return
 	}
 	p.inited = true
-	p.nav = make([]molecules.ListRow, len(Sections))
+	p.search = molecules.NewSearchField("Search settings")
+	p.scopeSel = molecules.NewSelect("Scope",
+		molecules.DropdownOption{Label: "Global", Detail: "All projects"},
+		molecules.DropdownOption{Label: "This project", Detail: "Overrides the global value"})
+	p.nav = map[string]*molecules.TreeRow{}
+	p.fields = map[string]*fieldState{}
 	p.modBoxes = map[string]*atoms.Checkbox{}
-	var tabs, themes, idles []molecules.DropdownOption
-	for _, w := range TabWidths {
-		tabs = append(tabs, molecules.DropdownOption{Label: fmt.Sprintf("%d spaces", w)})
-	}
-	for _, t := range Themes {
-		themes = append(themes, molecules.DropdownOption{Label: strings.ToUpper(t[:1]) + t[1:]})
-	}
-	for _, s := range IdleChoices {
-		idles = append(idles, molecules.DropdownOption{Label: IdleLabel(s)})
-	}
-	p.tabSel = molecules.NewSelect("Tab width", tabs...)
-	p.themeSel = molecules.NewSelect("Theme", themes...)
-	p.fontSel = molecules.NewSelect("Font")
-	p.sizeSel = molecules.NewSelect("Size", numberOptions(FontSizes, "%g")...)
-	p.lineSel = molecules.NewSelect("Line height", numberOptions(LineHeights, "%.1f")...)
-	p.uiSizeSel = molecules.NewSelect("UI font size", numberOptions(UIFontSizes, "%g")...)
-	p.idleSel = molecules.NewSelect("Idle autosave", idles...)
-	p.updateBox.Label = "Check for updates when Tiegel starts (contacts the release server)"
+	p.coreRow = molecules.TreeRow{Name: "Core", Expandable: true, Expanded: true, Glyph: atoms.GlyphSettings}
+	p.plugRow = molecules.TreeRow{Name: "Plugins", Expandable: true, Expanded: true, Glyph: atoms.GlyphList}
 	p.checkNow = atoms.Button{Text: "Check now", Kind: atoms.Secondary, Glyph: atoms.GlyphRefresh}
 	p.closeBtn = atoms.IconButton{Glyph: atoms.GlyphClose, Description: "Close (Escape)"}
 }
 
-func numberOptions(vals []float32, format string) []molecules.DropdownOption {
-	out := make([]molecules.DropdownOption, len(vals))
-	for i, v := range vals {
-		out[i] = molecules.DropdownOption{Label: fmt.Sprintf(format, v)}
+// Query returns the search text.
+func (p *Panel) Query() string {
+	p.init()
+	return p.search.Text()
+}
+
+// SetQuery replaces the search text.
+func (p *Panel) SetQuery(q string) {
+	p.init()
+	p.search.SetText(q)
+}
+
+// Page returns the shown page (search off), or nil without pages.
+func (p *Panel) Page() *Page {
+	for i := range p.Pages {
+		if p.Pages[i].ID == p.Selected {
+			return &p.Pages[i]
+		}
+	}
+	if len(p.Pages) > 0 {
+		return &p.Pages[0]
+	}
+	return nil
+}
+
+// editScope returns the scope an edit of f goes to.
+func (p *Panel) editScope(f Field) string {
+	if p.Scope == ScopeProject && !p.NoProject && f.ProjectScope {
+		return ScopeProject
+	}
+	return ScopeGlobal
+}
+
+// Matches reports whether f (on page) matches every word of query
+// (case-insensitive: key, label, help, group, page title, plugin ID).
+func Matches(page Page, f Field, query string) bool {
+	words := strings.Fields(strings.ToLower(query))
+	if len(words) == 0 {
+		return true
+	}
+	hay := strings.ToLower(strings.Join([]string{f.Key, f.Label, f.Help, f.Group, page.Title}, "\x00"))
+	for _, w := range words {
+		if !strings.Contains(hay, w) {
+			return false
+		}
+	}
+	return true
+}
+
+// Results returns the pages with only the fields matching query (pages
+// without matches are left out). An empty query returns all pages.
+func Results(pages []Page, query string) []Page {
+	if strings.TrimSpace(query) == "" {
+		return pages
+	}
+	var out []Page
+	for _, pg := range pages {
+		r := pg
+		r.Fields = nil
+		for _, f := range pg.Fields {
+			if Matches(pg, f, query) {
+				r.Fields = append(r.Fields, f)
+			}
+		}
+		if len(r.Fields) > 0 {
+			out = append(out, r)
+		}
 	}
 	return out
 }
 
-// syncFonts rebuilds the family options when EditorFont or EditorFonts
-// changed: the default chain first, then the installed families (plus the
-// current one if it is not installed).
-func (p *Panel) syncFonts() {
-	key := p.EditorFont + "\x00" + strings.Join(p.EditorFonts, "\x00")
-	if key == p.fontKey && p.fontValues != nil {
-		return
-	}
-	p.fontKey = key
-	p.fontValues = append(p.fontValues[:0], "")
-	opts := []molecules.DropdownOption{{Label: DefaultFontLabel, Detail: "Best installed monospace font"}}
-	cur := strings.TrimSpace(p.EditorFont)
-	found := cur == ""
-	for _, f := range p.EditorFonts {
-		if f == "" || indexOf(p.fontValues, f) >= 0 {
-			continue
+// FormatValue renders a value of kind for a text field or label.
+func FormatValue(kind string, v any) string {
+	switch kind {
+	case KindList:
+		var parts []string
+		switch l := v.(type) {
+		case []string:
+			parts = l
+		case []any:
+			for _, e := range l {
+				parts = append(parts, fmt.Sprint(e))
+			}
 		}
-		found = found || strings.EqualFold(f, cur)
-		p.fontValues = append(p.fontValues, f)
-		opts = append(opts, molecules.DropdownOption{Label: f})
-	}
-	if !found {
-		p.fontValues = append(p.fontValues, cur)
-		opts = append(opts, molecules.DropdownOption{Label: cur, Detail: "Not installed"})
-	}
-	p.fontSel.Options = opts
-}
-
-// fontIndex returns the option index of the current family.
-func (p *Panel) fontIndex() int {
-	cur := strings.TrimSpace(p.EditorFont)
-	for i, f := range p.fontValues {
-		if strings.EqualFold(f, cur) {
-			return i
+		return strings.Join(parts, ", ")
+	case KindInt, KindFloat:
+		switch n := v.(type) {
+		case float64:
+			if kind == KindInt || n == math.Trunc(n) {
+				return strconv.FormatInt(int64(n), 10)
+			}
+			return strconv.FormatFloat(n, 'g', -1, 64)
+		case int:
+			return strconv.Itoa(n)
+		}
+	case KindBool:
+		if b, ok := v.(bool); ok {
+			return strconv.FormatBool(b)
 		}
 	}
-	return 0
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprint(v)
 }
 
-// selectNumber selects v in d (or shows it as the placeholder if it is not
-// one of vals); zero selects def.
-func selectNumber(d *molecules.Dropdown, vals []float32, v, def float32, format string) {
-	if v == 0 {
-		v = def
-	}
-	d.Selected = indexOf(vals, v)
-	if d.Selected < 0 {
-		d.Placeholder = fmt.Sprintf(format, v)
-	}
-}
-
-// IdleLabel describes an idle delay.
-func IdleLabel(secs int) string {
-	switch {
-	case secs <= 0:
-		return "Off (save on focus loss only)"
-	case secs < 60:
-		return fmt.Sprintf("After %d s idle", secs)
-	}
-	return fmt.Sprintf("After %d min idle", secs/60)
-}
-
-func indexOf[T comparable](list []T, v T) int {
-	for i, x := range list {
-		if x == v {
-			return i
+// ParseValue converts text entered for f into a value for SetEvent.
+func ParseValue(f Field, text string) (any, error) {
+	text = strings.TrimSpace(text)
+	bound := func(n float64) error {
+		if f.Min != nil && n < float64(*f.Min) {
+			return fmt.Errorf("at least %d", *f.Min)
 		}
+		if f.Max != nil && n > float64(*f.Max) {
+			return fmt.Errorf("at most %d", *f.Max)
+		}
+		return nil
 	}
-	return -1
-}
-
-func (p *Panel) box(id string) *atoms.Checkbox {
-	b := p.modBoxes[id]
-	if b == nil {
-		b = &atoms.Checkbox{}
-		p.modBoxes[id] = b
+	switch f.Kind {
+	case KindInt:
+		n, err := strconv.Atoi(text)
+		if err != nil {
+			return nil, fmt.Errorf("not a whole number")
+		}
+		return n, bound(float64(n))
+	case KindFloat:
+		n, err := strconv.ParseFloat(strings.ReplaceAll(text, ",", "."), 64)
+		if err != nil {
+			return nil, fmt.Errorf("not a number")
+		}
+		return n, bound(n)
+	case KindList:
+		out := []string{}
+		for _, part := range strings.Split(text, ",") {
+			if s := strings.TrimSpace(part); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out, nil
+	case KindBool:
+		return strconv.ParseBool(text)
 	}
-	return b
+	return text, nil
 }
 
 // Update returns the user's changes.
 func (p *Panel) Update(gtx layout.Context) []Event {
 	p.init()
 	var out []Event
-	for i := range p.nav {
-		if c, _ := p.nav[i].Update(gtx); c {
-			p.Section = i
+	if p.closeBtn.Clicked(gtx) {
+		out = append(out, CloseEvent{})
+	}
+	p.search.Update(gtx)
+	if i, ok := p.scopeSel.Update(gtx); ok {
+		p.Scope = ScopeGlobal
+		if i == 1 {
+			p.Scope = ScopeProject
 		}
 	}
-	for _, m := range p.Modules {
-		b := p.box(m.ID)
-		b.State = checkState(m.Enabled)
-		if b.Update(gtx) {
-			out = append(out, ModuleEvent{ID: m.ID, Enable: b.Checked()})
+	p.coreRow.Update(gtx)
+	p.plugRow.Update(gtx)
+	for i := range p.Pages {
+		pg := &p.Pages[i]
+		if r := p.nav[pg.ID]; r != nil {
+			if c, _, _ := r.Update(gtx); c {
+				p.Selected = pg.ID
+				p.search.SetText("")
+			}
 		}
-	}
-	if i, ok := p.tabSel.Update(gtx); ok {
-		out = append(out, TabWidthEvent{Width: TabWidths[i]})
-	}
-	if i, ok := p.themeSel.Update(gtx); ok {
-		out = append(out, ThemeEvent{Theme: Themes[i]})
-	}
-	p.syncFonts()
-	if i, ok := p.fontSel.Update(gtx); ok && i < len(p.fontValues) {
-		out = append(out, FontFamilyEvent{Family: p.fontValues[i]})
-	}
-	if i, ok := p.sizeSel.Update(gtx); ok {
-		out = append(out, FontSizeEvent{Size: FontSizes[i]})
-	}
-	if i, ok := p.lineSel.Update(gtx); ok {
-		out = append(out, LineHeightEvent{Value: LineHeights[i]})
-	}
-	if i, ok := p.uiSizeSel.Update(gtx); ok {
-		out = append(out, UIFontSizeEvent{Size: UIFontSizes[i]})
-	}
-	if i, ok := p.idleSel.Update(gtx); ok {
-		out = append(out, IdleEvent{Seconds: IdleChoices[i]})
-	}
-	p.updateBox.State = checkState(p.UpdateCheck)
-	if p.updateBox.Update(gtx) {
-		out = append(out, UpdateCheckEvent{On: p.updateBox.Checked()})
+		if m := pg.Module; m != nil {
+			b := p.box(m.ID)
+			b.State = checkState(m.Enabled)
+			if b.Update(gtx) {
+				out = append(out, ModuleEvent{ID: m.ID, Enable: b.Checked()})
+			}
+		}
+		for _, f := range pg.Fields {
+			if st := p.fields[f.Key]; st != nil {
+				out = append(out, st.update(gtx, p, f)...)
+			}
+		}
 	}
 	if p.checkNow.Clicked(gtx) {
 		out = append(out, CheckNowEvent{})
-	}
-	if p.closeBtn.Clicked(gtx) {
-		out = append(out, CloseEvent{})
 	}
 	if !p.NoProject {
 		for _, e := range p.Interpreter.Update(gtx) {
@@ -338,15 +411,30 @@ func (p *Panel) Update(gtx layout.Context) []Event {
 	return out
 }
 
+func (p *Panel) box(id string) *atoms.Checkbox {
+	b := p.modBoxes[id]
+	if b == nil {
+		b = &atoms.Checkbox{Label: "Enabled"}
+		p.modBoxes[id] = b
+	}
+	return b
+}
+
+func (p *Panel) navRow(id string) *molecules.TreeRow {
+	r := p.nav[id]
+	if r == nil {
+		r = &molecules.TreeRow{Depth: 1}
+		p.nav[id] = r
+	}
+	return r
+}
+
 func checkState(on bool) atoms.CheckState {
 	if on {
 		return atoms.Checked
 	}
 	return atoms.Unchecked
 }
-
-// Size is the dialog size.
-var Size = image.Pt(820, 560)
 
 // Layout draws the dialog (Size dp, bounded by the constraints).
 func (p *Panel) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
@@ -370,7 +458,7 @@ func (p *Panel) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 					layout.Rigid(atoms.Divider{Vertical: true}.Fn(th)),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return layout.UniformInset(th.Space.L).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return p.layoutSection(gtx, th)
+							return p.layoutContent(gtx, th)
 						})
 					}),
 				)
@@ -379,63 +467,221 @@ func (p *Panel) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	})
 }
 
+// NavWidth is the width of the tree column in dp.
+const NavWidth = 220
+
 func (p *Panel) layoutNav(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
-	w := gtx.Dp(180)
-	gtx.Constraints = layout.Exact(image.Pt(w, gtx.Constraints.Max.Y))
-	return layout.Inset{Top: th.Space.S}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		children := make([]layout.FlexChild, len(Sections))
-		for i, s := range Sections {
-			children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				p.nav[i].Selected = i == p.Section
-				return p.nav[i].Layout(gtx, th, atoms.Text(s).Fn(th))
-			})
+	gtx.Constraints = layout.Exact(image.Pt(gtx.Dp(NavWidth), gtx.Constraints.Max.Y))
+	query := p.search.Text()
+	visible := map[string]bool{}
+	for _, pg := range Results(p.Pages, query) {
+		visible[pg.ID] = true
+	}
+	cur := p.Page()
+	type row struct {
+		r     *molecules.TreeRow
+		title string
+	}
+	var rows []row
+	add := func(header *molecules.TreeRow, plugins bool) {
+		var kids []row
+		for i := range p.Pages {
+			pg := &p.Pages[i]
+			if pg.Plugin() != plugins || (query != "" && !visible[pg.ID]) {
+				continue
+			}
+			r := p.navRow(pg.ID)
+			r.Name = pg.Title
+			r.Selected = query == "" && cur != nil && cur.ID == pg.ID
+			r.Detail = ""
+			r.NameColor = th.Color.Text
+			if m := pg.Module; m != nil && !m.Enabled {
+				r.Detail = "off"
+				r.NameColor = th.Color.TextMuted
+			}
+			kids = append(kids, row{r: r})
 		}
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
-	})
+		if len(kids) == 0 {
+			return
+		}
+		rows = append(rows, row{r: header})
+		if header.Expanded {
+			rows = append(rows, kids...)
+		}
+	}
+	add(&p.coreRow, false)
+	add(&p.plugRow, true)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.UniformInset(th.Space.S).Layout(gtx, func(gtx layout.Context) layout.Dimensions { return p.search.Layout(gtx, th) })
+		}),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return p.navList.Layout(gtx, th, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
+				return rows[i].r.Layout(gtx, th)
+			})
+		}),
+	)
 }
 
-func (p *Panel) layoutSection(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+func (p *Panel) layoutContent(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	var rows []layout.Widget
-	title := func(t, sub string) {
-		rows = append(rows, atoms.Strong(t).Fn(th))
-		if sub != "" {
-			rows = append(rows, atoms.Small(sub).Fn(th))
+	spacer := func(h unit.Dp) { rows = append(rows, layout.Spacer{Height: h}.Layout) }
+	if q := p.search.Text(); strings.TrimSpace(q) != "" {
+		res := Results(p.Pages, q)
+		rows = append(rows, atoms.Strong(fmt.Sprintf("Search: %q", strings.TrimSpace(q))).Fn(th))
+		if len(res) == 0 {
+			rows = append(rows, atoms.Small("No setting matches.").Fn(th))
 		}
-		rows = append(rows, layout.Spacer{Height: th.Space.M}.Layout)
+		for _, pg := range res {
+			title := pg.Title
+			if pg.Plugin() {
+				title = "Plugins › " + title
+			} else {
+				title = "Core › " + title
+			}
+			spacer(th.Space.M)
+			rows = append(rows, molecules.SectionHeader{Title: title}.Fn(th))
+			spacer(th.Space.S)
+			for _, f := range pg.Fields {
+				rows = append(rows, p.fieldRow(th, f))
+			}
+		}
+		return p.scroll.Layout(gtx, th, len(rows), func(gtx layout.Context, i int) layout.Dimensions { return rows[i](gtx) })
 	}
-	field := func(label string, w layout.Widget) {
-		rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: th.Space.M}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	pg := p.Page()
+	if pg == nil {
+		return atoms.Small("No settings.").Layout(gtx, th)
+	}
+	rows = append(rows, p.pageHeader(th, pg))
+	spacer(th.Space.M)
+	if m := pg.Module; m != nil && !m.Enabled {
+		rows = append(rows, atoms.Small("Enable the plugin to use and configure it.").Fn(th))
+	} else {
+		group := ""
+		for _, f := range pg.Fields {
+			if f.Group != "" && f.Group != group {
+				group = f.Group
+				spacer(th.Space.S)
+				rows = append(rows, molecules.SectionHeader{Title: group}.Fn(th))
+				spacer(th.Space.S)
+			}
+			rows = append(rows, p.fieldRow(th, f))
+		}
+		if pg.Plugin() && len(pg.Fields) == 0 {
+			rows = append(rows, atoms.Small("This plugin has no settings.").Fn(th))
+		}
+		rows = append(rows, p.extra(th, pg.Extra)...)
+	}
+	return p.scroll.Layout(gtx, th, len(rows), func(gtx layout.Context, i int) layout.Dimensions { return rows[i](gtx) })
+}
+
+// pageHeader: title, scope selector (pages with project settings) and, on
+// plugin pages, the on/off switch with state and dependencies.
+func (p *Panel) pageHeader(th *tokens.Theme, pg *Page) layout.Widget {
+	project := false
+	for _, f := range pg.Fields {
+		project = project || f.ProjectScope
+	}
+	return func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Flexed(1, atoms.Strong(pg.Title).Fn(th)),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Min.X = gtx.Dp(140)
-						return atoms.Text(label).Layout(gtx, th)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(300))
+						if !project || p.NoProject || (pg.Module != nil && !pg.Module.Enabled) {
+							return layout.Dimensions{}
+						}
+						p.scopeSel.Selected = 0
+						if p.Scope == ScopeProject {
+							p.scopeSel.Selected = 1
+						}
+						gtx.Constraints.Max.X = gtx.Dp(180)
 						gtx.Constraints.Min.X = gtx.Constraints.Max.X
-						return w(gtx)
+						return p.scopeSel.Layout(gtx, th)
 					}),
 				)
-			})
-		})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if pg.Module == nil {
+					return layout.Dimensions{}
+				}
+				return layout.Inset{Top: th.Space.S}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return p.moduleRow(gtx, th, *pg.Module)
+				})
+			}),
+		)
 	}
-	switch Sections[p.Section] {
-	case "Modules":
-		title("Modules", "Every feature outside the core is a module. Changes apply immediately.")
-		for _, m := range p.Modules {
-			rows = append(rows, p.moduleRow(th, m))
-		}
-	case "PHP Interpreter":
+}
+
+func (p *Panel) moduleRow(gtx layout.Context, th *tokens.Theme, m Module) layout.Dimensions {
+	b := p.box(m.ID)
+	b.State = checkState(m.Enabled)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return b.Layout(gtx, th) }),
+				layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					switch {
+					case m.Error != "":
+						return atoms.Badge{Text: "error", Kind: atoms.BadgeDanger}.Layout(gtx, th)
+					case m.Running:
+						return atoms.Badge{Text: "running", Kind: atoms.BadgeSuccess}.Layout(gtx, th)
+					case m.Enabled:
+						return atoms.Badge{Text: "enabled"}.Layout(gtx, th)
+					}
+					return atoms.Badge{Text: "off"}.Layout(gtx, th)
+				}),
+			)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			var parts []string
+			if len(m.DependsOn) > 0 {
+				parts = append(parts, "requires "+strings.Join(m.DependsOn, ", "))
+			}
+			if len(m.Dependents) > 0 {
+				parts = append(parts, "needed by "+strings.Join(m.Dependents, ", "))
+			}
+			if m.Error != "" {
+				parts = append(parts, m.Error)
+			}
+			if len(parts) == 0 {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Left: th.Size.Checkbox + th.Space.S}.Layout(gtx, atoms.Small(strings.Join(parts, " · ")).Fn(th))
+		}),
+	)
+}
+
+func (p *Panel) extra(th *tokens.Theme, kind string) []layout.Widget {
+	switch kind {
+	case ExtraFontPreview:
+		return []layout.Widget{func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(460))
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return atoms.Surface{Kind: atoms.SurfaceEditor, Border: true, Rounded: true}.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
+				return layout.UniformInset(th.Space.S).Layout(gtx, atoms.Code(FontPreview).SingleLine().Fn(th))
+			})
+		}}
+	case ExtraUpdates:
+		return []layout.Widget{func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.checkNow.Layout(gtx, th) }),
+				layout.Rigid(layout.Spacer{Width: th.Space.M}.Layout),
+				layout.Rigid(atoms.Small(p.UpdateStatus).Fn(th)),
+			)
+		}}
+	case ExtraInterpreter:
 		if p.NoProject {
-			title("PHP Interpreter", "Open a project to choose its interpreter.")
-			break
+			return []layout.Widget{atoms.Small("Open a project to choose its interpreter.").Fn(th)}
 		}
-		title("PHP Interpreter", "Local PHP binaries and Docker Compose services of this project.")
-		rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(480))
-			return p.Interpreter.Layout(gtx, th)
-		}, layout.Spacer{Height: th.Space.L}.Layout,
+		return []layout.Widget{
+			atoms.Small("Local PHP binaries and Docker Compose services of this project.").Fn(th),
+			layout.Spacer{Height: th.Space.S}.Layout,
+			func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(480))
+				return p.Interpreter.Layout(gtx, th)
+			}, layout.Spacer{Height: th.Space.L}.Layout,
 			molecules.SectionHeader{Title: "Path mappings"}.Fn(th),
 			func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Max.Y = min(gtx.Constraints.Max.Y, gtx.Dp(160))
@@ -445,97 +691,8 @@ func (p *Panel) layoutSection(gtx layout.Context, th *tokens.Theme) layout.Dimen
 			func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Max.Y = min(gtx.Constraints.Max.Y, gtx.Dp(140))
 				return p.Hints.Layout(gtx, th)
-			})
-	case "Editor":
-		title("Editor", "")
-		p.tabSel.Selected = indexOf(TabWidths, p.TabWidth)
-		p.themeSel.Selected = indexOf(Themes, p.Theme)
-		p.syncFonts()
-		p.fontSel.Selected = p.fontIndex()
-		selectNumber(p.sizeSel, FontSizes, p.EditorFontSize, 13, "%g")
-		selectNumber(p.lineSel, LineHeights, p.LineHeight, 1.4, "%.1f")
-		selectNumber(p.uiSizeSel, UIFontSizes, p.UIFontSize, 13, "%g")
-		field("Tab width", func(gtx layout.Context) layout.Dimensions { return p.tabSel.Layout(gtx, th) })
-		field("Theme", func(gtx layout.Context) layout.Dimensions { return p.themeSel.Layout(gtx, th) })
-		rows = append(rows, layout.Spacer{Height: th.Space.S}.Layout, molecules.SectionHeader{Title: "Fonts"}.Fn(th),
-			layout.Spacer{Height: th.Space.S}.Layout)
-		field("Editor font", func(gtx layout.Context) layout.Dimensions { return p.fontSel.Layout(gtx, th) })
-		field("Editor font size", func(gtx layout.Context) layout.Dimensions { return p.sizeSel.Layout(gtx, th) })
-		field("Line height", func(gtx layout.Context) layout.Dimensions { return p.lineSel.Layout(gtx, th) })
-		rows = append(rows, p.fontPreview(th), layout.Spacer{Height: th.Space.M}.Layout)
-		field("UI font size", func(gtx layout.Context) layout.Dimensions { return p.uiSizeSel.Layout(gtx, th) })
-	case "Autosave":
-		title("Autosave", "Tiegel saves when the window, the editor or the tab loses focus, and before run, debug and commit. Every save is kept in the Local History.")
-		p.idleSel.Selected = indexOf(IdleChoices, p.IdleSeconds)
-		field("Also save", func(gtx layout.Context) layout.Dimensions { return p.idleSel.Layout(gtx, th) })
-	case "Updates":
-		title("Updates", "Off by default. Tiegel never downloads anything by itself; a check only shows whether a newer release exists.")
-		rows = append(rows, func(gtx layout.Context) layout.Dimensions { return p.updateBox.Layout(gtx, th) },
-			layout.Spacer{Height: th.Space.M}.Layout,
-			func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.checkNow.Layout(gtx, th) }),
-					layout.Rigid(layout.Spacer{Width: th.Space.M}.Layout),
-					layout.Rigid(atoms.Small(p.UpdateStatus).Fn(th)),
-				)
-			})
+			},
+		}
 	}
-	return p.scroll.Layout(gtx, th, len(rows), func(gtx layout.Context, i int) layout.Dimensions { return rows[i](gtx) })
-}
-
-// fontPreview shows FontPreview in the editor font of th (the host applies
-// the chosen font preferences to the theme).
-func (p *Panel) fontPreview(th *tokens.Theme) layout.Widget {
-	return func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(440))
-		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		return atoms.Surface{Kind: atoms.SurfaceEditor, Border: true, Rounded: true}.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(th.Space.S).Layout(gtx, atoms.Code(FontPreview).SingleLine().Fn(th))
-		})
-	}
-}
-
-func (p *Panel) moduleRow(th *tokens.Theme, m Module) layout.Widget {
-	return func(gtx layout.Context) layout.Dimensions {
-		b := p.box(m.ID)
-		b.Label = m.ID
-		b.State = checkState(m.Enabled)
-		return layout.Inset{Bottom: th.Space.S}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions { return b.Layout(gtx, th) }),
-						layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							switch {
-							case m.Error != "":
-								return atoms.Badge{Text: "error", Kind: atoms.BadgeDanger}.Layout(gtx, th)
-							case m.Running:
-								return atoms.Badge{Text: "running", Kind: atoms.BadgeSuccess}.Layout(gtx, th)
-							case m.Enabled:
-								return atoms.Badge{Text: "enabled"}.Layout(gtx, th)
-							}
-							return atoms.Badge{Text: "off"}.Layout(gtx, th)
-						}),
-					)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					var parts []string
-					if len(m.DependsOn) > 0 {
-						parts = append(parts, "requires "+strings.Join(m.DependsOn, ", "))
-					}
-					if len(m.Dependents) > 0 {
-						parts = append(parts, "needed by "+strings.Join(m.Dependents, ", "))
-					}
-					if m.Error != "" {
-						parts = append(parts, m.Error)
-					}
-					if len(parts) == 0 {
-						return layout.Dimensions{}
-					}
-					return layout.Inset{Left: th.Size.Checkbox + th.Space.S}.Layout(gtx, atoms.Small(strings.Join(parts, " · ")).Fn(th))
-				}),
-			)
-		})
-	}
+	return nil
 }

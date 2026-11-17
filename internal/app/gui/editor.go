@@ -196,7 +196,10 @@ func (v *View) layoutEditor(gtx layout.Context, s *editorSession, active bool) l
 		s.diagSeen = c.DiagVersion
 		s.ed.SetDiagnostics(toEditorDiags(c.Diagnostics(s.file), buf.Len()))
 	}
-	s.ed.TabWidth = c.Prefs.TabWidth
+	s.ed.TabWidth, s.ed.InsertSpaces = c.Prefs.TabWidth, c.Prefs.InsertSpaces
+	if s.tab != nil { // .editorconfig of the file wins over the preferences
+		s.ed.TabWidth, s.ed.InsertSpaces = s.tab.TabWidthFor(c.Prefs.TabWidth), s.tab.InsertSpacesFor(c.Prefs.InsertSpaces)
+	}
 	s.ed.SetGutterMarkers(v.Registry.markers(s.file))
 	s.ed.SetGutterColumn(v.Registry.gutterColumn(s.file))
 

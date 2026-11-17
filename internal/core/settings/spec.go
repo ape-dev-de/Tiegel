@@ -13,9 +13,10 @@ const (
 	KindBool   Kind = "bool"
 	KindInt    Kind = "int"
 	KindString Kind = "string"
-	KindEnum   Kind = "enum" // one of Spec.Options
-	KindPath   Kind = "path" // file or directory path
-	KindList   Kind = "list" // list of strings
+	KindEnum   Kind = "enum"  // one of Spec.Options
+	KindPath   Kind = "path"  // file or directory path
+	KindList   Kind = "list"  // list of strings
+	KindFloat  Kind = "float" // number with fraction (font sizes, line height)
 )
 
 // Spec declares one setting. The core and every module declare their
@@ -31,7 +32,7 @@ type Spec struct {
 	// Kind is the value type.
 	Kind Kind `json:"kind"`
 	// Default is the value used when nothing is stored. Its Go type must
-	// match Kind: bool, int, string, or []string.
+	// match Kind: bool, int, float64, string, or []string.
 	Default any `json:"default,omitempty"`
 	// Scope tells where the value may be stored. ScopeProject means a
 	// project value overrides the global one; ScopeGlobal is global only.
@@ -44,7 +45,7 @@ type Spec struct {
 	Group string `json:"group,omitempty"`
 	// Options lists the allowed values of a KindEnum setting.
 	Options []string `json:"options,omitempty"`
-	// Min and Max bound a KindInt setting when non-nil.
+	// Min and Max bound a KindInt or KindFloat setting when non-nil.
 	Min *int `json:"min,omitempty"`
 	Max *int `json:"max,omitempty"`
 }
@@ -55,7 +56,7 @@ func (s Spec) Validate() error {
 		return fmt.Errorf("settings: spec key %q must be namespaced (\"ns.name\")", s.Key)
 	}
 	switch s.Kind {
-	case KindBool, KindInt, KindString, KindPath, KindList:
+	case KindBool, KindInt, KindFloat, KindString, KindPath, KindList:
 	case KindEnum:
 		if len(s.Options) == 0 {
 			return fmt.Errorf("settings: enum spec %q has no options", s.Key)
@@ -93,6 +94,17 @@ func (s Spec) Check(value any) error {
 		}
 		if s.Max != nil && n > *s.Max {
 			return fmt.Errorf("%d above maximum %d", n, *s.Max)
+		}
+	case KindFloat:
+		f, ok := asFloat(value)
+		if !ok {
+			return fmt.Errorf("want number, got %T", value)
+		}
+		if s.Min != nil && f < float64(*s.Min) {
+			return fmt.Errorf("%g below minimum %d", f, *s.Min)
+		}
+		if s.Max != nil && f > float64(*s.Max) {
+			return fmt.Errorf("%g above maximum %d", f, *s.Max)
 		}
 	case KindString, KindPath:
 		if _, ok := value.(string); !ok {
@@ -137,6 +149,20 @@ func asInt(v any) (int, bool) {
 		if n == float64(int(n)) {
 			return int(n), true
 		}
+	}
+	return 0, false
+}
+
+func asFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
 	}
 	return 0, false
 }

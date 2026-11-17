@@ -638,13 +638,10 @@ func (v *View) handleSettings(gtx layout.Context) {
 	p := &v.settings
 	c := v.ctl
 	p.NoProject = !c.Project.Open
-	p.Modules = p.Modules[:0]
-	for _, m := range c.Modules {
-		p.Modules = append(p.Modules, settingsui.Module{ID: m.ID, DependsOn: m.DependsOn, Dependents: c.Dependents(m.ID), Enabled: m.Enabled, Running: m.Running, Error: m.Error})
+	if p.NoProject {
+		p.Scope = settingsui.ScopeGlobal
 	}
-	p.TabWidth, p.Theme, p.IdleSeconds, p.UpdateCheck = c.Prefs.TabWidth, c.Prefs.Theme, c.Prefs.IdleSeconds, c.Prefs.UpdateCheck
-	fp := tokens.FontPrefs{EditorFamily: c.Prefs.EditorFont, EditorSize: c.Prefs.EditorFontSize, LineHeight: c.Prefs.LineHeight, UISize: c.Prefs.UIFontSize}.Normalized()
-	p.EditorFont, p.EditorFonts, p.EditorFontSize, p.LineHeight, p.UIFontSize = c.Prefs.EditorFont, c.MonoFonts, fp.EditorSize, fp.LineHeight, fp.UISize
+	p.Pages = settingsPages(c)
 	p.UpdateStatus = ""
 	if strings.Contains(c.Status.Notice, "pdate") {
 		p.UpdateStatus = c.Status.Notice
@@ -686,33 +683,7 @@ func (v *View) handleSettings(gtx layout.Context) {
 		}
 	}
 	for _, e := range p.Update(gtx) {
-		switch e := e.(type) {
-		case settingsui.CloseEvent:
-			v.closeOverlay()
-		case settingsui.ModuleEvent:
-			c.SetModuleEnabled(e.ID, e.Enable)
-		case settingsui.TabWidthEvent:
-			c.SetTabWidth(e.Width)
-		case settingsui.ThemeEvent:
-			c.SetTheme(e.Theme)
-		case settingsui.IdleEvent:
-			c.SetIdleSeconds(e.Seconds)
-		case settingsui.FontFamilyEvent:
-			c.SetEditorFont(e.Family)
-		case settingsui.FontSizeEvent:
-			v.zoomDelta = 0
-			c.SetEditorFontSize(e.Size)
-		case settingsui.LineHeightEvent:
-			c.SetLineHeight(e.Value)
-		case settingsui.UIFontSizeEvent:
-			c.SetUIFontSize(e.Size)
-		case settingsui.UpdateCheckEvent:
-			c.SetUpdateCheck(e.On)
-		case settingsui.CheckNowEvent:
-			c.CheckUpdate()
-		case settingsui.RuntimeEvent:
-			v.handleRuntimeEvent(e.Event)
-		}
+		v.handleSettingsEvent(e)
 	}
 }
 

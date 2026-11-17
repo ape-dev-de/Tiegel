@@ -22,11 +22,14 @@ package debugxdebug
 import (
 	"context"
 	"errors"
+	"net"
+	"strconv"
 	"sync"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/bus"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
+	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/dbgp"
 )
 
@@ -76,6 +79,17 @@ func (m *Module) DependsOn() []string { return []string{"php-runtime"} }
 
 // Claims implements api.Claimer.
 func (m *Module) Claims() []string { return []string{"debug.*"} }
+
+// SettingPort is the loopback port debug.listen uses without an address.
+const SettingPort = ID + ".port"
+
+// SettingSpecs implements module.SettingsProvider.
+func (m *Module) SettingSpecs() []settings.Spec {
+	return []settings.Spec{
+		{Key: SettingPort, Kind: settings.KindInt, Default: 9003, Min: settings.IntPtr(1), Max: settings.IntPtr(65535), Scope: settings.ScopeProject,
+			Label: "Debug port", Help: "Port of the local listener for Xdebug connections (xdebug.client_port); bound to 127.0.0.1 only."},
+	}
+}
 
 // Start registers the debug namespace.
 func (m *Module) Start(ctx module.Context) error {
@@ -127,8 +141,9 @@ func (m *Module) Stop() error { return m.stopDebug() }
 
 // DebugListenParams are the params of "debug.listen".
 type DebugListenParams struct {
-	// Addr is the listen address; empty means 127.0.0.1:9003. Use port 0
-	// for a free port.
+	// Addr is the listen address; empty means 127.0.0.1 with the port of
+	// the setting debug-xdebug.port (default 9003). Use port 0 for a free
+	// port.
 	Addr string `json:"addr,omitempty"`
 	// Mappings translate host paths to engine (container) paths. Without
 	// them the mappings of php-runtime (runtime.mappings.get) are used.
@@ -267,9 +282,13 @@ func (m *Module) debugListen(ctx context.Context, p DebugListenParams) (DebugLis
 		q, _ := api.HookPathMappings.Apply(ctx, m.app.Hooks(), api.PathMappingsQuery{})
 		mappings = q.Mappings
 	}
+	addr := p.Addr
+	if addr == "" {
+		addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(api.Setting(m.app, SettingPort, 9003)))
+	}
 	b := m.app.Bus()
 	srv := dbgp.NewServer(dbgp.Config{
-		Addr:   p.Addr,
+		Addr:   addr,
 		Mapper: mapperOf(mappings),
 		Events: dbgp.Events{
 			SessionStarted: m.sessionStarted,

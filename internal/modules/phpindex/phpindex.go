@@ -30,6 +30,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -53,15 +54,35 @@ const (
 	TopicFilesChanged = api.TopicFilesChanged
 )
 
-// Settings (project settings, global without a project).
+// Settings (declared in SettingSpecs; project value over global value).
 const (
 	// SettingLibraries indexes vendor/ (default true; marked as library).
-	SettingLibraries = "index.libraries"
+	SettingLibraries = ID + ".libraries"
 	// SettingIncludeIgnored indexes files matched by .gitignore.
-	SettingIncludeIgnored = "index.includeIgnored"
+	SettingIncludeIgnored = ID + ".includeIgnored"
 	// SettingExclude lists additional patterns to skip.
-	SettingExclude = "index.exclude"
+	SettingExclude = ID + ".exclude"
 )
+
+// legacyKeys maps the keys used before the module namespace (D215) to
+// the current ones; they are migrated when a project's index starts.
+var legacyKeys = map[string]string{
+	"index.libraries":      SettingLibraries,
+	"index.includeIgnored": SettingIncludeIgnored,
+	"index.exclude":        SettingExclude,
+}
+
+// SettingSpecs implements module.SettingsProvider.
+func (m *Module) SettingSpecs() []settings.Spec {
+	return []settings.Spec{
+		{Key: SettingLibraries, Kind: settings.KindBool, Default: true, Scope: settings.ScopeProject,
+			Label: "Index libraries (vendor/)", Help: "Include Composer dependencies so navigation and completion know their classes."},
+		{Key: SettingIncludeIgnored, Kind: settings.KindBool, Default: false, Scope: settings.ScopeProject,
+			Label: "Index ignored files", Help: "Also index files matched by .gitignore."},
+		{Key: SettingExclude, Kind: settings.KindList, Default: []string{}, Scope: settings.ScopeProject,
+			Label: "Excluded patterns", Help: "Relative paths or base-name patterns (path.Match) the index skips."},
+	}
+}
 
 // Options configure the module.
 type Options struct {
@@ -84,6 +105,7 @@ type Module struct {
 	mu  sync.Mutex
 	app *api.App
 	st  *state
+	cfg Config // settings the current state was built with
 	// stopped is set by Stop: late bus events or calls must not create a
 	// new index state (it would write its cache after the App closed).
 	stopped bool
@@ -138,6 +160,7 @@ func (m *Module) Start(ctx module.Context) error {
 	ctx.OnStop(b.Subscribe(api.TopicProjectClosed, func(bus.Event) { m.projectChanged() }))
 	ctx.OnStop(b.Subscribe("doc.*", m.onDoc))
 	ctx.OnStop(b.Subscribe(api.TopicFileSaved, m.onSaved))
+	ctx.OnStop(settings.Changed.Subscribe(b, m.onSetting))
 	ctx.OnStop(b.Subscribe(TopicFilesChanged, m.onFilesChanged))
 	ctx.OnStop(b.Subscribe(api.TopicGitChanged, func(bus.Event) { m.kick() }))
 	if !m.opts.Lazy {
@@ -227,12 +250,19 @@ func (m *Module) state() (*state, error) {
 			old.stop()
 		}()
 	}
-	store := m.app.SettingsStore()
+	for _, st := range []*settings.Store{m.app.ProjectSettings(), m.app.Settings()} {
+		for from, to := range legacyKeys {
+			if _, err := settings.MigrateKey(st, from, to); err != nil {
+				m.app.Logger().Warn("php-index: migrate setting", "err", err)
+			}
+		}
+	}
+	m.cfg = m.effectiveConfig(m.app)
 	opts := index.Options{
 		Root:           root,
-		SkipLibraries:  !settings.Get(store, SettingLibraries, true),
-		IncludeIgnored: settings.Get(store, SettingIncludeIgnored, false),
-		Exclude:        settings.Get[[]string](store, SettingExclude, nil),
+		SkipLibraries:  !m.cfg.Libraries,
+		IncludeIgnored: m.cfg.IncludeIgnored,
+		Exclude:        m.cfg.Exclude,
 		Workers:        m.opts.Workers,
 	}
 	cacheDir := ""
@@ -493,11 +523,45 @@ func (m *Module) config(_ context.Context, p ConfigParams) (Config, error) {
 	if changed {
 		m.restart()
 	}
+	return m.effectiveConfig(app), nil
+}
+
+// effectiveConfig reads the declared settings (project over global).
+func (m *Module) effectiveConfig(app *api.App) Config {
 	return Config{
-		Libraries:      settings.Get(store, SettingLibraries, true),
-		IncludeIgnored: settings.Get(store, SettingIncludeIgnored, false),
-		Exclude:        append([]string{}, settings.Get[[]string](store, SettingExclude, nil)...),
-	}, nil
+		Libraries:      api.Setting(app, SettingLibraries, true),
+		IncludeIgnored: api.Setting(app, SettingIncludeIgnored, false),
+		Exclude:        append([]string{}, api.Setting[[]string](app, SettingExclude, nil)...),
+	}
+}
+
+// onSetting restarts the index when one of its settings changed from
+// outside index.config (e.g. the settings dialog via settings.set).
+func (m *Module) onSetting(c settings.Change) {
+	if !strings.HasPrefix(c.Key, ID+".") {
+		return
+	}
+	m.mu.Lock()
+	app, st, cfg := m.app, m.st, m.cfg
+	m.mu.Unlock()
+	if app == nil || st == nil {
+		return
+	}
+	// Only changes for the project the index belongs to (or global ones)
+	// while that project is open; events arrive asynchronously.
+	root := app.ProjectRoot()
+	if root == "" || st.root != root || (c.Scope == settings.ScopeProject && c.Project != root) {
+		return
+	}
+	if reflect.DeepEqual(cfg, m.effectiveConfig(app)) {
+		return
+	}
+	m.mu.Lock()
+	same := m.st == st
+	m.mu.Unlock()
+	if same {
+		m.restart()
+	}
 }
 
 // PosParams address a position in a document or file.

@@ -31,6 +31,44 @@ type Tab struct {
 	Label string
 	// Data is the payload of a virtual tab (owned by its tab type).
 	Data any
+	// Indent are the .editorconfig indentation rules of the file (nil:
+	// the editor preferences apply).
+	Indent *Indent
+}
+
+// Indent is the indentation of a file from .editorconfig (doc.open).
+type Indent struct {
+	// Style is "tab", "space" or "" (preference).
+	Style string `json:"indentStyle"`
+	// Size is the indent width, TabWidth the display width of a tab (0:
+	// preference).
+	Size     int `json:"indentSize"`
+	TabWidth int `json:"tabWidth"`
+}
+
+// TabWidthFor returns the tab width of t: .editorconfig, else pref.
+func (t *Tab) TabWidthFor(pref int) int {
+	if t.Indent != nil {
+		if t.Indent.Size > 0 && t.Indent.Style == "space" {
+			return t.Indent.Size
+		}
+		if t.Indent.TabWidth > 0 {
+			return t.Indent.TabWidth
+		}
+		if t.Indent.Size > 0 {
+			return t.Indent.Size
+		}
+	}
+	return pref
+}
+
+// InsertSpacesFor returns whether Tab inserts spaces in t: .editorconfig
+// indent_style, else pref.
+func (t *Tab) InsertSpacesFor(pref bool) bool {
+	if t.Indent != nil && t.Indent.Style != "" {
+		return t.Indent.Style == "space"
+	}
+	return pref
 }
 
 // pendingCloses holds, per controller and file, a channel that is closed
@@ -143,7 +181,8 @@ func (c *Controller) OpenFile(file string, at *Location) {
 		c.waitPendingClose(ctx, abs)
 		var st struct {
 			DocState
-			Generation uint64 `json:"generation"`
+			Generation   uint64  `json:"generation"`
+			EditorConfig *Indent `json:"editorconfig"`
 		}
 		err := c.call(ctx, "doc.open", map[string]any{"path": abs}, &st)
 		var doc DocHandle
@@ -159,7 +198,7 @@ func (c *Controller) OpenFile(file string, at *Location) {
 				c.Activate(i)
 				return
 			}
-			t := &Tab{File: abs, Path: c.Rel(abs), Language: st.Language, EOL: st.EOL, Modified: st.Modified, Doc: doc, Generation: st.Generation}
+			t := &Tab{File: abs, Path: c.Rel(abs), Language: st.Language, EOL: st.EOL, Modified: st.Modified, Doc: doc, Generation: st.Generation, Indent: st.EditorConfig}
 			// Insert after the active tab like most editors do.
 			c.insertTab(t)
 			if at != nil {

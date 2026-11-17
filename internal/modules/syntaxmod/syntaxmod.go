@@ -25,6 +25,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/bus"
 	"github.com/ape-dev-de/tiegel/internal/core/langdetect"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
+	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/syntax"
 )
 
@@ -344,7 +345,7 @@ func (m *Module) with(ctx context.Context, s Source, info *Info, fn func(*syntax
 	if doc, derr := m.app.Document(abs); derr == nil {
 		snap := doc.Snapshot()
 		if !langSet {
-			lang = fromLangdetect(snap.Language)
+			lang = m.sizeLimit(fromLangdetect(snap.Language), len(snap.Text))
 		}
 		if err := available(lang); err != nil {
 			return err
@@ -363,7 +364,8 @@ func (m *Module) with(ctx context.Context, s Source, info *Info, fn func(*syntax
 		return err
 	}
 	if !langSet {
-		lang = syntax.DetectLanguage(abs, head(src))
+		// The kernel's detection honours files.associations.
+		lang = m.sizeLimit(fromLangdetect(string(m.app.DetectLanguage(abs, head(src)))), len(src))
 	}
 	if err := available(lang); err != nil {
 		return err
@@ -375,6 +377,26 @@ func (m *Module) with(ctx context.Context, s Source, info *Info, fn func(*syntax
 	defer d.Close()
 	info.Language, info.Length = string(lang), len(src)
 	return fn(d, src, newLineIndex(src))
+}
+
+// SettingMaxFileKB is the size above which files are not parsed with
+// Tree-sitter (served as plain text).
+const SettingMaxFileKB = ID + ".maxFileKB"
+
+// SettingSpecs implements module.SettingsProvider.
+func (m *Module) SettingSpecs() []settings.Spec {
+	return []settings.Spec{
+		{Key: SettingMaxFileKB, Kind: settings.KindInt, Default: 10240, Min: settings.IntPtr(16), Max: settings.IntPtr(1 << 20), Scope: settings.ScopeGlobal,
+			Label: "Largest highlighted file (KB)", Help: "Larger files are shown as plain text: no highlighting, folding or outline."},
+	}
+}
+
+// sizeLimit returns plain text for tree languages above SettingMaxFileKB.
+func (m *Module) sizeLimit(lang syntax.Language, size int) syntax.Language {
+	if lang.HasTree() && size > api.Setting(m.app, SettingMaxFileKB, 10240)*1024 {
+		return fromLangdetect(string(langdetect.PlainText))
+	}
+	return lang
 }
 
 // docLocked returns the parse state of an open document, brought up to the

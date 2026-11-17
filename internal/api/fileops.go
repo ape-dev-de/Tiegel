@@ -448,16 +448,18 @@ func (a *App) move(src, dst string, overwrite bool) (FileOpResult, []FileChange,
 // doc.renamed, doc.closed (old path) and doc.opened (new path).
 func (a *App) rehome(from, to string) []string {
 	var out []string
+	assoc := a.associations() // reads settings: not under a.mu
 	for _, d := range a.openDocsUnder(from) {
 		d.mu.Lock()
 		old := d.path
 		np := to + old[len(from):]
+		lang := langdetect.DetectWith(assoc, np, d.buf.Slice(0, min(d.buf.Len(), langdetect.HeadSize)))
 		a.mu.Lock()
 		if a.docs[old] == d {
 			delete(a.docs, old)
 			a.docs[np] = d
 		}
-		d.setName(np, langdetect.Detect(np, d.buf.Slice(0, min(d.buf.Len(), langdetect.HeadSize))))
+		d.setName(np, lang)
 		a.mu.Unlock()
 		oldDisplay, newDisplay := a.displayPath(old), a.displayPath(np)
 		a.bus.Publish(TopicDocRenamed, DocRenamedEvent{From: oldDisplay, To: newDisplay, FromFile: old, File: np, Generation: d.gen, Language: string(d.lang)})

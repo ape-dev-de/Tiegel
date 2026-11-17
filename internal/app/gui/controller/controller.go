@@ -51,9 +51,16 @@ type Prefs struct {
 	EditorFontSize float32
 	LineHeight     float32
 	UIFontSize     float32
+	// InsertSpaces makes Tab insert spaces (.editorconfig overrides it
+	// per file).
+	InsertSpaces bool
+	// OpenProjectIn is ask, new or this (another project while one is
+	// open).
+	OpenProjectIn string
 }
 
-// Setting keys of the GUI (namespaces ui.*, editor.*, update.*).
+// Setting keys of the GUI: declared core settings (settings.schema) and
+// client state (ui.recentProjects, ui.recentFiles).
 const (
 	KeyTheme          = "ui.theme"
 	KeyRecentProjects = "ui.recentProjects"
@@ -64,6 +71,9 @@ const (
 	KeyEditorFontSize = "editor.fontSize"
 	KeyLineHeight     = "editor.lineHeight"
 	KeyUIFontSize     = "ui.fontSize"
+	KeyInsertSpaces   = "editor.insertSpaces"
+	KeyOpenProjectIn  = "projects.openIn"
+	KeyAutosaveIdle   = "autosave.idleSeconds"
 )
 
 // DefaultOpenTool is the tool window shown on the first start of a
@@ -154,6 +164,9 @@ type Controller struct {
 	Interpreters []Interpreter
 	Mappings     Mappings
 	Diagnosis    Diagnosis
+	// Schema is the result of settings.schema (core and plugin settings
+	// with values; nil until loaded).
+	Schema *SettingsSchema
 
 	// Reveal is set when a tab should move its caret (go to definition,
 	// problem click); the view applies and clears it.
@@ -300,20 +313,7 @@ func (c *Controller) notice(err error) {
 // open, adopted).
 func (c *Controller) Start(projectPath string) {
 	c.Go(func(ctx context.Context) func() {
-		var p Prefs
-		p.Theme = getSetting(ctx, c.be, KeyTheme, "global", "dark")
-		p.TabWidth = getSetting(ctx, c.be, KeyTabWidth, "global", 4)
-		p.UpdateCheck = getSetting(ctx, c.be, KeyUpdateCheck, "global", false)
-		p.EditorFont = getSetting(ctx, c.be, KeyEditorFont, "global", "")
-		p.EditorFontSize = getSetting[float32](ctx, c.be, KeyEditorFontSize, "global", 0)
-		p.LineHeight = getSetting[float32](ctx, c.be, KeyLineHeight, "global", 0)
-		p.UIFontSize = getSetting[float32](ctx, c.be, KeyUIFontSize, "global", 0)
-		var cfg struct {
-			IdleSeconds *int `json:"idleSeconds"`
-		}
-		if err := c.call(ctx, "autosave.config", nil, &cfg); err == nil && cfg.IdleSeconds != nil {
-			p.IdleSeconds = *cfg.IdleSeconds
-		}
+		p := c.loadPrefs(ctx)
 		recent := getSetting[[]string](ctx, c.be, KeyRecentProjects, "global", nil)
 		var info ProjectInfo
 		_ = c.call(ctx, "project.info", nil, &info)
@@ -331,6 +331,28 @@ func (c *Controller) Start(projectPath string) {
 			}
 		}
 	})
+}
+
+// loadPrefs reads the preferences (global values; a missing value keeps the
+// GUI default).
+func (c *Controller) loadPrefs(ctx context.Context) Prefs {
+	var p Prefs
+	p.Theme = getSetting(ctx, c.be, KeyTheme, "global", "dark")
+	p.TabWidth = getSetting(ctx, c.be, KeyTabWidth, "global", 4)
+	p.UpdateCheck = getSetting(ctx, c.be, KeyUpdateCheck, "global", false)
+	p.EditorFont = getSetting(ctx, c.be, KeyEditorFont, "global", "")
+	p.EditorFontSize = getSetting[float32](ctx, c.be, KeyEditorFontSize, "global", 0)
+	p.LineHeight = getSetting[float32](ctx, c.be, KeyLineHeight, "global", 0)
+	p.UIFontSize = getSetting[float32](ctx, c.be, KeyUIFontSize, "global", 0)
+	p.InsertSpaces = getSetting(ctx, c.be, KeyInsertSpaces, "global", true)
+	p.OpenProjectIn = getSetting(ctx, c.be, KeyOpenProjectIn, "global", "ask")
+	var cfg struct {
+		IdleSeconds *int `json:"idleSeconds"`
+	}
+	if err := c.call(ctx, "autosave.config", nil, &cfg); err == nil && cfg.IdleSeconds != nil {
+		p.IdleSeconds = *cfg.IdleSeconds
+	}
+	return p
 }
 
 // getSetting reads a setting and decodes it, returning def if it is
