@@ -64,6 +64,8 @@ const (
 	ParameterInfo      Action = "editor.parameterInfo"
 	QuickDocumentation Action = "editor.quickDocumentation"
 	ViewFind           Action = "view.find"
+	ViewSoftWrap       Action = "view.softWrap"
+	ViewShowWhitespace Action = "view.showWhitespace"
 )
 
 // Def declares a bindable action with its default chords per preset
@@ -97,6 +99,9 @@ var appDefs = []Def{
 	{ID: "view.zoomIn", Title: "Increase Editor Font Size", Context: CtxGlobal, Mac: []string{"Cmd+="}, PC: []string{"Ctrl+="}},
 	{ID: "view.zoomOut", Title: "Decrease Editor Font Size", Context: CtxGlobal, Mac: []string{"Cmd+-"}, PC: []string{"Ctrl+-"}},
 	{ID: "view.selectInProject", Title: "Select in Project View", Context: CtxGlobal, Mac: []string{"Cmd+Shift+1"}, PC: []string{"Alt+Shift+1"}},
+	// Editor display toggles: no default chord (bindable in the keymap).
+	{ID: ViewSoftWrap, Title: "Soft-Wrap", Context: CtxGlobal},
+	{ID: ViewShowWhitespace, Title: "Show Whitespaces", Context: CtxGlobal},
 	// Tool windows: Cmd/Alt + digit like the reference layout (2 Bookmarks,
 	// 4 Run and 8 Services follow with their milestones).
 	{ID: "view.commit", Title: "Commit", Context: CtxGlobal, Mac: []string{"Cmd+0"}, PC: []string{"Alt+0"}},

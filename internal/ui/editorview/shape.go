@@ -97,40 +97,51 @@ type lineEntry struct {
 	th    *tokens.Theme
 	key   metricsKey
 	tab   int
+	ws    int // whitespace marks from this byte offset (-1: none)
 	cols  int // visual width of the whole line
 	used  uint64
 	ops   op.Ops
 	call  op.CallOp
 }
 
+// lineKey identifies a cached row: a document line and, with soft wrap,
+// the row index within it.
+type lineKey struct{ line, sub int }
+
 // lineCache maps document lines to cached drawings. Entries move with
 // line insertions and deletions so scrolling and typing only re-shape
 // lines whose content changed.
 type lineCache struct {
-	m     map[int]*lineEntry
+	m     map[lineKey]*lineEntry
 	free  []*lineEntry
 	frame uint64
 }
 
-func (c *lineCache) init() { c.m = make(map[int]*lineEntry) }
+func (c *lineCache) init() { c.m = make(map[lineKey]*lineEntry) }
 
 // applyEdit drops entries of edited lines and shifts the ones below.
 func (c *lineCache) applyEdit(ed buffer.Edit) {
 	start, oldEnd, newEnd := ed.StartPoint.Row, ed.OldEndPoint.Row, ed.NewEndPoint.Row
 	delta := newEnd - oldEnd
 	if delta == 0 {
+		for k, ent := range c.m {
+			if k.line >= start && k.line <= oldEnd && k.sub > 0 {
+				delete(c.m, k) // wrapped rows of an edited line
+				c.recycle(ent)
+			}
+		}
 		for l := start; l <= oldEnd; l++ {
-			c.drop(l)
+			c.drop(lineKey{line: l})
 		}
 		return
 	}
-	next := make(map[int]*lineEntry, len(c.m))
-	for l, ent := range c.m {
+	next := make(map[lineKey]*lineEntry, len(c.m))
+	for k, ent := range c.m {
 		switch {
-		case l < start:
-			next[l] = ent
-		case l > oldEnd:
-			next[l+delta] = ent
+		case k.line < start:
+			next[k] = ent
+		case k.line > oldEnd:
+			next[lineKey{k.line + delta, k.sub}] = ent
 		default:
 			c.recycle(ent)
 		}
@@ -138,9 +149,9 @@ func (c *lineCache) applyEdit(ed buffer.Edit) {
 	c.m = next
 }
 
-func (c *lineCache) drop(l int) {
-	if ent, ok := c.m[l]; ok {
-		delete(c.m, l)
+func (c *lineCache) drop(k lineKey) {
+	if ent, ok := c.m[k]; ok {
+		delete(c.m, k)
 		c.recycle(ent)
 	}
 }
@@ -155,7 +166,7 @@ func (c *lineCache) recycle(ent *lineEntry) {
 }
 
 // get returns the entry for line, creating an empty one if needed.
-func (c *lineCache) get(l int) *lineEntry {
+func (c *lineCache) get(l lineKey) *lineEntry {
 	ent, ok := c.m[l]
 	if !ok {
 		if n := len(c.free); n > 0 {
@@ -191,10 +202,11 @@ func (c *lineCache) Len() int { return len(c.m) }
 // of a line is shaped.
 const maxShapeBytes = 2048
 
-// lineDrawing returns the cached drawing of the visible part of a line.
-// line is the full line content, spans are line-relative. The drawing has
-// column 0 at x = 0 and the row top at y = 0.
-func (e *Editor) lineDrawing(th *tokens.Theme, l int, line []byte, spans []highlight.Span, firstCol, lastCol int) (op.CallOp, int) {
+// lineDrawing returns the cached drawing of the visible part of a line
+// (or of one soft-wrapped row). line is the full row content, spans are
+// row-relative; whitespace from byte ws on is marked (-1: none). The
+// drawing has column 0 at x = 0 and the row top at y = 0.
+func (e *Editor) lineDrawing(th *tokens.Theme, l lineKey, line []byte, spans []highlight.Span, firstCol, lastCol, ws int) (op.CallOp, int) {
 	from, to := 0, len(line)
 	if len(line) > maxShapeBytes {
 		from = buffer.ByteColFromVisual(line, max(0, firstCol-8), e.tabWidth())
@@ -202,13 +214,13 @@ func (e *Editor) lineDrawing(th *tokens.Theme, l int, line []byte, spans []highl
 		to = min(len(line), to+nextClusterLen(line[to:]))
 	}
 	ent := e.cache.get(l)
-	if ent.th == th && ent.key == e.met.key && ent.tab == e.tabWidth() && ent.from == from &&
+	if ent.th == th && ent.key == e.met.key && ent.tab == e.tabWidth() && ent.from == from && ent.ws == ws &&
 		bytes.Equal(ent.text, line[from:to]) && spansEqual(ent.spans, spans) {
 		return ent.call, ent.cols
 	}
 	ent.text = append(ent.text[:0], line[from:to]...)
 	ent.spans = append(ent.spans[:0], spans...)
-	ent.th, ent.key, ent.tab, ent.from = th, e.met.key, e.tabWidth(), from
+	ent.th, ent.key, ent.tab, ent.from, ent.ws = th, e.met.key, e.tabWidth(), from, ws
 	ent.col0 = 0
 	if from > 0 {
 		ent.col0 = buffer.VisualCol(line, from, e.tabWidth())
@@ -216,6 +228,10 @@ func (e *Editor) lineDrawing(th *tokens.Theme, l int, line []byte, spans []highl
 	ent.cols = buffer.VisualCol(line, len(line), e.tabWidth())
 	ent.ops.Reset()
 	m := op.Record(&ent.ops)
+	if ws >= 0 && ws < to {
+		// Marks of the shaped part; columns count from the line start.
+		e.paintWhitespace(&ent.ops, th.Editor.Whitespace, line[:to], max(ws, from), 0, 0)
+	}
 	e.paintGlyphs(&ent.ops, th, ent.text, from, ent.col0, spans)
 	ent.call = m.Stop()
 	return ent.call, ent.cols

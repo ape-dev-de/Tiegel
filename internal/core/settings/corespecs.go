@@ -16,6 +16,11 @@ const (
 	KeyEditorLineHeight  = "editor.lineHeight"
 	KeyEditorTabWidth    = "editor.tabWidth"
 	KeyEditorInsertSpace = "editor.insertSpaces"
+	KeySoftWrap          = "editor.softWrap"
+	KeySoftWrapFiles     = "editor.softWrapFiles"
+	KeyShowWhitespace    = "editor.showWhitespace"
+	KeyRightMargin       = "editor.rightMargin"
+	KeyShowRightMargin   = "editor.showRightMargin"
 	KeyEditorConfig      = "files.editorconfig"
 	KeyFileAssociations  = "files.associations"
 	KeyWatchExclude      = "watch.exclude"
@@ -46,6 +51,22 @@ const (
 	OpenProjectThis = "this"
 )
 
+// Values of KeySoftWrap (D285): wrap no file, the files matching
+// KeySoftWrapFiles, or every file.
+const (
+	SoftWrapOff   = "off"
+	SoftWrapFiles = "files"
+	SoftWrapAll   = "all"
+)
+
+// Values of KeyShowWhitespace (D286).
+const (
+	WhitespaceNone      = "none"
+	WhitespaceSelection = "selection"
+	WhitespaceTrailing  = "trailing"
+	WhitespaceAll       = "all"
+)
+
 // kernelSpecs are registered by init.
 var kernelSpecs = []Spec{
 	{Key: KeyTheme, Kind: KindEnum, Default: "dark", Options: []string{"dark", "light", "system"}, Scope: ScopeGlobal,
@@ -63,6 +84,16 @@ var kernelSpecs = []Spec{
 		Label: "Tab width", Help: "Display width of a tab and the indent size; .editorconfig overrides it per file.", Group: PageEditor},
 	{Key: KeyEditorInsertSpace, Kind: KindBool, Default: true, Scope: ScopeGlobal,
 		Label: "Indent with spaces", Help: "Tab inserts spaces instead of a tab character; .editorconfig overrides it per file.", Group: PageEditor},
+	{Key: KeySoftWrap, Kind: KindEnum, Default: SoftWrapFiles, Options: []string{SoftWrapOff, SoftWrapFiles, SoftWrapAll}, Scope: ScopeGlobal,
+		Label: "Soft wrap", Help: "Wrap long lines at the window edge: never, only in the files below, or in every file. View › Soft-Wrap toggles it per editor.", Group: PageEditor},
+	{Key: KeySoftWrapFiles, Kind: KindList, Default: []string{"*.md", "*.txt", "*.rst", "*.adoc"}, Scope: ScopeGlobal,
+		Label: "Soft-wrap these files", Help: "File name patterns such as *.md that are wrapped when soft wrap is set to files.", Group: PageEditor},
+	{Key: KeyShowWhitespace, Kind: KindEnum, Default: WhitespaceNone, Options: []string{WhitespaceNone, WhitespaceSelection, WhitespaceTrailing, WhitespaceAll}, Scope: ScopeGlobal,
+		Label: "Show whitespace", Help: "Draw spaces as dots and tabs as arrows: nowhere, inside selections, at line ends, or everywhere.", Group: PageEditor},
+	{Key: KeyRightMargin, Kind: KindInt, Default: 120, Min: IntPtr(0), Max: IntPtr(1000), Scope: ScopeProject,
+		Label: "Right margin (columns)", Help: "Column of the vertical ruler (0 = none); max_line_length from .editorconfig overrides it per file.", Group: PageEditor},
+	{Key: KeyShowRightMargin, Kind: KindBool, Default: true, Scope: ScopeGlobal,
+		Label: "Show right margin", Help: "Draw a thin vertical line at the right margin column.", Group: PageEditor},
 
 	{Key: KeyEditorConfig, Kind: KindBool, Default: true, Scope: ScopeProject,
 		Label: "Use .editorconfig", Help: "Apply indent style and size, final newline and trailing whitespace rules from .editorconfig files.", Group: PageFiles},

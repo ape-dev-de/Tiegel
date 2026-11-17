@@ -19,6 +19,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/editor/cursor"
 	"github.com/ape-dev-de/tiegel/internal/editor/highlight"
 	"github.com/ape-dev-de/tiegel/internal/editor/search"
+	"github.com/ape-dev-de/tiegel/internal/editor/wrap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/internal/draw"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
@@ -57,12 +58,17 @@ type geometry struct {
 	hthumb    image.Rectangle
 }
 
-// visLine is one row drawn in the current frame.
+// visLine is one row drawn in the current frame: a whole line, or one
+// visual row (segment) of a soft-wrapped line.
 type visLine struct {
 	row, line  int
+	sub        int  // row index within the line (0: first)
+	last       bool // last row of the line
 	y          int
-	start, end int // document offsets of the line content
-	tStart     int // offset of the line text in Editor.lineText
+	start, end int // document offsets of the row content
+	ls         int // document offset of the line start
+	trail      int // line-relative start of trailing whitespace
+	tStart     int // offset of the row text in Editor.lineText
 	tEnd       int
 }
 
@@ -132,7 +138,6 @@ func (e *Editor) computeGeometry(gtx layout.Context, th *tokens.Theme, size imag
 	g.valid = true
 	g.size = size
 	g.lineH = e.met.lineH
-	g.rows = e.folds.VisibleCount()
 	digits := max(3, numDigits(e.buf.LineCount()))
 	g.annotW = 0
 	if e.annot != nil {
@@ -153,6 +158,8 @@ func (e *Editor) computeGeometry(gtx layout.Context, th *tokens.Theme, size imag
 	g.gutterW = x
 	g.textX = x + gtx.Dp(8)
 	g.textW = max(0, size.X-g.textX)
+	e.updateWrap(g.textW - gtx.Dp(10))
+	g.rows = e.rowCount()
 
 	content := g.rows * g.lineH
 	g.maxScroll.Y = 0
@@ -160,6 +167,9 @@ func (e *Editor) computeGeometry(gtx layout.Context, th *tokens.Theme, size imag
 		g.maxScroll.Y = content - size.Y + size.Y/2
 	}
 	g.maxScroll.X = max(0, e.met.colX(e.maxCols+4)-g.textW)
+	if e.wrapped {
+		g.maxScroll.X = 0
+	}
 
 	sb := gtx.Dp(10)
 	g.vbar = image.Rect(size.X-sb, 0, size.X, size.Y)
@@ -192,8 +202,7 @@ func (e *Editor) clampScroll() {
 func (e *Editor) scrollToCaret() {
 	s := e.buf.Snapshot()
 	head := e.cur.Primary().Head
-	pos := s.OffsetToPos(head)
-	row := e.folds.DocToVisible(pos.Line)
+	row, col := e.rowCol(s, head)
 	lineH := e.geo.lineH
 	y := row * lineH
 	viewH := e.geo.size.Y
@@ -207,7 +216,12 @@ func (e *Editor) scrollToCaret() {
 	case y+lineH+margin > e.scroll.Y+viewH:
 		e.scroll.Y = y + lineH + margin - viewH
 	}
-	col := buffer.VisualCol(s.Line(pos.Line), pos.Col, e.tabWidth())
+	if e.geo.maxScroll.Y < e.scroll.Y {
+		e.geo.maxScroll.Y = e.scroll.Y
+	}
+	if e.wrapped {
+		return
+	}
 	e.maxCols = max(e.maxCols, col)
 	e.geo.maxScroll.X = max(e.geo.maxScroll.X, e.met.colX(e.maxCols+4)-e.geo.textW)
 	x := e.met.colX(col)
@@ -218,9 +232,6 @@ func (e *Editor) scrollToCaret() {
 	case x+mx > e.scroll.X+e.geo.textW:
 		e.scroll.X = x + mx - e.geo.textW
 	}
-	if e.geo.maxScroll.Y < e.scroll.Y {
-		e.geo.maxScroll.Y = e.scroll.Y
-	}
 }
 
 // visibleLines collects the rows of the current frame and their text.
@@ -230,16 +241,52 @@ func (e *Editor) visibleLines(s buffer.Snapshot) []visLine {
 	last := min(e.geo.rows-1, (e.scroll.Y+e.geo.size.Y-1)/lineH)
 	vis := e.vis[:0]
 	text := e.lineText[:0]
-	for r := first; r <= last; r++ {
-		l := e.folds.VisibleToDoc(r)
-		start := s.LineStart(l)
-		t0 := len(text)
-		text = s.AppendLine(text, l)
-		vis = append(vis, visLine{row: r, line: l, y: r*lineH - e.scroll.Y, start: start,
-			end: start + len(text) - t0, tStart: t0, tEnd: len(text)})
+	if e.wrapped {
+		vis, text = e.visibleRows(s, first, last, vis, text)
+	} else {
+		for r := first; r <= last; r++ {
+			l := e.folds.VisibleToDoc(r)
+			start := s.LineStart(l)
+			t0 := len(text)
+			text = s.AppendLine(text, l)
+			vis = append(vis, visLine{row: r, line: l, last: true, y: r*lineH - e.scroll.Y, start: start,
+				end: start + len(text) - t0, ls: start, trail: trailingStart(text[t0:]), tStart: t0, tEnd: len(text)})
+		}
 	}
 	e.vis, e.lineText = vis, text
 	return vis
+}
+
+// visibleRows collects the soft-wrapped rows first..last: the line of
+// each row is wrapped once, its rows become separate visLines.
+func (e *Editor) visibleRows(s buffer.Snapshot, first, last int, vis []visLine, text []byte) ([]visLine, []byte) {
+	lineH := e.geo.lineH
+	l, sub := e.view.LineAt(first)
+	for r := first; r <= last; {
+		ls := s.LineStart(l)
+		t0 := len(text)
+		text = s.AppendLine(text, l)
+		lt := text[t0:]
+		starts := wrap.Breaks(append(e.wrapBrks[:0], 0), lt, e.wrap.Width(), e.wrap.TabWidth())
+		e.wrapBrks = starts
+		trail := trailingStart(lt)
+		for k := sub; k < len(starts) && r <= last; k++ {
+			a, b := starts[k], len(lt)
+			if k+1 < len(starts) {
+				b = starts[k+1]
+			}
+			vis = append(vis, visLine{row: r, line: l, sub: k, last: k+1 == len(starts), y: r*lineH - e.scroll.Y,
+				start: ls + a, end: ls + b, ls: ls, trail: trail, tStart: t0 + a, tEnd: t0 + b})
+			r++
+		}
+		sub = 0
+		next := e.folds.VisibleToDoc(e.folds.DocToVisible(l) + 1)
+		if next <= l {
+			break
+		}
+		l = next
+	}
+	return vis, text
 }
 
 func (e *Editor) lineBytes(v visLine) []byte { return e.lineText[v.tStart:v.tEnd] }
@@ -268,6 +315,10 @@ func (e *Editor) paint(gtx layout.Context, th *tokens.Theme) {
 	markers := make([][]Marker, len(vis))
 	if e.markers != nil {
 		for i, v := range vis {
+			if i > 0 && vis[i-1].line == v.line {
+				markers[i] = markers[i-1]
+				continue
+			}
 			markers[i] = e.markers.Markers(v.line)
 			for _, m := range markers[i] {
 				if m.Kind == MarkerExecutionPoint {
@@ -291,22 +342,26 @@ func (e *Editor) paint(gtx layout.Context, th *tokens.Theme) {
 			draw.Rect(ops, row, th.Editor.CurrentLine)
 		}
 	}
+	e.paintRuler(gtx, th, ox)
 	e.paintHighlights(ops, th, s, vis, ox)
 	e.paintSearch(ops, th, s, vis, primary, ox)
 	e.paintSelections(ops, th, vis, sels, ox)
 	e.paintBrackets(ops, th, s, vis, primary, ox)
+	e.paintSelectionWhitespace(ops, th, vis, sels, ox)
 
 	firstCol := e.scroll.X / max(1, e.met.cellW.Round())
 	lastCol := firstCol + g.textW/max(1, e.met.cellW.Round()) + 1
 	for _, v := range vis {
 		line := e.lineBytes(v)
 		spans := e.lineSpans(s, v)
-		call, cols := e.lineDrawing(th, v.line, line, spans, firstCol, lastCol)
-		e.maxCols = max(e.maxCols, cols)
+		call, cols := e.lineDrawing(th, lineKey{v.line, v.sub}, line, spans, firstCol, lastCol, e.wsFrom(v))
+		if !e.wrapped {
+			e.maxCols = max(e.maxCols, cols)
+		}
 		t := op.Offset(imagePt(ox, v.y)).Push(ops)
 		call.Add(ops)
 		t.Pop()
-		if e.folds.IsCollapsed(v.line) {
+		if v.last && e.folds.IsCollapsed(v.line) {
 			if r, ok := e.folds.RangeAt(v.line); ok && r.EndLine > v.line {
 				x := ox + e.met.colX(cols+1)
 				e.paintFoldPlaceholder(gtx, th, x, v.y)
@@ -351,13 +406,19 @@ func (e *Editor) rangeCols(vis []visLine, start, end int, fn func(v visLine, c0,
 		if v.start > end || (v.start == end && start != end && v.start > start) {
 			break
 		}
+		if !v.last && start >= v.end && v.end > v.start {
+			continue // starts at the soft break: drawn on the next row
+		}
 		c0 := 0
 		if start > v.start {
 			c0 = e.colOf(v, min(start, v.end))
 		}
 		var c1 int
 		if end > v.end {
-			c1 = e.colOf(v, v.end) + 1
+			c1 = e.colOf(v, v.end)
+			if v.last {
+				c1++ // the line ending
+			}
 		} else {
 			c1 = e.colOf(v, end)
 		}
@@ -567,8 +628,8 @@ func (e *Editor) paintCarets(gtx layout.Context, th *tokens.Theme, vis []visLine
 		if sel.Head < lo || sel.Head > hi {
 			continue
 		}
-		i := sort.Search(len(vis), func(i int) bool { return vis[i].end >= sel.Head })
-		if i >= len(vis) || vis[i].start > sel.Head {
+		i := visIndex(vis, sel.Head)
+		if i < 0 {
 			continue
 		}
 		v := vis[i]
@@ -628,15 +689,19 @@ func (e *Editor) paintGutter(gtx layout.Context, th *tokens.Theme, vis []visLine
 		if caretLines[v.line] {
 			nc = th.Editor.LineNumberActive
 		}
-		if !e.HideLineNumbers {
+		if !e.HideLineNumbers && v.sub == 0 {
 			e.paintNumber(ops, th.Shaper, v.line+1, g.numRight, v.y, nc)
 		}
 
 		cy := v.y + lineH/2
 		for _, m := range markers[i] {
-			e.paintMarker(gtx, th, m, v, cy)
+			// Continuation rows of a wrapped line only continue the change
+			// bars.
+			if v.sub == 0 || m.Kind == MarkerGitAdded || m.Kind == MarkerGitModified {
+				e.paintMarker(gtx, th, m, v, cy)
+			}
 		}
-		if r, ok := e.folds.RangeAt(v.line); ok && r.EndLine > r.StartLine {
+		if r, ok := e.folds.RangeAt(v.line); ok && r.EndLine > r.StartLine && v.sub == 0 {
 			glyph := atoms.GlyphChevronDown
 			if e.folds.IsCollapsed(v.line) {
 				glyph = atoms.GlyphChevronRight
@@ -713,7 +778,7 @@ func (e *Editor) paintScrollbars(gtx layout.Context, th *tokens.Theme, s buffer.
 	mh := max(2, gtx.Dp(2))
 	mx0, mx1 := g.vbar.Min.X+gtx.Dp(3), g.vbar.Max.X-gtx.Dp(1)
 	ypos := func(off int) int {
-		row := e.folds.DocToVisible(s.OffsetToPos(off).Line)
+		row := e.lineRow(s.OffsetToPos(off).Line)
 		return row * (g.size.Y - mh) / max(1, g.rows)
 	}
 	if e.query != nil && s.Len() <= maxSearchDoc {
@@ -774,9 +839,9 @@ func (e *Editor) AnchorRect(off int) (r image.Rectangle, ok bool) {
 	if e.folds.IsHidden(pos.Line) {
 		return image.Rectangle{}, false
 	}
-	row := e.folds.DocToVisible(pos.Line)
+	row, col := e.rowCol(s, off)
 	y := row*g.lineH - e.scroll.Y
-	x := g.textX - e.scroll.X + e.met.colX(buffer.VisualCol(s.Line(pos.Line), pos.Col, e.tabWidth()))
+	x := g.textX - e.scroll.X + e.met.colX(col)
 	r = image.Rect(x, y, x+e.met.colX(1), y+g.lineH)
 	visible := r.Max.Y > 0 && r.Min.Y < g.size.Y && r.Max.X > g.gutterW && r.Min.X < g.size.X
 	return r, visible
@@ -790,5 +855,5 @@ func (e *Editor) FirstVisibleLine() int {
 	if e.geo.lineH == 0 {
 		return 0
 	}
-	return e.folds.VisibleToDoc(e.scroll.Y / e.geo.lineH)
+	return e.rowLine(e.scroll.Y / e.geo.lineH)
 }

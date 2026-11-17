@@ -137,12 +137,12 @@ func (e *Editor) paintDecorations(ops *op.Ops, th *tokens.Theme, vis []visLine, 
 			if r.Line != v.line {
 				continue
 			}
-			n := v.end - v.start
-			s, en := min(max(r.Start, 0), n), min(max(r.End, 0), n)
+			// Inline ranges are line-relative; clip them to this row.
+			s, en := min(max(v.ls+r.Start, v.start), v.end), min(max(v.ls+r.End, v.start), v.end)
 			if en <= s {
 				continue
 			}
-			c0, c1 := e.colOf(v, v.start+s), e.colOf(v, v.start+en)
+			c0, c1 := e.colOf(v, s), e.colOf(v, en)
 			draw.RRect(ops, image.Rect(ox+e.met.colX(c0), v.y+1, ox+e.met.colX(c1), v.y+g.lineH-1), 2, ic)
 		}
 	}
@@ -182,9 +182,9 @@ func (e *Editor) LineTop(line int) int {
 	case line <= 0:
 		row = 0
 	case line >= n:
-		row = e.folds.DocToVisible(n-1) + 1 + (line - n)
+		row = e.rowCount() + (line - n)
 	default:
-		row = e.folds.DocToVisible(line)
+		row = e.lineRow(line)
 	}
 	return row*g.lineH - e.scroll.Y
 }
@@ -219,6 +219,9 @@ func (e *Editor) paintGutterColumn(gtx layout.Context, th *tokens.Theme, vis []v
 		return
 	}
 	for _, v := range vis {
+		if v.sub > 0 {
+			continue
+		}
 		t := op.Offset(image.Pt(0, v.y)).Push(gtx.Ops)
 		cg := gtx
 		cg.Constraints = layout.Exact(image.Pt(g.annotW, g.lineH))
@@ -240,7 +243,7 @@ func (e *Editor) paintDecorationMarks(gtx layout.Context, th *tokens.Theme) {
 	ypos := func(line int) int {
 		row := g.rows
 		if line < n {
-			row = e.folds.DocToVisible(max(0, line))
+			row = e.lineRow(max(0, line))
 		}
 		return row * (g.size.Y - mh) / max(1, g.rows)
 	}

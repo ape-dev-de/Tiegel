@@ -20,6 +20,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/editor/highlight/tshighlight"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 	"github.com/ape-dev-de/tiegel/internal/editor/search"
+	"github.com/ape-dev-de/tiegel/internal/editor/wrap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
@@ -61,6 +62,34 @@ type editorSession struct {
 	query     *search.Query
 	findKey   [4]int
 	ignoreEdt bool
+
+	// wrapToggle overrides the soft wrap setting for this editor (View ›
+	// Soft-Wrap): 0 follows the setting, 1 on, -1 off.
+	wrapToggle int8
+}
+
+// softWrap reports whether the editor wraps lines: the per-editor toggle,
+// else editor.softWrap and its file patterns (D285).
+func (s *editorSession) softWrap(p controller.Prefs) bool {
+	if s.wrapToggle != 0 {
+		return s.wrapToggle > 0
+	}
+	return wrap.Enabled(p.SoftWrap, p.SoftWrapFiles, s.file)
+}
+
+// applyDisplayPrefs sets soft wrap, whitespace marks and the right margin
+// of the editor from the preferences and the file's .editorconfig.
+func (s *editorSession) applyDisplayPrefs(p controller.Prefs) {
+	s.ed.SoftWrap = s.softWrap(p)
+	s.ed.Whitespace = editorview.ParseWhitespaceMode(p.ShowWhitespace)
+	margin := p.RightMargin
+	if s.tab != nil {
+		margin = s.tab.RightMarginFor(margin)
+	}
+	if !p.ShowRightMargin {
+		margin = 0
+	}
+	s.ed.RightMargin = margin
 }
 
 // sessionKey identifies an editor widget: one per group and file, so a
@@ -201,6 +230,7 @@ func (v *View) layoutEditor(gtx layout.Context, s *editorSession, active bool) l
 	if s.tab != nil { // .editorconfig of the file wins over the preferences
 		s.ed.TabWidth, s.ed.InsertSpaces = s.tab.TabWidthFor(c.Prefs.TabWidth), s.tab.InsertSpacesFor(c.Prefs.InsertSpaces)
 	}
+	s.applyDisplayPrefs(c.Prefs)
 	s.ed.Keymap = v.Registry.EditorKeymap() // follows keymap changes
 	s.ed.SetGutterMarkers(v.Registry.markers(s.file))
 	s.ed.SetGutterColumn(v.Registry.gutterColumn(s.file))

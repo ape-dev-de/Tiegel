@@ -20,7 +20,7 @@ func TestLongLineSegmentsAndHorizontalScrollbar(t *testing.T) {
 	if r.e.ScrollOffset().X <= 0 {
 		t.Fatal("not scrolled to the end of the long line")
 	}
-	ent := r.e.cache.m[0]
+	ent := r.e.cache.m[lineKey{}]
 	if ent == nil || ent.from == 0 || len(ent.text) >= len(long) {
 		t.Fatal("long line not shaped as a segment")
 	}

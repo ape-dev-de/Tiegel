@@ -69,7 +69,10 @@ Tiegel-Stand: Editor-Keymap als Code-Tabelle (`keymap/defaults.go`), GUI-Aktione
 | Schrift: Familie, Größe, Zeilenhöhe | ✅ `editor.fontFamily/fontSize/lineHeight` | Kern | ✔ (`editor-font.xml`) | M16 |
 | Konsolen-/Terminal-Schrift | ❌ | Kern | ✔ (`console-font.xml`, `terminal-font.xml`) | M15 |
 | Tab-Breite | ✅ `editor.tabWidth` | Kern | ✔ (`codestyles`) | M16 |
-| Soft Wrap, Whitespace anzeigen, Zeilennummern, Lineal | 🟡 Zeilennummern | Kern | ✔ | M12 |
+| Soft Wrap (aus / Dateimuster / alle, Umschalter pro Editor) | ✅ `editor.softWrap`, `editor.softWrapFiles` (D285, D288, D289) | Kern | ✔ (`editor.xml` Soft-Wrap-Muster) | M12 |
+| Whitespace anzeigen (keins / Auswahl / am Zeilenende / alle) | ✅ `editor.showWhitespace` (D286) | Kern | ✔ (`editor.xml`) | M12 |
+| Lineal / rechter Rand | ✅ `editor.rightMargin` (Projekt), `editor.showRightMargin`; `.editorconfig` `max_line_length` (D287) | Kern | ✔ (`codestyles` RIGHT_MARGIN) | M12 |
+| Zeilennummern | ✅ immer an (Widget `HideLineNumbers` nur für Diff-Ansichten) | Kern | – | – |
 | `.editorconfig` | ✅ `files.editorconfig` (D214) | Kern | – (Datei im Projekt) | M12 |
 | Farbschema (eigene Farben) | 🟡 Palette „crucible“, nicht einstellbar | Kern | ~ hell/dunkel | – |
 | Code Style PHP (umfangreich) | ⛔ (Projekt-Formatter, siehe Plugins Pint/CS-Fixer) | – | – | – |

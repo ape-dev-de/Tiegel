@@ -32,9 +32,10 @@ type Model struct {
 	ranges    []foldRange // sorted by StartLine asc, EndLine desc
 	lineCount int
 
-	dirty  bool
-	hidden []hidden
-	prefix []int // prefix[i] = hidden lines in hidden[:i]
+	dirty   bool
+	version uint64 // counts rebuilds of hidden
+	hidden  []hidden
+	prefix  []int // prefix[i] = hidden lines in hidden[:i]
 }
 
 // New creates an empty model for a document with lineCount lines.
@@ -224,6 +225,7 @@ func (m *Model) rebuild() {
 		return
 	}
 	m.dirty = false
+	m.version++
 	m.hidden = m.hidden[:0]
 	for _, r := range m.ranges { // sorted by StartLine
 		if !r.collapsed {
@@ -243,6 +245,24 @@ func (m *Model) rebuild() {
 	for _, h := range m.hidden {
 		m.prefix = append(m.prefix, m.prefix[len(m.prefix)-1]+h.to-h.from+1)
 	}
+}
+
+// Version changes whenever the set of hidden lines may have changed
+// (collapse, expand, new ranges, line insertions or deletions).
+func (m *Model) Version() uint64 {
+	m.rebuild()
+	return m.version
+}
+
+// HiddenRuns returns the merged runs of hidden document lines in
+// ascending order; StartLine and EndLine are both hidden.
+func (m *Model) HiddenRuns() []Range {
+	m.rebuild()
+	out := make([]Range, len(m.hidden))
+	for i, h := range m.hidden {
+		out[i] = Range{StartLine: h.from, EndLine: h.to}
+	}
+	return out
 }
 
 // HiddenCount returns the number of hidden document lines.

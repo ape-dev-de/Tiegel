@@ -514,18 +514,18 @@ func TestLineCacheFollowsEdits(t *testing.T) {
 	if r.e.cache.Len() != 4 {
 		t.Fatalf("cache %d", r.e.cache.Len())
 	}
-	entD := r.e.cache.m[3]
+	entD := r.e.cache.m[lineKey{line: 3}]
 	r.e.Buffer().Insert(0, []byte("new\n"))
-	if r.e.cache.m[4] != entD {
+	if r.e.cache.m[lineKey{line: 4}] != entD {
 		t.Fatal("cache entry of line 3 did not move to line 4")
 	}
 	call := entD.call
 	r.frame()
-	if r.e.cache.m[4].call != call {
+	if r.e.cache.m[lineKey{line: 4}].call != call {
 		t.Fatal("unchanged line was re-shaped")
 	}
 	r.e.Buffer().Insert(r.e.Buffer().LineStart(4), []byte("x"))
-	if _, ok := r.e.cache.m[4]; ok {
+	if _, ok := r.e.cache.m[lineKey{line: 4}]; ok {
 		t.Fatal("edited line not dropped")
 	}
 }

@@ -57,6 +57,16 @@ type Prefs struct {
 	// OpenProjectIn is ask, new or this (another project while one is
 	// open).
 	OpenProjectIn string
+	// SoftWrap is off, files or all; SoftWrapFiles are the name patterns
+	// of "files" (D285).
+	SoftWrap      string
+	SoftWrapFiles []string
+	// ShowWhitespace is none, selection, trailing or all (D286).
+	ShowWhitespace string
+	// RightMargin is the ruler column (effective value, project over
+	// global; 0 = none), ShowRightMargin whether it is drawn (D287).
+	RightMargin     int
+	ShowRightMargin bool
 }
 
 // Setting keys of the GUI: declared core settings (settings.schema) and
@@ -74,6 +84,11 @@ const (
 	KeyInsertSpaces   = "editor.insertSpaces"
 	KeyOpenProjectIn  = "projects.openIn"
 	KeyAutosaveIdle   = "autosave.idleSeconds"
+	KeySoftWrap       = "editor.softWrap"
+	KeySoftWrapFiles  = "editor.softWrapFiles"
+	KeyShowWhitespace = "editor.showWhitespace"
+	KeyRightMargin    = "editor.rightMargin"
+	KeyShowMargin     = "editor.showRightMargin"
 )
 
 // DefaultOpenTool is the tool window shown on the first start of a
@@ -352,6 +367,11 @@ func (c *Controller) loadPrefs(ctx context.Context) Prefs {
 	p.UIFontSize = getSetting[float32](ctx, c.be, KeyUIFontSize, "global", 0)
 	p.InsertSpaces = getSetting(ctx, c.be, KeyInsertSpaces, "global", true)
 	p.OpenProjectIn = getSetting(ctx, c.be, KeyOpenProjectIn, "global", "ask")
+	p.SoftWrap = getEffective(ctx, c.be, KeySoftWrap, "files")
+	p.SoftWrapFiles = getEffective(ctx, c.be, KeySoftWrapFiles, []string{"*.md", "*.txt", "*.rst", "*.adoc"})
+	p.ShowWhitespace = getEffective(ctx, c.be, KeyShowWhitespace, "none")
+	p.RightMargin = getEffective(ctx, c.be, KeyRightMargin, 120)
+	p.ShowRightMargin = getEffective(ctx, c.be, KeyShowMargin, true)
 	var cfg struct {
 		IdleSeconds *int `json:"idleSeconds"`
 	}
@@ -366,6 +386,21 @@ func (c *Controller) loadPrefs(ctx context.Context) Prefs {
 func getSetting[T any](ctx context.Context, be Backend, key, scope string, def T) T {
 	var v settingValue
 	if err := be.Call(ctx, "settings.get", map[string]string{"key": key, "scope": scope}, &v); err != nil || !v.Found {
+		return def
+	}
+	var out T
+	if err := json.Unmarshal(v.Value, &out); err != nil {
+		return def
+	}
+	return out
+}
+
+// getEffective reads the value of a setting that applies (project over
+// global over the declared default), returning def if it is missing or
+// invalid.
+func getEffective[T any](ctx context.Context, be Backend, key string, def T) T {
+	var v settingValue
+	if err := be.Call(ctx, "settings.get", map[string]any{"key": key, "effective": true}, &v); err != nil || !v.Found {
 		return def
 	}
 	var out T
@@ -518,9 +553,12 @@ func (c *Controller) projectOpened(info ProjectInfo) {
 	c.RecoveryShown = nil
 	c.setRecovery(nil)
 	c.loadRecovery()
+	prevMargin := c.Prefs.RightMargin
 	c.Go(func(ctx context.Context) func() {
 		rel := getSetting[[]string](ctx, c.be, KeyRecentFiles, "project", nil)
+		margin := getEffective(ctx, c.be, KeyRightMargin, prevMargin) // project value
 		return func() {
+			c.Prefs.RightMargin = margin
 			c.RecentFiles = c.RecentFiles[:0]
 			for _, r := range rel {
 				c.RecentFiles = append(c.RecentFiles, c.Abs(r))

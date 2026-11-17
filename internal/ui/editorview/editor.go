@@ -33,6 +33,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/editor/highlight"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 	"github.com/ape-dev-de/tiegel/internal/editor/search"
+	"github.com/ape-dev-de/tiegel/internal/editor/wrap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 )
 
@@ -72,11 +73,25 @@ type Editor struct {
 	// HideLineNumbers removes the line number column (e.g. when a
 	// GutterColumn shows its own numbers).
 	HideLineNumbers bool
+	// SoftWrap wraps lines at the right edge of the view instead of
+	// scrolling horizontally (D285). Caret movement Up/Down and Home/End
+	// then work on visual rows.
+	SoftWrap bool
+	// Whitespace selects which spaces and tabs are drawn as marks.
+	Whitespace WhitespaceMode
+	// RightMargin draws a vertical ruler after this visual column (0:
+	// none).
+	RightMargin int
 
 	buf   *buffer.Buffer
 	cur   *cursor.Model
 	folds *fold.Model
 	unsub func()
+
+	wrap     wrap.Model // row counts while SoftWrap is on
+	view     wrap.View  // wrap + folds
+	wrapped  bool       // the last Layout wrapped lines
+	wrapBrks []int      // scratch for visibleLines
 
 	markers MarkerProvider
 	annot   GutterColumn
@@ -133,6 +148,7 @@ func New(b *buffer.Buffer) *Editor {
 		folds:        fold.New(b.LineCount()),
 	}
 	e.cur.Lines = e.folds
+	e.view = wrap.View{Wrap: &e.wrap, Folds: e.folds}
 	e.cache.init()
 	e.ime.reset()
 	e.unsub = b.OnEdit(e.onEdit)
@@ -263,6 +279,7 @@ func (e *Editor) onEdit(ed buffer.Edit) {
 	if e.folds.LineCount() != e.buf.LineCount() {
 		e.folds.SetLineCount(e.buf.LineCount())
 	}
+	e.wrap.ApplyEdit(e.buf.Snapshot(), ed) // no-op unless wrapping
 	e.cache.applyEdit(ed)
 	e.shiftDecorations(ed)
 	for i := range e.diags {

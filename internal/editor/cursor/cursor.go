@@ -59,6 +59,20 @@ type LineMapper interface {
 	VisibleCount() int
 }
 
+// RowMapper maps document offsets to visual rows when lines are soft
+// wrapped (wrap.View implements it). Rows already exclude folded lines.
+type RowMapper interface {
+	// RowCount returns the number of visual rows.
+	RowCount() int
+	// RowOf returns the visual row of off and its visual column in it.
+	RowOf(s buffer.Snapshot, off int) (row, col int)
+	// OffsetAt returns the offset at visual column col of row row.
+	OffsetAt(s buffer.Snapshot, row, col int) int
+	// RowBounds returns the offsets [start, end) of the row containing
+	// off and whether it is the last row of its line.
+	RowBounds(s buffer.Snapshot, off int) (start, end int, last bool)
+}
+
 // Model holds the cursors of one buffer and implements editing commands.
 type Model struct {
 	buf     *buffer.Buffer
@@ -74,6 +88,10 @@ type Model struct {
 	PageLines int
 	// Lines optionally maps document lines to visible rows (folding).
 	Lines LineMapper
+	// Rows, if set, makes Up/Down/PageUp/PageDown move by visual row and
+	// Home/End work on the visual row first (soft wrap). It takes
+	// precedence over Lines for vertical movement.
+	Rows RowMapper
 	// AutoClose enables auto-closing of brackets and quotes in Type.
 	AutoClose bool
 }

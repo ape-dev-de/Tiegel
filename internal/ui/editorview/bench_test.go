@@ -207,3 +207,128 @@ func TestPerformance100k(t *testing.T) {
 		t.Fatal("document too small")
 	}
 }
+
+// bigWrapRig is bigRig with soft wrap on in a narrower view, on a
+// document where every eighth line is a long comment that wraps.
+func bigWrapRig(tb testing.TB) *rig {
+	lines := strings.Split(big100k, "\n")
+	long := "    // " + strings.Repeat("a long comment that wraps across several visual rows ", 4)
+	for i := 0; i < len(lines); i += 8 {
+		lines[i] = long
+	}
+	r := &rig{t: tb, h: uitest.NewHarness(image.Pt(900, 900)), e: New(buffer.NewString(strings.Join(lines, "\n")))}
+	tb.Cleanup(r.e.Close)
+	r.e.Keymap = keymap.Mac()
+	r.e.Highlighter = highlight.PHPDemo
+	r.e.SoftWrap = true
+	r.e.Whitespace = WhitespaceTrailing
+	r.e.RightMargin = 80
+	r.e.SetFoldRanges(highlight.BraceFolds(r.e.Buffer().Snapshot()))
+	r.frame()
+	r.focus()
+	r.e.SetCaret(r.e.Buffer().LineStart(50_001) + 4)
+	r.frame()
+	if !r.e.Wrapped() || r.e.wrap.Total() <= r.e.Buffer().LineCount() {
+		tb.Fatal("document does not wrap")
+	}
+	return r
+}
+
+// BenchmarkLayout100kWrap is BenchmarkLayout100k with soft wrap.
+func BenchmarkLayout100kWrap(b *testing.B) {
+	r := bigWrapRig(b)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r.frame()
+	}
+}
+
+// BenchmarkKeystroke100kWrap is BenchmarkKeystroke100k with soft wrap.
+func BenchmarkKeystroke100kWrap(b *testing.B) {
+	r := bigWrapRig(b)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if i%2 == 0 {
+			r.typeKey("x")
+		} else {
+			r.press("Backspace")
+		}
+	}
+}
+
+// BenchmarkEnter100kWrap types Enter and Backspace in a wrapped 100k-line
+// document (the line count changes).
+func BenchmarkEnter100kWrap(b *testing.B) {
+	r := bigWrapRig(b)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if i%2 == 0 {
+			r.press("Enter")
+		} else {
+			r.press("Backspace")
+		}
+	}
+}
+
+// BenchmarkScrollFrame100kWrap is BenchmarkScrollFrame100k with soft
+// wrap.
+func BenchmarkScrollFrame100kWrap(b *testing.B) {
+	r := bigWrapRig(b)
+	page := r.e.geo.size.Y
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r.e.SetScrollOffset(image.Pt(0, (i%2000)*page))
+		r.frame()
+	}
+}
+
+// BenchmarkResize100kWrap changes the view width every frame, so the
+// whole document is wrapped again.
+func BenchmarkResize100kWrap(b *testing.B) {
+	r := bigWrapRig(b)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r.h.Max = image.Pt(880+(i%2)*40, 900)
+		r.frame()
+	}
+}
+
+// TestPerformance100kWrap checks the frame budget with soft wrap on:
+// typing, Enter and a resize (full re-wrap) of a 100k-line file.
+func TestPerformance100kWrap(t *testing.T) {
+	if testing.Short() || raceEnabled {
+		t.Skip("timing test skipped (short mode or race detector)")
+	}
+	r := bigWrapRig(t)
+	var keyWorst, enterWorst, resizeWorst time.Duration
+	for i := 0; i < 40; i++ {
+		t0 := time.Now()
+		if i%2 == 0 {
+			r.typeKey("y")
+		} else {
+			r.press("Backspace")
+		}
+		keyWorst = max(keyWorst, time.Since(t0))
+		t0 = time.Now()
+		if i%2 == 0 {
+			r.press("Enter")
+		} else {
+			r.press("Backspace")
+		}
+		enterWorst = max(enterWorst, time.Since(t0))
+	}
+	for i := 0; i < 10; i++ {
+		r.h.Max = image.Pt(860+(i%2)*60, 900)
+		t0 := time.Now()
+		r.frame()
+		resizeWorst = max(resizeWorst, time.Since(t0))
+	}
+	t.Logf("wrap: worst keystroke→frame %v, Enter %v, resize %v", keyWorst, enterWorst, resizeWorst)
+	const budget = 16 * time.Millisecond
+	if keyWorst > budget || enterWorst > budget {
+		t.Errorf("frame budget of %v exceeded", budget)
+	}
+	if resizeWorst > 4*budget {
+		t.Errorf("re-wrap on resize took %v", resizeWorst)
+	}
+}

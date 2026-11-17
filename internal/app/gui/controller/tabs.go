@@ -44,6 +44,18 @@ type Indent struct {
 	// preference).
 	Size     int `json:"indentSize"`
 	TabWidth int `json:"tabWidth"`
+	// MaxLineLength is max_line_length (0: not set); it moves the right
+	// margin ruler (D287).
+	MaxLineLength int `json:"maxLineLength"`
+}
+
+// RightMarginFor returns the ruler column of t: .editorconfig
+// max_line_length, else pref.
+func (t *Tab) RightMarginFor(pref int) int {
+	if t.Indent != nil && t.Indent.MaxLineLength > 0 {
+		return t.Indent.MaxLineLength
+	}
+	return pref
 }
 
 // TabWidthFor returns the tab width of t: .editorconfig, else pref.

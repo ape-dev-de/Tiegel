@@ -71,6 +71,10 @@ type EditorPalette struct {
 	Selection        color.NRGBA
 	Text             color.NRGBA
 	Breakpoint       color.NRGBA
+	// Whitespace marks visible spaces and tabs; Ruler is the right
+	// margin line. Both stay subtle.
+	Whitespace color.NRGBA
+	Ruler      color.NRGBA
 	// Diff backgrounds and markers used by diff and merge views.
 	DiffAddedBg   color.NRGBA
 	DiffRemovedBg color.NRGBA
