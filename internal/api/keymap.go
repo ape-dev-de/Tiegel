@@ -47,6 +47,10 @@ type KeymapConflict struct {
 type KeymapState struct {
 	Preset   string          `json:"preset"`
 	Bindings []KeymapBinding `json:"bindings"`
+	// Invalid are stored override lines that cannot be parsed: they are
+	// ignored, but kept in the settings until the action is set or reset
+	// (D248).
+	Invalid []string `json:"invalid,omitempty"`
 }
 
 // KeymapListParams filter keymap.list.
@@ -101,11 +105,14 @@ func (a *App) registerKeymap() {
 	mustHandle(a, "keymap.conflicts", "Chords bound to two actions in overlapping contexts", a.keymapConflicts)
 }
 
-// keymapScheme resolves the stored settings. Broken stored values are
-// ignored (defaults), as the GUI does.
-func (a *App) keymapScheme() (*keymap.Scheme, keymap.Preset, keymap.Overrides) {
-	p, ov, _ := keymap.Load(a.global, a.opts.GOOS)
-	return keymap.NewScheme(p, ov), p, ov
+// keymapScheme resolves the stored settings. Broken stored lines are
+// skipped (the others apply), as the GUI does; they stay in State.Invalid.
+func (a *App) keymapScheme() (*keymap.Scheme, keymap.State) {
+	st, err := keymap.LoadState(a.global, a.opts.GOOS)
+	if err != nil {
+		a.log.Warn("keymap settings", "err", err)
+	}
+	return keymap.NewScheme(st.Preset, st.Overrides), st
 }
 
 func chordStrings(cs []keymap.Chord) []string {
@@ -129,8 +136,8 @@ func toConflicts(cs []keymap.Conflict) []KeymapConflict {
 	return out
 }
 
-func (a *App) keymapState(s *keymap.Scheme) KeymapState {
-	st := KeymapState{Preset: string(s.Preset()), Bindings: []KeymapBinding{}}
+func (a *App) keymapState(s *keymap.Scheme, ks keymap.State) KeymapState {
+	st := KeymapState{Preset: string(s.Preset()), Bindings: []KeymapBinding{}, Invalid: ks.Invalid}
 	for _, e := range s.Entries() {
 		st.Bindings = append(st.Bindings, toBinding(e))
 	}
@@ -149,9 +156,9 @@ func (a *App) keymapList(_ context.Context, p KeymapListParams) (KeymapState, er
 		}
 		chord = &c
 	}
-	s, _, _ := a.keymapScheme()
+	s, ks := a.keymapScheme()
 	q := strings.ToLower(p.Query)
-	st := KeymapState{Preset: string(s.Preset()), Bindings: []KeymapBinding{}}
+	st := KeymapState{Preset: string(s.Preset()), Bindings: []KeymapBinding{}, Invalid: ks.Invalid}
 	for _, e := range s.Entries() {
 		switch {
 		case p.Context != "" && string(e.Context) != p.Context,
@@ -166,12 +173,14 @@ func (a *App) keymapList(_ context.Context, p KeymapListParams) (KeymapState, er
 }
 
 func (a *App) keymapSet(_ context.Context, p KeymapSetParams) (KeymapSetResult, error) {
-	s, preset, ov := a.keymapScheme()
+	s, ks := a.keymapScheme()
 	if p.Preset != "" {
 		if !keymap.Preset(p.Preset).Valid() {
 			return KeymapSetResult{}, Errorf(CodeInvalidParams, "unknown preset %q (mac, pc)", p.Preset)
 		}
-		preset = keymap.Preset(p.Preset)
+		// An explicit choice is stored; otherwise the preset keeps
+		// following the OS (D248).
+		ks.Preset, ks.PresetSet = keymap.Preset(p.Preset), true
 	}
 	if p.Action == "" && p.Preset == "" {
 		return KeymapSetResult{}, Errorf(CodeInvalidParams, "action or preset is required")
@@ -183,7 +192,7 @@ func (a *App) keymapSet(_ context.Context, p KeymapSetParams) (KeymapSetResult, 
 		}
 		var cs []keymap.Chord
 		if p.Add {
-			if cur, ok := ov[id]; ok {
+			if cur, ok := ks.Overrides[id]; ok {
 				cs = cur
 			} else {
 				cs = s.Chords(id)
@@ -198,60 +207,53 @@ func (a *App) keymapSet(_ context.Context, p KeymapSetParams) (KeymapSetResult, 
 				cs = append(cs, c)
 			}
 		}
-		ov = ov.Clone()
-		ov[id] = cs
+		ks.Drop(id) // also replaces an unparseable stored line of id
+		ks.Overrides = ks.Overrides.Clone()
+		ks.Overrides[id] = cs
 	}
-	if err := keymap.Store(a.global, preset, ov); err != nil {
+	if err := keymap.SaveState(a.global, ks); err != nil {
 		return KeymapSetResult{}, Errorf(CodeFailed, "%w", err)
 	}
-	ns := keymap.NewScheme(preset, ov)
-	res := KeymapSetResult{Preset: string(preset), Conflicts: []KeymapConflict{}}
+	ns := keymap.NewScheme(ks.Preset, ks.Overrides)
+	res := KeymapSetResult{Preset: string(ks.Preset), Conflicts: []KeymapConflict{}}
 	if p.Action != "" {
 		e, _ := ns.Entry(id)
 		b := toBinding(e)
 		res.Binding = &b
 		res.Conflicts = toConflicts(ns.ConflictsOf(id))
 	}
-	a.bus.Publish(TopicKeymapChanged, a.keymapState(ns))
+	a.bus.Publish(TopicKeymapChanged, a.keymapState(ns, ks))
 	return res, nil
 }
 
 func (a *App) keymapReset(_ context.Context, p KeymapResetParams) (KeymapResetResult, error) {
-	s, preset, ov := a.keymapScheme()
+	s, ks := a.keymapScheme()
 	res := KeymapResetResult{Reset: []string{}}
 	if p.Action != "" {
 		id := keymap.Action(p.Action)
 		if !s.Has(id) {
 			return KeymapResetResult{}, Errorf(CodeNotFound, "unknown action %q (see keymap.list)", p.Action)
 		}
-		if _, ok := ov[id]; ok {
-			ov = ov.Clone()
-			delete(ov, id)
+		if _, ok := ks.Overrides[id]; ok {
 			res.Reset = append(res.Reset, p.Action)
 		}
-		if a.global.Has(keymap.SettingPreset) {
-			// Keep an explicitly chosen preset.
-			if err := keymap.Store(a.global, preset, ov); err != nil {
-				return KeymapResetResult{}, Errorf(CodeFailed, "%w", err)
-			}
-		} else if err := keymap.Store(a.global, "", ov); err != nil {
-			return KeymapResetResult{}, Errorf(CodeFailed, "%w", err)
-		}
+		ks.Drop(id) // an explicitly chosen preset is kept
 	} else {
-		for _, id := range slices.Sorted(maps.Keys(ov)) {
+		for _, id := range slices.Sorted(maps.Keys(ks.Overrides)) {
 			res.Reset = append(res.Reset, string(id))
 		}
-		if err := keymap.Store(a.global, "", nil); err != nil {
-			return KeymapResetResult{}, Errorf(CodeFailed, "%w", err)
-		}
+		ks = keymap.State{}
 	}
-	ns, _, _ := a.keymapScheme()
+	if err := keymap.SaveState(a.global, ks); err != nil {
+		return KeymapResetResult{}, Errorf(CodeFailed, "%w", err)
+	}
+	ns, nks := a.keymapScheme()
 	res.Preset = string(ns.Preset())
-	a.bus.Publish(TopicKeymapChanged, a.keymapState(ns))
+	a.bus.Publish(TopicKeymapChanged, a.keymapState(ns, nks))
 	return res, nil
 }
 
 func (a *App) keymapConflicts(context.Context, struct{}) ([]KeymapConflict, error) {
-	s, _, _ := a.keymapScheme()
+	s, _ := a.keymapScheme()
 	return toConflicts(s.Conflicts()), nil
 }

@@ -67,7 +67,7 @@ func TestHelpers(t *testing.T) {
 		v    any
 		want string
 	}{
-		{KindList, []any{"a", "b"}, "a, b"}, {KindList, []string{"x"}, "x"}, {KindInt, 4.0, "4"}, {KindInt, 3, "3"},
+		{KindList, []any{"a", "b"}, "a\nb"}, {KindList, []string{"x"}, "x"}, {KindInt, 4.0, "4"}, {KindInt, 3, "3"},
 		{KindFloat, 1.4, "1.4"}, {KindFloat, 13.0, "13"}, {KindBool, true, "true"}, {KindString, nil, ""}, {KindString, "s", "s"},
 	}
 	for _, c := range cases {
@@ -90,7 +90,7 @@ func TestHelpers(t *testing.T) {
 	if _, err := ParseValue(Field{Kind: KindFloat}, "x"); err == nil {
 		t.Fatal("float")
 	}
-	if v, _ := ParseValue(Field{Kind: KindList}, "a, ,b"); !reflect.DeepEqual(v, []string{"a", "b"}) {
+	if v, _ := ParseValue(Field{Kind: KindList}, "a\r\n  \n b \n"); !reflect.DeepEqual(v, []string{"a", "b"}) {
 		t.Fatalf("list %v", v)
 	}
 	if v, _ := ParseValue(Field{Kind: KindBool}, "true"); v != true {
@@ -98,6 +98,30 @@ func TestHelpers(t *testing.T) {
 	}
 	if v, _ := ParseValue(Field{Kind: KindPath}, " /x "); v != "/x" {
 		t.Fatal("path")
+	}
+}
+
+// TestListValueRoundTrip checks that list entries containing commas
+// survive FormatValue → ParseValue (keymap chords, brace globs, args).
+func TestListValueRoundTrip(t *testing.T) {
+	for _, list := range [][]string{
+		{"editor.settings=Cmd+,", "editor.save=Ctrl+S"},
+		{"*.{tpl,phtml}=php", "*.inc=php"},
+		{"**/{vendor,node_modules}/**"},
+		{"-d", "memory_limit=1G,2G", "--filter=a,b"},
+		{},
+	} {
+		got, err := ParseValue(Field{Kind: KindList}, FormatValue(KindList, list))
+		if err != nil || !reflect.DeepEqual(got, list) {
+			t.Errorf("%q: got %q, %v", list, got, err)
+		}
+		anyList := make([]any, len(list))
+		for i, e := range list {
+			anyList[i] = e
+		}
+		if got, _ := ParseValue(Field{Kind: KindList}, FormatValue(KindList, anyList)); !reflect.DeepEqual(got, list) {
+			t.Errorf("[]any %q: got %q", list, got)
+		}
 	}
 }
 

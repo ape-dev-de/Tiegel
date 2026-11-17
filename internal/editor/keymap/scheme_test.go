@@ -222,3 +222,40 @@ func TestContextAndPreset(t *testing.T) {
 		t.Fatal("PresetFor")
 	}
 }
+
+// TestUserBindingShadowsEarlierDefault checks that a user binding wins over
+// a default binding of the same chord in the same context, even when the
+// default's action comes first in the catalog (D247).
+func TestUserBindingShadowsEarlierDefault(t *testing.T) {
+	back := MustParse("Cmd+[") // default of NavBack (global, early in the catalog)
+	ov := Overrides{"plugin.late": {back}}
+	s := NewScheme(PresetMac, ov, Def{ID: "plugin.late", Title: "Late", Context: CtxGlobal, Mac: []string{"Cmd+Alt+J"}})
+	if a, ok := s.Lookup(CtxGlobal, back); !ok || a != "plugin.late" {
+		t.Fatalf("Lookup = %s, %v", a, ok)
+	}
+	if a, ok := s.Keymap(CtxGlobal, nil).Lookup(back); !ok || a != "plugin.late" {
+		t.Fatalf("Keymap = %s, %v", a, ok)
+	}
+	if !s.IsUser("plugin.late") || s.IsUser(NavBack) || s.IsUser("nope") {
+		t.Error("IsUser")
+	}
+	found := false
+	for _, c := range s.ConflictsOf("plugin.late") {
+		found = found || (c.Chord == back && (c.A == NavBack || c.B == NavBack))
+	}
+	if !found {
+		t.Errorf("conflict not reported: %+v", s.ConflictsOf("plugin.late"))
+	}
+	// Editor context: a user binding of a later editor action wins too.
+	ed := Overrides{"plugin.edit": {MustParse("Cmd+D")}}
+	s = NewScheme(PresetMac, ed, Def{ID: "plugin.edit", Title: "Edit", Context: CtxEditor})
+	if a, _ := NewScheme(PresetMac, nil).Lookup(CtxEditor, MustParse("Cmd+D")); a == "" {
+		t.Skip("Cmd+D has no editor default in the mac preset")
+	}
+	if a, _ := s.Lookup(CtxEditor, MustParse("Cmd+D")); a != "plugin.edit" {
+		t.Errorf("editor Lookup = %s", a)
+	}
+	if a, _ := s.Keymap(CtxEditor, nil).Lookup(MustParse("Cmd+D")); a != "plugin.edit" {
+		t.Errorf("editor Keymap = %s", a)
+	}
+}

@@ -103,7 +103,7 @@ func runSettingsSchema(c *cli) error {
 		}
 		_ = tw.Flush()
 		if len(s.Problems) > 0 {
-			fmt.Fprintf(w, "rejected declarations:\n  %s\n", strings.Join(s.Problems, "\n  "))
+			fmt.Fprintf(w, "problems:\n  %s\n", strings.Join(s.Problems, "\n  "))
 		}
 	})
 }

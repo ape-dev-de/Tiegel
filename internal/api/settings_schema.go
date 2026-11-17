@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 )
@@ -79,10 +81,16 @@ func (a *App) lookupSpec(key string) (settings.Spec, string, bool) {
 // Setting returns the effective value of a declared (or undeclared) key
 // decoded as T: project over global over the spec default, def if none
 // applies or the value cannot be decoded. Modules use it to read their
-// declared settings.
+// declared settings. A stored value that fails the spec is ignored; it is
+// logged (once per value) and listed in settings.schema (Invalid and
+// Problems), so it is never ignored silently (D249).
 func Setting[T any](a *App, key string, def T) T {
 	spec, _, _ := a.lookupSpec(key)
-	raw, _ := settings.Effective(spec, key, a.global, a.ProjectSettings())
+	project := a.ProjectSettings()
+	if spec.Kind != "" {
+		a.warnInvalidSetting(spec, project)
+	}
+	raw, _ := settings.Effective(spec, key, a.global, project)
 	if raw == nil {
 		return def
 	}
@@ -93,14 +101,45 @@ func Setting[T any](a *App, key string, def T) T {
 	return v
 }
 
+// warnedSettings remembers the invalid stored values already logged
+// (key, scope and raw value), so each is logged once.
+var warnedSettings sync.Map
+
+// warnInvalidSetting logs stored values of spec that fail its check.
+func (a *App) warnInvalidSetting(spec settings.Spec, project *settings.Store) {
+	for _, sc := range []struct {
+		name string
+		st   *settings.Store
+	}{{"global", a.global}, {"project", project}} {
+		if sc.st == nil {
+			continue
+		}
+		raw, ok := sc.st.Raw(spec.Key)
+		if !ok {
+			continue
+		}
+		if err := checkRaw(spec, raw); err != nil {
+			if _, seen := warnedSettings.LoadOrStore(spec.Key+"\x00"+sc.name+"\x00"+string(raw), true); !seen {
+				a.log.Warn("stored setting ignored", "key", spec.Key, "scope", sc.name, "value", string(raw), "err", err)
+			}
+		}
+	}
+}
+
+// checkRaw checks a stored JSON value against spec.
+func checkRaw(spec settings.Spec, raw json.RawMessage) error {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return err
+	}
+	return spec.Check(v)
+}
+
 func (a *App) settingInfo(spec settings.Spec, project *settings.Store) SettingInfo {
 	si := SettingInfo{Spec: spec}
 	check := func(raw json.RawMessage) {
-		var v any
-		if err := json.Unmarshal(raw, &v); err == nil {
-			if err := spec.Check(v); err != nil && si.Invalid == "" {
-				si.Invalid = err.Error()
-			}
+		if err := checkRaw(spec, raw); err != nil && si.Invalid == "" {
+			si.Invalid = err.Error()
 		}
 	}
 	if raw, ok := a.global.Raw(spec.Key); ok {
@@ -178,6 +217,20 @@ func (a *App) settingsSchema(_ context.Context, p SchemaParams) (SettingsSchema,
 	for _, err := range a.modules.SpecErrors() {
 		res.Problems = append(res.Problems, err.Error())
 	}
+	// Stored values that fail their spec are ignored: list them.
+	invalid := func(si SettingInfo) {
+		if si.Invalid != "" {
+			res.Problems = append(res.Problems, fmt.Sprintf("%s: stored value ignored (default or other scope applies): %s", si.Key, si.Invalid))
+		}
+	}
+	for _, si := range res.Core {
+		invalid(si)
+	}
+	for _, m := range res.Modules {
+		for _, si := range m.Settings {
+			invalid(si)
+		}
+	}
 	return res, nil
 }
 
@@ -192,6 +245,13 @@ func (a *App) validateSetting(key, scope string, value json.RawMessage) error {
 			}
 		}
 		return Errorf(CodeInvalidParams, "settings.set: %q is not a declared setting (see settings.schema) and not in a client namespace (%s*)", key, strings.Join(clientSettingPrefixes, "*, "))
+	}
+	if spec.ReadOnly {
+		hint := spec.ReadOnlyHint
+		if hint == "" {
+			hint = "it is changed through its plugin's own method"
+		}
+		return Errorf(CodeInvalidParams, "settings.set: %s is read-only here: %s", key, hint)
 	}
 	if scope == string(settings.ScopeProject) && spec.Scope == settings.ScopeGlobal {
 		return Errorf(CodeInvalidParams, "settings.set: %s is a global setting (no project value)", key)

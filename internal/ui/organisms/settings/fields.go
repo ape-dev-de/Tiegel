@@ -1,6 +1,8 @@
 package settings
 
 import (
+	"strings"
+
 	"gioui.org/layout"
 	"gioui.org/widget"
 
@@ -11,8 +13,9 @@ import (
 
 // fieldState is the widget state of one setting, generated from its kind:
 // bool → checkbox, enum (or a string with Choices) → dropdown, int, float,
-// string, list → text field (committed on Enter or focus loss), path →
-// text field with a chooser button.
+// string → text field (committed on Enter or focus loss), list →
+// multi-line text field with one entry per line (committed on focus loss),
+// path → text field with a chooser button.
 type fieldState struct {
 	check  atoms.Checkbox
 	sel    *molecules.Dropdown
@@ -43,6 +46,11 @@ func (p *Panel) field(f Field) *fieldState {
 		if st.text == nil {
 			st.text = atoms.NewTextField(placeholder(f))
 			st.text.Mono = f.Kind == KindPath || f.Kind == KindList
+			if f.Kind == KindList {
+				// Enter starts a new entry; the value is committed when
+				// the field loses focus.
+				st.text.Editor.SingleLine, st.text.Editor.Submit = false, false
+			}
 		}
 	}
 	return st
@@ -51,7 +59,7 @@ func (p *Panel) field(f Field) *fieldState {
 func placeholder(f Field) string {
 	switch f.Kind {
 	case KindList:
-		return "comma-separated"
+		return "one entry per line"
 	case KindPath:
 		return "path"
 	}
@@ -116,6 +124,9 @@ func storedIn(f Field, scope string) bool {
 func (st *fieldState) update(gtx layout.Context, p *Panel, f Field) []Event {
 	scope := p.editScope(f)
 	var out []Event
+	if f.ReadOnly {
+		return nil
+	}
 	if st.reset.Clicked(gtx) && storedIn(f, scope) {
 		out = append(out, ResetEvent{Key: f.Key, Scope: scope})
 	}
@@ -185,11 +196,12 @@ func (p *Panel) fieldRow(th *tokens.Theme, f Field) layout.Widget {
 							}
 							st.check.Label = f.Label
 							st.check.State = checkState(f.Value == true)
+							st.check.Disabled = f.ReadOnly
 							return layout.Inset{Right: th.Space.S}.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return st.check.Layout(gtx, th) })
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions { return sourceBadge(f).Layout(gtx, th) }),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							if !storedIn(f, scope) {
+							if !storedIn(f, scope) || f.ReadOnly {
 								return layout.Dimensions{}
 							}
 							return layout.Inset{Left: th.Space.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return st.reset.Layout(gtx, th) })
@@ -212,6 +224,9 @@ func (p *Panel) fieldRow(th *tokens.Theme, f Field) layout.Widget {
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					msg := f.Help
+					if f.ReadOnly && f.ReadOnlyHint != "" {
+						msg = strings.TrimSpace(msg + " Read-only here: " + f.ReadOnlyHint + ".")
+					}
 					switch {
 					case st.err != "":
 						msg = st.err
@@ -236,7 +251,11 @@ func (p *Panel) fieldRow(th *tokens.Theme, f Field) layout.Widget {
 func (p *Panel) input(gtx layout.Context, th *tokens.Theme, st *fieldState, f Field) layout.Dimensions {
 	gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(360))
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	if st.text != nil {
+		st.text.Disabled = f.ReadOnly
+	}
 	if st.sel != nil {
+		st.sel.Disabled = f.ReadOnly
 		st.sel.Selected = indexOf(st.values, FormatValue(f.Kind, f.Value))
 		return st.sel.Layout(gtx, th)
 	}

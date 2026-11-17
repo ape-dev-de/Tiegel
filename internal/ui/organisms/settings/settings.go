@@ -77,6 +77,10 @@ type Field struct {
 	// installed fonts); ChoiceDefault labels the empty value.
 	Choices       []string
 	ChoiceDefault string
+	// ReadOnly shows the value without an input to change it (no reset
+	// either); ReadOnlyHint tells where it is changed.
+	ReadOnly     bool
+	ReadOnlyHint string
 }
 
 // Module describes the plugin of a plugin page.
@@ -283,7 +287,10 @@ func Results(pages []Page, query string) []Page {
 	return out
 }
 
-// FormatValue renders a value of kind for a text field or label.
+// FormatValue renders a value of kind for a text field or label. Lists
+// have one entry per line: entries may contain commas (keymap chords like
+// "Cmd+,", globs like "*.{tpl,phtml}"), so no separator character inside
+// a line is safe (D246).
 func FormatValue(kind string, v any) string {
 	switch kind {
 	case KindList:
@@ -296,7 +303,7 @@ func FormatValue(kind string, v any) string {
 				parts = append(parts, fmt.Sprint(e))
 			}
 		}
-		return strings.Join(parts, ", ")
+		return strings.Join(parts, "\n")
 	case KindInt, KindFloat:
 		switch n := v.(type) {
 		case float64:
@@ -344,8 +351,9 @@ func ParseValue(f Field, text string) (any, error) {
 		}
 		return n, bound(n)
 	case KindList:
+		// One entry per line (see FormatValue); blank lines are dropped.
 		out := []string{}
-		for _, part := range strings.Split(text, ",") {
+		for _, part := range strings.Split(text, "\n") {
 			if s := strings.TrimSpace(part); s != "" {
 				out = append(out, s)
 			}

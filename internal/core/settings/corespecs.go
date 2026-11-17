@@ -5,6 +5,8 @@ package settings
 // headless CLI are generated from these specs. Tool-specific settings never
 // belong here – they are declared by their module (D190).
 
+import "math"
+
 // Core setting keys.
 const (
 	KeyTheme             = "ui.theme"
@@ -69,7 +71,9 @@ var kernelSpecs = []Spec{
 	{Key: KeyWatchExclude, Kind: KindList, Default: []string{"node_modules"}, Scope: ScopeProject,
 		Label: "Excluded from file watching", Help: "Directory names or project-relative paths the file watcher skips entirely.", Group: PageFiles},
 
-	{Key: KeyAutosaveIdle, Kind: KindInt, Default: 0, Min: IntPtr(0), Max: IntPtr(3600), Scope: ScopeGlobal,
+	// No practical maximum: values above an hour were accepted before the
+	// spec existed (D249); MaxInt32 only keeps the duration from overflowing.
+	{Key: KeyAutosaveIdle, Kind: KindInt, Default: 0, Min: IntPtr(0), Max: IntPtr(math.MaxInt32), Scope: ScopeGlobal,
 		Label: "Save after idle seconds", Help: "Also save modified files after this many seconds without typing (0 = only on focus loss, run, debug and commit).", Group: PageAutosave},
 
 	{Key: KeyOpenProjectIn, Kind: KindEnum, Default: OpenProjectAsk, Options: []string{OpenProjectAsk, OpenProjectNew, OpenProjectThis}, Scope: ScopeGlobal,
