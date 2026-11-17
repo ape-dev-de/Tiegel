@@ -57,6 +57,20 @@ func (a *App) editorConfig(abs string) (editorconfig.Props, bool) {
 	return p, !p.Empty()
 }
 
+// trimOnSave reports whether trim_trailing_whitespace applies to a save
+// with trigger t. Automatic saves while the user may still be typing
+// (focus lost, idle, before run/debug) keep trailing whitespace: the
+// backend does not know the carets, and trimming would eat the blank just
+// typed before the caret (D245). Explicit saves, saves before a commit and
+// on close trim.
+func trimOnSave(t autosave.Trigger) bool {
+	switch t {
+	case autosave.TriggerFocusLost, autosave.TriggerIdle, autosave.TriggerBeforeRun, autosave.TriggerBeforeDebug:
+		return false
+	}
+	return true
+}
+
 // within reports whether path is root or below it.
 func within(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
@@ -68,6 +82,9 @@ func within(root, path string) bool {
 func (a *App) registerFileConfig() {
 	autosave.BeforeSave.On(a.hooks, editorConfigPriority, func(_ context.Context, ev autosave.SaveEvent) (autosave.SaveEvent, error) {
 		if p, ok := a.editorConfig(ev.Path); ok {
+			if !trimOnSave(ev.Trigger) {
+				p.TrimTrailingWhitespace = nil
+			}
 			ev.Content = p.Apply(ev.Content)
 		}
 		return ev, nil

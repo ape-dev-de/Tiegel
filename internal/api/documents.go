@@ -11,12 +11,14 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/ape-dev-de/tiegel/internal/core/autosave"
 	"github.com/ape-dev-de/tiegel/internal/core/editorconfig"
 	"github.com/ape-dev-de/tiegel/internal/core/history"
 	"github.com/ape-dev-de/tiegel/internal/core/langdetect"
 	"github.com/ape-dev-de/tiegel/internal/editor/buffer"
+	"github.com/ape-dev-de/tiegel/internal/gitcli"
 )
 
 // Doc is an open document: the editor buffer shared by every client of the
@@ -718,14 +720,75 @@ func (s docSet) Save(_ context.Context, doc autosave.Doc) error {
 		return nil // changed while saving: stays modified
 	}
 	if !bytes.Equal(d.buf.Bytes(), doc.Content) {
-		// A file.beforeSave filter changed the content (e.g. a formatter).
-		d.buf.BreakUndo()
-		if _, err := d.buf.Replace(0, d.buf.Len(), doc.Content); err != nil {
+		// A file.beforeSave filter changed the content (e.g. a formatter
+		// or .editorconfig): apply only the differences, so carets, folds
+		// and LSP changes outside them stay put (D245).
+		if err := applyFiltered(d.buf, doc.Content); err != nil {
 			return fmt.Errorf("updating buffer after filter: %w", err)
 		}
 	}
 	d.buf.MarkSaved()
 	return nil
+}
+
+// applyFiltered changes the buffer content to data as one undo step made
+// of minimal edits: one per differing line region (line diff), narrowed to
+// the differing bytes within it. Edits are applied back to front so
+// earlier offsets stay valid.
+func applyFiltered(b *buffer.Buffer, data []byte) error {
+	cur := b.Bytes()
+	if bytes.Equal(cur, data) {
+		return nil
+	}
+	oldLines, newLines := gitcli.SplitLines(cur), gitcli.SplitLines(data)
+	oldOff, newOff := lineOffsets(oldLines), lineOffsets(newLines)
+	changes := gitcli.DiffLines(oldLines, newLines)
+	b.BreakUndo()
+	b.BeginGroup(buffer.GroupOther, nil)
+	defer func() {
+		b.EndGroup(nil)
+		b.BreakUndo()
+	}()
+	for i := len(changes) - 1; i >= 0; i-- {
+		c := changes[i]
+		start := oldOff[c.OldStart]
+		o := cur[start:oldOff[c.OldEnd]]
+		n := data[newOff[c.NewStart]:newOff[c.NewEnd]]
+		p, s := commonAffixes(o, n)
+		if _, err := b.Replace(start+p, len(o)-p-s, n[p:len(n)-s]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// lineOffsets returns the start offset of every line plus the total
+// length.
+func lineOffsets(lines []string) []int {
+	off := make([]int, len(lines)+1)
+	for i, l := range lines {
+		off[i+1] = off[i] + len(l)
+	}
+	return off
+}
+
+// commonAffixes returns the lengths of the common prefix and suffix of a
+// and b (not overlapping), keeping UTF-8 characters and CRLF pairs whole.
+func commonAffixes(a, b []byte) (p, s int) {
+	n := min(len(a), len(b))
+	for p < n && a[p] == b[p] {
+		p++
+	}
+	for s < n-p && a[len(a)-1-s] == b[len(b)-1-s] {
+		s++
+	}
+	for p > 0 && (p < len(a) && !utf8.RuneStart(a[p]) || a[p-1] == '\r') {
+		p--
+	}
+	for s > 0 && (!utf8.RuneStart(a[len(a)-s]) || a[len(a)-s] == '\n' && len(a)-s > 0 && a[len(a)-s-1] == '\r') {
+		s--
+	}
+	return p, s
 }
 
 // reload replaces the content of an open document with its file (also
