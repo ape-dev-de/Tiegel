@@ -77,6 +77,10 @@ type Field struct {
 	// installed fonts); ChoiceDefault labels the empty value.
 	Choices       []string
 	ChoiceDefault string
+	// ReadOnly shows the value without an input to change it (no reset
+	// either); ReadOnlyHint tells where it is changed.
+	ReadOnly     bool
+	ReadOnlyHint string
 }
 
 // Module describes the plugin of a plugin page.

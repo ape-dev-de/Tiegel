@@ -48,6 +48,13 @@ type Spec struct {
 	// Min and Max bound a KindInt or KindFloat setting when non-nil.
 	Min *int `json:"min,omitempty"`
 	Max *int `json:"max,omitempty"`
+	// ReadOnly marks a setting that is shown but written only through a
+	// dedicated method of its owner (e.g. one that also fires events):
+	// the dialog shows it disabled and settings.set rejects it (D249).
+	ReadOnly bool `json:"readOnly,omitempty"`
+	// ReadOnlyHint names the way to change a ReadOnly setting (e.g.
+	// "use interpreter.select"); it is part of the settings.set error.
+	ReadOnlyHint string `json:"readOnlyHint,omitempty"`
 }
 
 // Validate checks the declaration itself (not a value).

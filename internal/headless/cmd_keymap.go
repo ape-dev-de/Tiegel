@@ -46,6 +46,9 @@ func runKeymap(c *cli) error {
 				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", b.Action, b.Context, strings.Join(b.Chords, ", "), src, b.Title)
 			}
+			for _, l := range st.Invalid {
+				fmt.Fprintf(tw, "# ignored (unparseable, kept): %s\n", l)
+			}
 			_ = tw.Flush()
 		})
 	case "set", "add":

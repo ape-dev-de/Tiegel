@@ -24,6 +24,10 @@ type SettingSpec struct {
 	Value   json.RawMessage `json:"value,omitempty"`
 	Source  string          `json:"source"`
 	Invalid string          `json:"invalid,omitempty"`
+	// ReadOnly settings are shown but not editable (ReadOnlyHint says
+	// how to change them).
+	ReadOnly     bool   `json:"readOnly,omitempty"`
+	ReadOnlyHint string `json:"readOnlyHint,omitempty"`
 }
 
 // ModuleSettings are the settings of one plugin.

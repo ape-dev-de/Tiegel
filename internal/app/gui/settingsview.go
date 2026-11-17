@@ -57,6 +57,7 @@ func settingsField(sp controller.SettingSpec) settingsui.Field {
 		Key: sp.Key, Kind: sp.Kind, Label: sp.Label, Help: sp.Help, Options: sp.Options, Min: sp.Min, Max: sp.Max,
 		ProjectScope: sp.Scope == "project", Source: sp.Source, Invalid: sp.Invalid,
 		HasGlobal: len(sp.Global) > 0, HasProject: len(sp.Project) > 0,
+		ReadOnly: sp.ReadOnly, ReadOnlyHint: sp.ReadOnlyHint,
 	}
 	if len(sp.Value) > 0 {
 		_ = json.Unmarshal(sp.Value, &f.Value)
