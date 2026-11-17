@@ -201,8 +201,7 @@ func (e *Editor) clampScroll() {
 // scrollToCaret scrolls minimally so the primary caret is visible.
 func (e *Editor) scrollToCaret() {
 	s := e.buf.Snapshot()
-	head := e.cur.Primary().Head
-	row, col := e.rowCol(s, head)
+	row, col := e.caretRowCol(s, e.cur.Primary())
 	lineH := e.geo.lineH
 	y := row * lineH
 	viewH := e.geo.size.Y
@@ -628,7 +627,7 @@ func (e *Editor) paintCarets(gtx layout.Context, th *tokens.Theme, vis []visLine
 		if sel.Head < lo || sel.Head > hi {
 			continue
 		}
-		i := visIndex(vis, sel.Head)
+		i := visIndex(vis, sel.Head, sel.RowEnd)
 		if i < 0 {
 			continue
 		}
@@ -830,6 +829,13 @@ func (e *Editor) registerInput(gtx layout.Context) {
 // passed to the last Layout), e.g. to place completion and hover popups
 // below it. ok is false if the offset is folded away or not visible.
 func (e *Editor) AnchorRect(off int) (r image.Rectangle, ok bool) {
+	return e.caretRect(cursor.Caret(off))
+}
+
+// caretRect is AnchorRect for the head of sel, honouring its row-end
+// affinity (soft wrap).
+func (e *Editor) caretRect(sel cursor.Selection) (r image.Rectangle, ok bool) {
+	off := sel.Head
 	g := &e.geo
 	if !g.valid {
 		return image.Rectangle{}, false
@@ -839,7 +845,7 @@ func (e *Editor) AnchorRect(off int) (r image.Rectangle, ok bool) {
 	if e.folds.IsHidden(pos.Line) {
 		return image.Rectangle{}, false
 	}
-	row, col := e.rowCol(s, off)
+	row, col := e.caretRowCol(s, sel)
 	y := row*g.lineH - e.scroll.Y
 	x := g.textX - e.scroll.X + e.met.colX(col)
 	r = image.Rect(x, y, x+e.met.colX(1), y+g.lineH)

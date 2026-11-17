@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 )
@@ -198,39 +199,59 @@ func (a *App) keymapList(_ context.Context, p KeymapListParams) (KeymapState, er
 	return st, nil
 }
 
+// keymapMu serialises the read-modify-write of the keymap settings by
+// keymap.set and keymap.reset: API calls run concurrently (the GUI calls
+// them from goroutines) and would otherwise lose each other's changes.
+// It is package wide because several Apps may share one global store.
+var keymapMu sync.Mutex
+
 func (a *App) keymapSet(_ context.Context, p KeymapSetParams) (KeymapSetResult, error) {
+	keymapMu.Lock()
+	res, st, err := a.keymapSetLocked(p)
+	keymapMu.Unlock()
+	if err != nil {
+		return KeymapSetResult{}, err
+	}
+	// Published outside the lock: subscribers may call keymap.* again.
+	a.bus.Publish(TopicKeymapChanged, st)
+	return res, nil
+}
+
+// keymapSetLocked performs keymap.set with keymapMu held and returns the
+// result and the new state to publish.
+func (a *App) keymapSetLocked(p KeymapSetParams) (KeymapSetResult, KeymapState, error) {
 	s, ks := a.keymapScheme()
 	if p.Preset != "" {
 		if !keymap.Preset(p.Preset).Valid() {
-			return KeymapSetResult{}, Errorf(CodeInvalidParams, "unknown preset %q (mac, pc)", p.Preset)
+			return KeymapSetResult{}, KeymapState{}, Errorf(CodeInvalidParams, "unknown preset %q (mac, pc)", p.Preset)
 		}
 		// An explicit choice is stored; otherwise the preset keeps
 		// following the OS (D248).
 		ks.Preset, ks.PresetSet = keymap.Preset(p.Preset), true
 	}
 	if p.Action == "" && p.Preset == "" {
-		return KeymapSetResult{}, Errorf(CodeInvalidParams, "action or preset is required")
+		return KeymapSetResult{}, KeymapState{}, Errorf(CodeInvalidParams, "action or preset is required")
 	}
 	if p.Add && p.Remove {
-		return KeymapSetResult{}, Errorf(CodeInvalidParams, "add and remove exclude each other")
+		return KeymapSetResult{}, KeymapState{}, Errorf(CodeInvalidParams, "add and remove exclude each other")
 	}
 	id := keymap.Action(p.Action)
 	var removedFrom []string
 	if p.Action != "" {
 		if !s.Has(id) {
-			return KeymapSetResult{}, Errorf(CodeNotFound, "unknown action %q (see keymap.list)", p.Action)
+			return KeymapSetResult{}, KeymapState{}, Errorf(CodeNotFound, "unknown action %q (see keymap.list)", p.Action)
 		}
 		given := make([]keymap.Chord, 0, len(p.Chords))
 		for _, str := range p.Chords {
 			c, err := keymap.ParseChord(str)
 			if err != nil {
-				return KeymapSetResult{}, Errorf(CodeInvalidParams, "%w", err)
+				return KeymapSetResult{}, KeymapState{}, Errorf(CodeInvalidParams, "%w", err)
 			}
 			given = append(given, c)
 		}
 		cs, err := keymapChords(s, id, given, p.Add, p.Remove)
 		if err != nil {
-			return KeymapSetResult{}, err
+			return KeymapSetResult{}, KeymapState{}, err
 		}
 		ks.Drop(id) // also replaces an unparseable stored line of id
 		ks.Overrides = ks.Overrides.Clone()
@@ -244,7 +265,7 @@ func (a *App) keymapSet(_ context.Context, p KeymapSetParams) (KeymapSetResult, 
 		}
 	}
 	if err := keymap.SaveState(a.global, ks); err != nil {
-		return KeymapSetResult{}, Errorf(CodeFailed, "%w", err)
+		return KeymapSetResult{}, KeymapState{}, Errorf(CodeFailed, "%w", err)
 	}
 	ns := keymap.NewScheme(ks.Preset, ks.Overrides)
 	res := KeymapSetResult{Preset: string(ks.Preset), Conflicts: []KeymapConflict{}, RemovedFrom: removedFrom}
@@ -254,8 +275,7 @@ func (a *App) keymapSet(_ context.Context, p KeymapSetParams) (KeymapSetResult, 
 		res.Binding = &b
 		res.Conflicts = toConflicts(ns.ConflictsOf(id))
 	}
-	a.bus.Publish(TopicKeymapChanged, a.keymapState(ns, ks))
-	return res, nil
+	return res, a.keymapState(ns, ks), nil
 }
 
 // keymapChords returns the new chords of id: given (set), the current
@@ -317,20 +337,33 @@ func (a *App) keymapCheck(_ context.Context, p KeymapCheckParams) ([]KeymapConfl
 }
 
 func (a *App) keymapReset(_ context.Context, p KeymapResetParams) (KeymapResetResult, error) {
+	keymapMu.Lock()
+	res, st, err := a.keymapResetLocked(p)
+	keymapMu.Unlock()
+	if err != nil {
+		return KeymapResetResult{}, err
+	}
+	a.bus.Publish(TopicKeymapChanged, st)
+	return res, nil
+}
+
+// keymapResetLocked performs keymap.reset with keymapMu held and returns
+// the result and the new state to publish.
+func (a *App) keymapResetLocked(p KeymapResetParams) (KeymapResetResult, KeymapState, error) {
 	s, ks := a.keymapScheme()
 	res := KeymapResetResult{Reset: []string{}}
 	if p.Invalid != "" {
 		if p.Action != "" {
-			return KeymapResetResult{}, Errorf(CodeInvalidParams, "action and invalid exclude each other")
+			return KeymapResetResult{}, KeymapState{}, Errorf(CodeInvalidParams, "action and invalid exclude each other")
 		}
 		if !ks.DropInvalid(p.Invalid) {
-			return KeymapResetResult{}, Errorf(CodeNotFound, "no invalid stored line %q (see keymap.list)", p.Invalid)
+			return KeymapResetResult{}, KeymapState{}, Errorf(CodeNotFound, "no invalid stored line %q (see keymap.list)", p.Invalid)
 		}
 		res.Reset = append(res.Reset, p.Invalid)
 	} else if p.Action != "" {
 		id := keymap.Action(p.Action)
 		if !s.Has(id) {
-			return KeymapResetResult{}, Errorf(CodeNotFound, "unknown action %q (see keymap.list)", p.Action)
+			return KeymapResetResult{}, KeymapState{}, Errorf(CodeNotFound, "unknown action %q (see keymap.list)", p.Action)
 		}
 		if _, ok := ks.Overrides[id]; ok {
 			res.Reset = append(res.Reset, p.Action)
@@ -343,12 +376,11 @@ func (a *App) keymapReset(_ context.Context, p KeymapResetParams) (KeymapResetRe
 		ks = keymap.State{}
 	}
 	if err := keymap.SaveState(a.global, ks); err != nil {
-		return KeymapResetResult{}, Errorf(CodeFailed, "%w", err)
+		return KeymapResetResult{}, KeymapState{}, Errorf(CodeFailed, "%w", err)
 	}
 	ns, nks := a.keymapScheme()
 	res.Preset = string(ns.Preset())
-	a.bus.Publish(TopicKeymapChanged, a.keymapState(ns, nks))
-	return res, nil
+	return res, a.keymapState(ns, nks), nil
 }
 
 func (a *App) keymapConflicts(context.Context, struct{}) ([]KeymapConflict, error) {
