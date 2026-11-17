@@ -19,6 +19,7 @@ const (
 	KindLocal   Kind = "local"
 	KindCompose Kind = "compose"
 	KindWSL     Kind = "wsl"
+	KindDocker  Kind = "docker"
 )
 
 // Interpreter is one choice of the picker.
@@ -34,6 +35,12 @@ type Interpreter struct {
 	// (compose.Candidate); zero/empty for local interpreters.
 	Score   int
 	Reasons []string
+	// Context is the Docker context of compose and image interpreters
+	// (empty: docker's current context).
+	Context string
+	// State is the compose service state: running, stopped, missing or
+	// error; empty when unknown.
+	State string
 }
 
 // InterpreterPicker selects the PHP interpreter of a project: a dropdown of
@@ -43,6 +50,9 @@ type InterpreterPicker struct {
 	Items []Interpreter
 	// Selected is the ID of the selected interpreter.
 	Selected string
+	// Info is shown below the details when Info.ID equals Selected (the
+	// host fills it from interp.probe).
+	Info InterpreterInfoPanel
 
 	dd molecules.Dropdown
 }
@@ -80,21 +90,41 @@ func (p *InterpreterPicker) sync() {
 }
 
 func kindGlyph(k Kind) *atoms.Glyph {
-	if k == KindCompose {
+	if k == KindCompose || k == KindDocker {
 		return atoms.GlyphContainer
 	}
 	return atoms.GlyphComputer
 }
 
+// stateBadge returns the badge of a compose service state.
+func stateBadge(state string) atoms.Badge {
+	switch state {
+	case "running":
+		return atoms.Badge{Text: "running", Kind: atoms.BadgeSuccess}
+	case "error":
+		return atoms.Badge{Text: "docker unreachable", Kind: atoms.BadgeDanger}
+	}
+	return atoms.Badge{Text: state, Kind: atoms.BadgeWarning}
+}
+
+// contextText labels a Docker context.
+func contextText(ctx string) string {
+	if ctx == "" {
+		return "docker context: current"
+	}
+	return "docker context: " + ctx
+}
+
 // Update returns a SelectInterpreterEvent when the user picked another
-// interpreter.
+// interpreter and a ProbeRefreshEvent for the info panel's "Re-read".
 func (p *InterpreterPicker) Update(gtx layout.Context) []Event {
 	p.sync()
+	evs := p.Info.Update(gtx)
 	if i, ok := p.dd.Update(gtx); ok && i < len(p.Items) && p.Items[i].ID != p.Selected {
 		p.Selected = p.Items[i].ID
-		return []Event{SelectInterpreterEvent{ID: p.Selected}}
+		evs = append(evs, SelectInterpreterEvent{ID: p.Selected})
 	}
-	return nil
+	return evs
 }
 
 // Open opens or closes the dropdown menu.
@@ -115,6 +145,14 @@ func (p *InterpreterPicker) Layout(gtx layout.Context, th *tokens.Theme) layout.
 				return p.layoutDetails(gtx, th, p.Items[i], i == p.Best())
 			})
 		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if p.Info.ID == "" || p.Info.ID != p.Selected {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: th.Space.M, Left: th.Space.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return p.Info.Layout(gtx, th)
+			})
+		}),
 	)
 }
 
@@ -131,6 +169,10 @@ func (p *InterpreterPicker) layoutDetails(gtx layout.Context, th *tokens.Theme, 
 		badges = append(badges, layout.Rigid(layout.Spacer{Width: th.Space.XS}.Layout),
 			layout.Rigid(atoms.Badge{Text: "recommended", Kind: atoms.BadgeAccent}.Fn(th)))
 	}
+	if it.State != "" {
+		badges = append(badges, layout.Rigid(layout.Spacer{Width: th.Space.XS}.Layout),
+			layout.Rigid(stateBadge(it.State).Fn(th)))
+	}
 	if it.Detail != "" {
 		badges = append(badges, layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
 			layout.Flexed(1, atoms.Label{Text: it.Detail, Role: atoms.RoleCode, Color: th.Color.TextMuted, MaxLines: 1}.Fn(th)))
@@ -139,6 +181,17 @@ func (p *InterpreterPicker) layoutDetails(gtx layout.Context, th *tokens.Theme, 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx, badges...)
 		}),
+	}
+	if it.Kind == KindCompose || it.Kind == KindDocker {
+		rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: th.Space.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(atoms.Icon{Glyph: atoms.GlyphContainer, Size: th.Size.IconSmall, Color: th.Color.TextMuted}.Fn(th)),
+					layout.Rigid(layout.Spacer{Width: th.Space.XS}.Layout),
+					layout.Flexed(1, atoms.Small(contextText(it.Context)).SingleLine().Fn(th)),
+				)
+			})
+		}))
 	}
 	for _, r := range it.Reasons {
 		rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {

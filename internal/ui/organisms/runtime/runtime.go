@@ -1,6 +1,8 @@
 // Package runtime contains the PHP runtime organisms: InterpreterPicker
-// (local binaries and Docker Compose candidates), PathMappingEditor,
-// XdebugHintsList and the StatusbarVersion widget.
+// (local binaries, Docker Compose candidates and Docker images with their
+// context and service state), InterpreterInfoPanel (probe result with
+// "re-read"), PathMappingEditor, XdebugHintsList and the StatusbarVersion
+// widget.
 //
 // Like all organisms they only show data and report intentions: hosts set
 // the exported fields (see convert.go for converters from internal/interp
@@ -29,6 +31,10 @@ type MappingRemoveEvent struct{ Index int }
 // HintSelectEvent reports a click on a hint (e.g. to show its docs).
 type HintSelectEvent struct{ Code string }
 
+// ProbeRefreshEvent asks to re-read the interpreter info (interp.probe
+// with refresh) of the interpreter with ID.
+type ProbeRefreshEvent struct{ ID string }
+
 // OverrideEvent asks to open the PHP version/interpreter override (click
 // on the status bar widget).
 type OverrideEvent struct{}
@@ -39,6 +45,7 @@ func (MappingChangeEvent) isRuntimeEvent()     {}
 func (MappingRemoveEvent) isRuntimeEvent()     {}
 func (HintSelectEvent) isRuntimeEvent()        {}
 func (OverrideEvent) isRuntimeEvent()          {}
+func (ProbeRefreshEvent) isRuntimeEvent()      {}
 
 // unbounded is the threshold above which a constraint counts as unbounded.
 const unbounded = 1 << 20

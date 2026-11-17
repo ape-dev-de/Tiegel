@@ -1,13 +1,20 @@
 // Package phpruntime is the php-runtime module: PHP interpreters (local
-// binaries and Docker Compose services), version detection, host/container
-// path mappings and the Xdebug setup diagnosis.
+// binaries, Docker Compose services, Docker images, WSL), version
+// detection, the interpreter probe (version, extensions, Xdebug, ini
+// files), host/container path mappings and the Xdebug setup diagnosis.
 //
-// API: interp.list/select/version, compose.detect, php.version,
-// runtime.mappings.get/set, runtime.execMode, runtime.diagnose.
+// API: interp.list/select/version/probe/status/addImage/removeImage,
+// compose.detect, php.version, runtime.mappings.get/set, runtime.execMode,
+// runtime.diagnose.
 // Events: interpreter.changed (and interp.selected), runtime.mappingsChanged.
 // Hooks provided: php.resolveVersion and runtime.pathMappings filters, so
 // other modules (lang-php, php-features, debug-xdebug) get the version and
-// the mappings without calling this module.
+// the mappings without calling this module. Hooks used: docker.endpoint
+// (docker binary, context and PATH from the docker module; without it
+// "docker" from PATH and docker's current context are used).
+// Settings (D190, namespace php-runtime.*): see SettingSpecs; the keys
+// used before (php.interpreter, runtime.execMode, runtime.mappings) are
+// still read as fallback and replaced on the next write.
 package phpruntime
 
 import (
@@ -25,6 +32,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
+	dockercli "github.com/ape-dev-de/tiegel/internal/docker"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/phpver"
 )
@@ -34,13 +42,24 @@ const ID = "php-runtime"
 
 // Settings keys (project settings, global without a project).
 const (
+	// SettingInterpreter stores the selected interpreter ID.
+	SettingInterpreter = api.SettingInterpreter
 	// SettingMappings stores corrected path mappings ([]api.MappingInfo).
-	SettingMappings = "runtime.mappings"
+	SettingMappings = "php-runtime.mappings"
 	// SettingExecMode stores the compose exec mode ("auto", "exec", "run").
-	SettingExecMode = "runtime.execMode"
+	SettingExecMode = "php-runtime.execMode"
+	// SettingImages lists the Docker image interpreters ("IMAGE" or
+	// "IMAGE=REMOTE", remote default /app).
+	SettingImages = "php-runtime.dockerImages"
 	// SettingVersionOverride stores the PHP version override (set by
 	// php-features with php.setVersionOverride).
 	SettingVersionOverride = api.SettingPHPVersionOverride
+)
+
+// Keys used before the php-runtime namespace (D190); read as fallback.
+const (
+	legacyMappings = "runtime.mappings"
+	legacyExecMode = "runtime.execMode"
 )
 
 // TopicInterpSelected is the legacy event of interp.select (InterpreterInfo).
@@ -52,8 +71,9 @@ const hookTimeout = 60 * time.Second
 
 // Options configure the module.
 type Options struct {
-	// Docker is the docker binary for compose interpreters (tests use a
-	// fake script); empty means "docker" from PATH.
+	// Docker is the docker binary for compose and image interpreters
+	// (tests use a fake script); it wins over the docker.endpoint hook.
+	// Empty means the hook's binary, else "docker" from PATH.
 	Docker string
 }
 
@@ -64,6 +84,7 @@ type Module struct {
 	mu      sync.Mutex
 	app     *api.App
 	interps map[string]interp.Interpreter
+	probes  *probeCache
 }
 
 // New creates the module.
@@ -89,6 +110,7 @@ func (m *Module) Start(ctx module.Context) error {
 	m.mu.Lock()
 	m.app = app
 	m.interps = map[string]interp.Interpreter{}
+	m.probes = newProbeCache(app.ConfigDir())
 	m.mu.Unlock()
 
 	p := api.NewProvider(ctx)
@@ -101,6 +123,10 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "runtime.mappings.set", "Correct the path mappings (persisted; reset restores compose)", m.mappingsSet)
 	api.Add(p, "runtime.execMode", "Get or set how PHP runs in compose services (auto, exec, run)", m.execMode)
 	api.Add(p, "runtime.diagnose", "Interpreter, Xdebug ini values, mappings and setup hints", m.diagnose)
+	api.Add(p, "interp.probe", "Interpreter info: version, extensions, Xdebug, ini files (cached; refresh re-reads)", m.interpProbe)
+	api.Add(p, "interp.status", "Docker context and service state (running/stopped) of a compose or image interpreter", m.interpStatus)
+	api.Add(p, "interp.addImage", "Add a Docker image interpreter (docker run --rm -v project:remote)", m.addImage)
+	api.Add(p, "interp.removeImage", "Remove a Docker image interpreter", m.removeImage)
 	if err := p.Err(); err != nil {
 		return err
 	}
@@ -134,6 +160,14 @@ func (m *Module) Start(ctx module.Context) error {
 	}
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicProjectOpened, reset))
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicProjectClosed, reset))
+	// A new docker context/binary or changed php-runtime settings (e.g.
+	// from the settings dialog) invalidate the built interpreters.
+	ctx.OnStop(ctx.Bus().Subscribe(api.TopicDockerContextChanged, reset))
+	ctx.OnStop(settings.Changed.Subscribe(ctx.Bus(), func(ch settings.Change) {
+		if ch.Key == SettingExecMode || ch.Key == SettingImages {
+			reset(bus.Event{})
+		}
+	}))
 	return nil
 }
 
@@ -158,6 +192,15 @@ type InterpreterInfo struct {
 	Service  string `json:"service,omitempty"`
 	Score    int    `json:"score,omitempty"`
 	Selected bool   `json:"selected,omitempty"`
+	// Image and Remote describe a Docker image interpreter.
+	Image  string `json:"image,omitempty"`
+	Remote string `json:"remote,omitempty"`
+	// Context is the Docker context of compose and image interpreters
+	// ("" = docker's current context).
+	Context string `json:"context,omitempty"`
+	// State is the compose service state (running, stopped, missing) or
+	// "error"; only filled with interp.list status=true.
+	State string `json:"state,omitempty"`
 }
 
 // InterpListParams are the params of "interp.list".
@@ -165,6 +208,9 @@ type InterpListParams struct {
 	// Compose includes services of the project's compose file (default
 	// true; set false to skip loading compose files).
 	Compose *bool `json:"compose,omitempty"`
+	// Status asks the engine for the state of compose services
+	// (`docker compose ps`); off by default.
+	Status bool `json:"status,omitempty"`
 }
 
 // InterpSelectParams are the params of "interp.select".
@@ -202,10 +248,11 @@ func execModeOf(s string) (compose.ExecMode, error) {
 	return 0, fmt.Errorf("unknown exec mode %q (auto, exec, run)", s)
 }
 
-func (m *Module) composeInterpreter(proj *compose.Project, service string) *compose.Interpreter {
+func (m *Module) composeInterpreter(ctx context.Context, proj *compose.Project, service string) *compose.Interpreter {
 	ci := compose.NewInterpreter(proj, service)
-	ci.Docker = m.opts.Docker
-	ci.Mode, _ = execModeOf(settings.Get(m.store(), SettingExecMode, "auto"))
+	ep := m.dockerEndpoint(ctx)
+	ci.Docker, ci.Context, ci.Env = ep.Binary, ep.Context, ep.Env
+	ci.Mode, _ = execModeOf(m.execModeSetting())
 	return ci
 }
 
@@ -215,7 +262,7 @@ func (m *Module) loadCompose(ctx context.Context, dir string, profiles []string)
 }
 
 func (m *Module) interpList(ctx context.Context, p InterpListParams) ([]InterpreterInfo, error) {
-	selected := settings.Get(m.store(), api.SettingInterpreter, "")
+	selected := api.SelectedInterpreter(m.store())
 	found := make(map[string]interp.Interpreter)
 	out := []InterpreterInfo{}
 	for _, l := range interp.Discover(ctx, m.app.Options().Interp) {
@@ -234,16 +281,27 @@ func (m *Module) interpList(ctx context.Context, p InterpListParams) ([]Interpre
 	if root := m.app.ProjectRoot(); root != "" && (p.Compose == nil || *p.Compose) {
 		if proj, err := m.loadCompose(ctx, root, nil); err == nil {
 			for _, c := range compose.Detect(proj) {
-				ci := m.composeInterpreter(proj, c.Service)
+				ci := m.composeInterpreter(ctx, proj, c.Service)
 				found[ci.ID()] = ci
-				out = append(out, InterpreterInfo{ID: ci.ID(), Label: ci.Label(), Kind: string(ci.Kind()), Service: c.Service, Score: c.Score})
+				info := InterpreterInfo{ID: ci.ID(), Label: ci.Label(), Kind: string(ci.Kind()), Service: c.Service, Score: c.Score, Image: c.Image, Context: ci.Context}
+				if p.Status {
+					info.State = m.serviceState(ctx, ci)
+				}
+				out = append(out, info)
 			}
 		} else if !errors.Is(err, compose.ErrNoComposeFile) {
 			m.app.Logger().Warn("compose", "err", err)
 		}
 	}
+	for _, d := range m.imageInterpreters(ctx) {
+		found[d.ID()] = d
+		out = append(out, InterpreterInfo{ID: d.ID(), Label: d.Label(), Kind: string(d.Kind()), Image: d.Image, Remote: d.RemoteDir(), Context: d.Client.Context})
+	}
 	for i := range out {
 		out[i].Selected = out[i].ID == selected
+		if c, ok := m.cachedProbe(out[i].ID); ok && out[i].Version == "" {
+			out[i].Version = c.Info.Version
+		}
 	}
 	m.mu.Lock()
 	m.interps = found
@@ -266,6 +324,9 @@ func (m *Module) interpreter(ctx context.Context, id string) (interp.Interpreter
 		}
 		return interp.NewLocal(path), nil
 	}
+	if image, isDocker := strings.CutPrefix(id, dockercli.ImageIDPrefix); isDocker && image != "" {
+		return m.imageInterpreter(ctx, image, ""), nil
+	}
 	if rest, isWSL := strings.CutPrefix(id, "wsl:"); isWSL {
 		if distro, path, ok := strings.Cut(rest, ":"); ok && distro != "" && path != "" {
 			return interp.NewWSL(distro, path), nil
@@ -285,7 +346,7 @@ func (m *Module) interpreter(ctx context.Context, id string) (interp.Interpreter
 
 // selected returns the selected interpreter, or nil if none is selected.
 func (m *Module) selected(ctx context.Context) (interp.Interpreter, error) {
-	id := settings.Get(m.store(), api.SettingInterpreter, "")
+	id := api.SelectedInterpreter(m.store())
 	if id == "" {
 		return nil, nil
 	}
@@ -300,8 +361,8 @@ func (m *Module) interpSelect(ctx context.Context, p InterpSelectParams) (Interp
 	if err != nil {
 		return InterpreterInfo{}, err
 	}
-	prev := settings.Get(m.store(), api.SettingInterpreter, "")
-	if err := settings.Set(m.store(), api.SettingInterpreter, i.ID()); err != nil {
+	prev := api.SelectedInterpreter(m.store())
+	if err := m.setMigrated(api.SettingInterpreter, api.SettingInterpreterLegacy, i.ID()); err != nil {
 		return InterpreterInfo{}, api.Errorf(api.CodeFailed, "saving selection: %w", err)
 	}
 	info := InterpreterInfo{ID: i.ID(), Label: i.Label(), Kind: string(i.Kind()), Selected: true}
@@ -316,7 +377,7 @@ func (m *Module) interpSelect(ctx context.Context, p InterpSelectParams) (Interp
 func (m *Module) interpVersion(ctx context.Context, p InterpVersionParams) (InterpVersionResult, error) {
 	id := p.ID
 	if id == "" {
-		id = settings.Get(m.store(), api.SettingInterpreter, "")
+		id = api.SelectedInterpreter(m.store())
 		if id == "" {
 			return InterpVersionResult{}, api.Errorf(api.CodeInvalidParams, "no interpreter selected; pass id")
 		}
@@ -467,14 +528,20 @@ const HintContainerNotRunning = "container-not-running"
 
 // probeInterpreter returns i for an automatic probe: compose interpreters
 // are restricted to `exec` unless start is true (see
-// compose.Interpreter.ExecOnly). The second result is the compose
-// interpreter to ask for the running state when the probe fails.
+// compose.Interpreter.ExecOnly), image interpreters never pull (--pull
+// never). The second result is the compose interpreter to ask for the
+// running state when the probe fails.
 func probeInterpreter(i interp.Interpreter, start bool) (interp.Interpreter, *compose.Interpreter) {
-	ci, ok := i.(*compose.Interpreter)
-	if !ok || start {
+	if start {
 		return i, nil
 	}
-	return ci.ExecOnly(), ci
+	switch c := i.(type) {
+	case *compose.Interpreter:
+		return c.ExecOnly(), c
+	case *dockercli.ImageInterpreter:
+		return c.WithoutPull(), nil
+	}
+	return i, nil
 }
 
 // stoppedHint returns the container-not-running hint if ci's service is
@@ -517,7 +584,7 @@ func (m *Module) phpVersion(ctx context.Context, p PHPVersionParams) (PHPVersion
 	if !p.NoInterpreter && opts.Override == nil {
 		id := p.Interpreter
 		if id == "" {
-			id = settings.Get(m.store(), api.SettingInterpreter, "")
+			id = api.SelectedInterpreter(m.store())
 		}
 		if id != "" {
 			i, err := m.interpreter(ctx, id)
@@ -555,10 +622,13 @@ func (m *Module) phpVersion(ctx context.Context, p PHPVersionParams) (PHPVersion
 type MappingsResult struct {
 	Mappings []api.MappingInfo `json:"mappings"`
 	// Source is "settings" (corrected by the user), "compose" (bind mounts
-	// of the selected or best compose service) or "none".
+	// of the selected or best compose service), "docker" (the project
+	// volume of the selected image interpreter) or "none".
 	Source string `json:"source"`
 	// Service is the compose service the mappings were derived from.
 	Service string `json:"service,omitempty"`
+	// Image is the image interpreter the mappings were derived from.
+	Image string `json:"image,omitempty"`
 }
 
 // MappingsSetParams are the params of "runtime.mappings.set".
@@ -569,15 +639,25 @@ type MappingsSetParams struct {
 }
 
 func (m *Module) mappingsGet(ctx context.Context, _ struct{}) (MappingsResult, error) {
-	if stored, ok, _ := settings.Lookup[[]api.MappingInfo](m.store(), SettingMappings); ok {
-		if stored == nil {
-			stored = []api.MappingInfo{}
+	for _, key := range []string{SettingMappings, legacyMappings} {
+		if stored, ok, _ := settings.Lookup[[]api.MappingInfo](m.store(), key); ok {
+			if stored == nil {
+				stored = []api.MappingInfo{}
+			}
+			return MappingsResult{Mappings: stored, Source: "settings"}, nil
 		}
-		return MappingsResult{Mappings: stored, Source: "settings"}, nil
 	}
 	res := MappingsResult{Mappings: []api.MappingInfo{}, Source: "none"}
 	root := m.app.ProjectRoot()
 	if root == "" {
+		return res, nil
+	}
+	if image, ok := strings.CutPrefix(api.SelectedInterpreter(m.store()), dockercli.ImageIDPrefix); ok && image != "" {
+		d := m.imageInterpreter(ctx, image, "")
+		for _, mp := range d.Mappings() {
+			res.Mappings = append(res.Mappings, api.MappingInfo{Host: mp.Host, Remote: mp.Remote})
+		}
+		res.Source, res.Image = "docker", image
 		return res, nil
 	}
 	proj, err := m.loadCompose(ctx, root, nil)
@@ -585,7 +665,7 @@ func (m *Module) mappingsGet(ctx context.Context, _ struct{}) (MappingsResult, e
 		return res, nil
 	}
 	service := ""
-	if id := settings.Get(m.store(), api.SettingInterpreter, ""); strings.HasPrefix(id, "compose:") {
+	if id := api.SelectedInterpreter(m.store()); strings.HasPrefix(id, "compose:") {
 		service = id[strings.LastIndex(id, ":")+1:]
 	}
 	if service == "" {
@@ -603,8 +683,10 @@ func (m *Module) mappingsGet(ctx context.Context, _ struct{}) (MappingsResult, e
 
 func (m *Module) mappingsSet(ctx context.Context, p MappingsSetParams) (MappingsResult, error) {
 	if p.Reset {
-		if err := m.store().Delete(SettingMappings); err != nil {
-			return MappingsResult{}, api.Errorf(api.CodeFailed, "mappings: %w", err)
+		for _, key := range []string{SettingMappings, legacyMappings} {
+			if err := m.store().Delete(key); err != nil {
+				return MappingsResult{}, api.Errorf(api.CodeFailed, "mappings: %w", err)
+			}
 		}
 	} else {
 		ms := make([]api.MappingInfo, 0, len(p.Mappings))
@@ -618,7 +700,7 @@ func (m *Module) mappingsSet(ctx context.Context, p MappingsSetParams) (Mappings
 			}
 			ms = append(ms, api.MappingInfo{Host: host, Remote: mp.Remote})
 		}
-		if err := settings.Set(m.store(), SettingMappings, ms); err != nil {
+		if err := m.setMigrated(SettingMappings, legacyMappings, ms); err != nil {
 			return MappingsResult{}, api.Errorf(api.CodeFailed, "mappings: %w", err)
 		}
 	}
@@ -646,14 +728,14 @@ func (m *Module) execMode(_ context.Context, p ExecModeParams) (ExecModeResult, 
 		if _, err := execModeOf(p.Mode); err != nil {
 			return ExecModeResult{}, api.Errorf(api.CodeInvalidParams, "%w", err)
 		}
-		if err := settings.Set(m.store(), SettingExecMode, p.Mode); err != nil {
+		if err := m.setMigrated(SettingExecMode, legacyExecMode, p.Mode); err != nil {
 			return ExecModeResult{}, api.Errorf(api.CodeFailed, "exec mode: %w", err)
 		}
 		m.mu.Lock()
 		m.interps = map[string]interp.Interpreter{} // rebuild with the new mode
 		m.mu.Unlock()
 	}
-	return ExecModeResult{Mode: settings.Get(m.store(), SettingExecMode, "auto")}, nil
+	return ExecModeResult{Mode: m.execModeSetting()}, nil
 }
 
 // DiagnoseParams are the params of "runtime.diagnose".
@@ -693,7 +775,7 @@ const (
 const DefaultDebugPort = "9003"
 
 func (m *Module) diagnose(ctx context.Context, p DiagnoseParams) (Diagnosis, error) {
-	res := Diagnosis{Hints: []HintInfo{}, ExecMode: settings.Get(m.store(), SettingExecMode, "auto")}
+	res := Diagnosis{Hints: []HintInfo{}, ExecMode: m.execModeSetting()}
 	var err error
 	if res.Mappings, err = m.mappingsGet(ctx, struct{}{}); err != nil {
 		return res, err
@@ -719,9 +801,17 @@ func (m *Module) diagnose(ctx context.Context, p DiagnoseParams) (Diagnosis, err
 			}
 		}
 	}
+	if d, ok := i.(*dockercli.ImageInterpreter); ok {
+		res.Interpreter.Image, res.Interpreter.Remote, res.Interpreter.Context = d.Image, d.RemoteDir(), d.Client.Context
+	}
+	orig := i
 	i, probed := probeInterpreter(i, p.Start)
 	if res.Version, err = i.Version(ctx); err != nil {
 		if h := stoppedHint(ctx, probed); h != nil {
+			res.Hints = append(res.Hints, *h)
+			return res, nil
+		}
+		if h := imageHint(ctx, orig, p.Start); h != nil {
 			res.Hints = append(res.Hints, *h)
 			return res, nil
 		}
@@ -751,7 +841,7 @@ func iniHints(ini map[string]string, kind interp.Kind) []HintInfo {
 	if port := ini["xdebug.client_port"]; port != "" && port != DefaultDebugPort {
 		out = append(out, HintInfo{"info", HintClientPort, fmt.Sprintf("xdebug.client_port=%s; start the listener on that port (debug.listen addr)", port)})
 	}
-	if host := ini["xdebug.client_host"]; kind == interp.KindCompose && isLoopback(host) {
+	if host := ini["xdebug.client_host"]; (kind == interp.KindCompose || kind == interp.KindDocker) && isLoopback(host) {
 		out = append(out, HintInfo{"warning", HintClientHostLocal, fmt.Sprintf("xdebug.client_host=%s points at the container itself; use host.docker.internal", host)})
 	}
 	if swr := ini["xdebug.start_with_request"]; swr == "no" {

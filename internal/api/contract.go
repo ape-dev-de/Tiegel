@@ -49,6 +49,9 @@ const (
 	// TopicGitChanged: the work tree or index changed through the API
 	// (GitChangedEvent).
 	TopicGitChanged = "git.changed"
+	// TopicDockerContextChanged: the Docker context or binary used by
+	// Tiegel changed (DockerContextChangedEvent), published by docker.
+	TopicDockerContextChanged = "docker.contextChanged"
 )
 
 // ProjectEvent is the payload of project.opened and project.closed.
@@ -236,6 +239,33 @@ type PathMappingsQuery struct {
 	Source   string
 }
 
+// DockerEndpointQuery is the value of the docker.endpoint filter: the
+// docker module fills in the binary, the chosen context and the
+// environment (PATH) for running docker; consumers (php-runtime) fall back
+// to "docker" from PATH and docker's current context when it stays empty.
+type DockerEndpointQuery struct {
+	// Binary is the docker executable.
+	Binary string
+	// Context is the Docker context to pass as --context ("" = docker's
+	// current context).
+	Context string
+	// Env are extra KEY=VALUE entries (PATH with the binary's directory and
+	// the login shell PATH).
+	Env []string
+	// Provider is the detected engine (orbstack, docker-desktop, …), if
+	// known without asking the engine.
+	Provider string
+}
+
+// DockerContextChangedEvent is the payload of docker.contextChanged.
+type DockerContextChangedEvent struct {
+	// Context is the new effective context ("" = docker's current one).
+	Context string `json:"context"`
+	// Scope is "project" or "global".
+	Scope    string `json:"scope"`
+	Previous string `json:"previous,omitempty"`
+}
+
 // NavLSPQuery is the value of the nav.lsp filter: php-index asks the
 // language server (lang-php) for definitions or implementations so that
 // nav.definition and nav.implementations can merge both sources without
@@ -278,4 +308,7 @@ var (
 	// HookNavLSP asks the language server for definitions/implementations
 	// (provided by lang-php, used by php-index).
 	HookNavLSP = hooks.NewFilter[NavLSPQuery]("nav.lsp")
+	// HookDockerEndpoint resolves the docker binary and context (provided
+	// by docker, used by php-runtime for compose and image interpreters).
+	HookDockerEndpoint = hooks.NewFilter[DockerEndpointQuery]("docker.endpoint")
 )

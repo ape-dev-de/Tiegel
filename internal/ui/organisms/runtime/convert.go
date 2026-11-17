@@ -1,9 +1,29 @@
 package runtime
 
 import (
+	"time"
+
 	"github.com/ape-dev-de/tiegel/internal/compose"
+	"github.com/ape-dev-de/tiegel/internal/docker"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 )
+
+// FromImage converts a Docker image interpreter.
+func FromImage(d *docker.ImageInterpreter) Interpreter {
+	return Interpreter{ID: d.ID(), Label: d.Label(), Kind: KindDocker, Version: d.PHPVersion,
+		Detail: d.Image + " → " + d.RemoteDir(), Context: d.Client.Context}
+}
+
+// FromProbe converts an interpreter probe result; probedAt is shown in
+// local time.
+func FromProbe(i interp.Info, probedAt time.Time, cached bool) *ProbeInfo {
+	p := &ProbeInfo{Version: i.Version, SAPI: i.SAPI, OS: i.OS, Xdebug: i.Xdebug, IniFile: i.IniFile,
+		IniScanned: append([]string(nil), i.IniScanned...), Extensions: append([]string(nil), i.Extensions...), Cached: cached}
+	if !probedAt.IsZero() {
+		p.ProbedAt = probedAt.Local().Format("2006-01-02 15:04")
+	}
+	return p
+}
 
 // This file converts backend values (internal/interp, internal/compose)
 // into the view models of this package. Only types are used.

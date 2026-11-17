@@ -14,7 +14,24 @@ import (
 
 // SettingInterpreter stores the selected interpreter ID (project settings,
 // or global settings without a project).
-const SettingInterpreter = "php.interpreter"
+const SettingInterpreter = "php-runtime.interpreter"
+
+// SettingInterpreterLegacy is the key SettingInterpreter had before the
+// settings moved into the php-runtime namespace (D190); it is still read
+// as fallback.
+const SettingInterpreterLegacy = "php.interpreter"
+
+// SelectedInterpreter returns the interpreter ID stored in s (new key,
+// then the legacy key), or "".
+func SelectedInterpreter(s *settings.Store) string {
+	if s == nil {
+		return ""
+	}
+	if v, ok, err := settings.Lookup[string](s, SettingInterpreter); ok && err == nil {
+		return v
+	}
+	return settings.Get(s, SettingInterpreterLegacy, "")
+}
 
 // SettingPHPVersionOverride stores the PHP version override (written by
 // php-features with php.setVersionOverride, read by php-runtime's

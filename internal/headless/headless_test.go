@@ -17,8 +17,11 @@ import (
 	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
+	"github.com/ape-dev-de/tiegel/internal/docker/dockertest"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
+	"github.com/ape-dev-de/tiegel/internal/modules"
+	dockermod "github.com/ape-dev-de/tiegel/internal/modules/docker"
 	"github.com/ape-dev-de/tiegel/internal/syntax"
 )
 
@@ -47,6 +50,8 @@ func testEnv(t *testing.T, in io.Reader, out, errw io.Writer) Env {
 			LSP:        servers.DetectOptions{HomeDir: home, NoSystemDirs: true},
 			GOOS:       "darwin",
 		},
+		// Never ask the developer's login shell for docker's PATH.
+		Modules: modules.Options{Docker: dockermod.Options{NoLoginShell: true}},
 	}
 }
 
@@ -481,6 +486,7 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	dockertest.Main() // the test binary doubles as fake docker
 	code := m.Run()
 	if buildDir != "" {
 		_ = os.RemoveAll(buildDir)

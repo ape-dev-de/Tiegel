@@ -124,7 +124,7 @@ func (a *App) projectInfo(_ context.Context, _ struct{}) (ProjectInfo, error) {
 		SettingsDir: pr.settings.Dir(),
 		Git:         exists(filepath.Join(pr.root, ".git")),
 		Composer:    exists(filepath.Join(pr.root, "composer.json")),
-		Interpreter: settings.Get(pr.settings, SettingInterpreter, ""),
+		Interpreter: SelectedInterpreter(pr.settings),
 		OpenDocs:    docs,
 	}
 	if files, err := compose.FindFiles(pr.root, a.opts.ComposeEnv); err == nil {

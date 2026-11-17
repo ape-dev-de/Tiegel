@@ -154,6 +154,8 @@ type Controller struct {
 	Interpreters []Interpreter
 	Mappings     Mappings
 	Diagnosis    Diagnosis
+	// Probe is the info of the selected interpreter (interp.probe).
+	Probe ProbeState
 
 	// Reveal is set when a tab should move its caret (go to definition,
 	// problem click); the view applies and clears it.
