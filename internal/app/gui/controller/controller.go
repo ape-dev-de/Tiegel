@@ -218,6 +218,8 @@ type Controller struct {
 	LSP LSPInfo
 	// Services is the Services tool window (services.go).
 	Services *Services
+	// Run is the run tool window state (run.go).
+	Run *Runs
 }
 
 // New returns a controller for be. Call Close when done.
@@ -234,8 +236,9 @@ func New(be Backend) *Controller {
 	c.Debug = newDebug(c)
 	c.Work = newWorkspace(c)
 	c.Services = newServices(c)
+	c.Run = newRuns(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
-		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*"}, func(e api.Event) {
+		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*"}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
 	})
 	if err != nil {
@@ -613,6 +616,10 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 	}
 	if strings.HasPrefix(topic, "docker.") {
 		c.Services.handleEvent(topic, payload)
+		return
+	}
+	if strings.HasPrefix(topic, "run.") {
+		c.Run.handleEvent(topic, payload)
 		return
 	}
 	switch topic {

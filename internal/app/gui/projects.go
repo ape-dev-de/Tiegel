@@ -182,5 +182,6 @@ func (v *View) closeProject() {
 		return
 	}
 	v.closeOverlay()
-	v.ctl.CloseProject()
+	// Running processes: ask, terminate or keep (run.confirmClose).
+	v.rund.confirmClose(v.ctl.CloseProject)
 }

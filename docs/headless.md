@@ -23,7 +23,7 @@ Flags dürfen vor oder nach dem Befehl stehen (`--name wert` oder `--name=wert`)
 | Flag | Bedeutung |
 |---|---|
 | `--json` | maschinenlesbare Ausgabe (eingerücktes JSON auf stdout) |
-| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `lsp-status`, `lsp-restart`, `lsp-doctor`, `lsp-select`, `install`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`, `interp-*`, `docker`) nehmen ohne Angabe das Arbeitsverzeichnis. |
+| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `lsp-status`, `lsp-restart`, `lsp-doctor`, `lsp-select`, `install`, `run`, `run-configs`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`, `interp-*`, `docker`) nehmen ohne Angabe das Arbeitsverzeichnis. |
 | `--config-dir DIR` | Einstellungsverzeichnis statt `<UserConfigDir>/Tiegel`; alternativ Umgebungsvariable `TIEGEL_CONFIG_DIR` (Tests, CI, portable Nutzung) |
 | `--help`, `-h` | Hilfe |
 | `--version` | Version (auch `tiegel --version` ohne `--headless`) |
@@ -35,6 +35,7 @@ Flags dürfen vor oder nach dem Befehl stehen (`--name wert` oder `--name=wert`)
 | 0 | Erfolg |
 | 1 | Fehler bei der Ausführung (Datei fehlt, kein Projekt, Git-Fehler …); `search` ohne Treffer, `php-check`/`lsp-check` mit Befunden und `runtime-diagnose` mit Warnungen liefern ebenfalls 1 (wie `grep`/Linter); ebenso Aufrufe eines abgeschalteten Moduls |
 | 2 | Nutzungsfehler: unbekannter Befehl/Flag, fehlende Argumente, ungültige Parameter, unbekannte API-Methode |
+| N | `run` reicht den Exit-Code des gestarteten Prozesses durch (130 nach Strg+C, 1 bei Abbruch durch Signal) |
 
 Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Daten frei.
 
@@ -82,6 +83,8 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `lsp-doctor` | warum ein Server läuft oder nicht: Auswahl und Herkunft (Projekt/global/Standard), welcher Server gestartet würde, Befund je Server (Pfad oder Fehler), durchsuchte Orte in Reihenfolge, Installationsvorschlag | `lsp.doctor` |
 | `lsp-select auto\|none\|ID [--global]` | wählt den Language Server fürs Projekt (bzw. global) und wendet die Wahl an; `none` schaltet ihn ab (Navigation über den Index) | `lsp.select` |
 | `install PLUGIN [--scope global\|project] [--dry-run] [--yes]` | installiert das Werkzeug eines Plugins über seinen Paketmanager (D194): zeigt Befehl, Ziel, ob `composer.json` sich ändert; ausgeführt wird nur mit `--yes` (Ausgabe gestreamt, Strg+C bricht ab); `--dry-run` zeigt nur den Plan; fehlt der Paketmanager oder gibt es nur einen Hinweis (PHPantom): Hinweis, Exit 1 | `install.plan`, `install.run`, `install.wait`, Event `install.output` |
+| `run KONFIG` / `run --file DATEI [ARGS...]` / `run --cmd -- BEFEHL [ARGS...]` `[--interpreter project\|host\|ID] [--env K=V]... [--dir DIR]` | startet eine Run-Konfiguration (ID oder Name), eine PHP-Datei mit dem Projekt-Interpreter oder einen beliebigen Befehl (`--cmd`, Standard auf dem Host; `--interpreter project` im Interpreter, z.B. per `docker compose exec`). Vorher wird gespeichert (Guard `run.before`). Ausgabe gestreamt (stdout/stderr getrennt), **Exit-Code des Prozesses wird durchgereicht**, Strg+C stoppt den Prozessbaum (auch im Container) und endet mit 130. `--json`: `{run, output}` am Ende | `run.start`, `run.wait`, `run.output`, `run.stop`, Event `run.output` |
+| `run-configs [list \| types \| save JSON\|- \| delete ID \| select ID]` | Run-Konfigurationen des Projekts (`*` = ausgewählt, mit Befehlsvorschau oder Fehler); `types` zeigt die Typen (Kern: `php-script`, `command`, `composer-script`; dazu Plugin-Typen) mit Feldern und Vorschlägen (z.B. Composer-Skripte); `save` nimmt `{id?, name, type, values}` (auch von stdin mit `-`) | `run.configs.*`, `run.configTypes` |
 | `modules [enable ID \| disable ID]` | Module anzeigen/schalten | `modules.*` |
 | `settings [--schema] [--module ID\|core] [--query TEXT]` | Alle deklarierten Einstellungen (D190): „Core › Seite“ und „Plugins › Modul [on/off]“ mit Schlüssel, Typ, wirksamem Wert, Quelle (`default`/`global`/`project`) und Label; `--query` sucht in Schlüssel, Label, Hilfe, Gruppe, Modul-ID; `--json` liefert das vollständige Schema | `settings.schema` |
 | `settings get KEY [--scope global\|project] [--effective]` | gespeicherten (oder mit `--effective` den wirksamen) Wert lesen | `settings.get` |
@@ -466,6 +469,22 @@ Workspace-Änderungen des Servers (Code Actions, Rename, `workspace/applyEdit`) 
 | `install.status` / `install.wait` / `install.cancel` | `runId` | `{runId, plugin, tool, state: running\|succeeded\|failed\|cancelled, display, exitCode, error, output, started, finished}` |
 
 Nach `install.done` sucht lang-php den Server neu und startet ihn ohne Neustart von Tiegel.
+
+**run** (Kern, AP15.1, D260–D269) – Prozesse auf dem Host oder im Interpreter des Projekts (lokal, Compose `exec`/`run`, Docker-Image, WSL) ausführen, Ausgabe streamen, stoppen, erneut ausführen
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `run.start` | genau eins von `config` (ID oder Name), `file` (+ `args?`), `spec` (`{name?, php?, program?, args?, dir?, env?, interpreter?}`); `interpreter?` (`project`, `host` oder Interpreter-ID) für `file`/`spec` | Lauf `{id, name, config?, type?, display, where, dir, project, state: running\|exited\|stopped, exitCode, error?, started, finished?, durationMs, lines, replaces?, spec}`; Guard `run.before` (Autosave) vorher; Programm nicht gefunden bzw. Interpreter nicht verfügbar `-32005`, Veto `-32000`, Konfiguration ungültig `-32602`, Typ eines abgeschalteten Plugins `-32006` |
+| `run.stop` / `run.rerun` / `run.wait` / `run.remove` | `runId` | Lauf; `rerun` stoppt einen aktiven Lauf, startet neu (`replaces` = alte ID) und vergisst den alten; `remove` nur für beendete Läufe (`-32004` sonst) |
+| `run.list` | `active?` | Läufe, älteste zuerst (höchstens 30 beendete) |
+| `run.output` | `runId`, `since?` (Sequenznummer), `limit?` | `{runId, state, lines: [{seq, stream: stdout\|stderr\|system, text, links?: [{start, end, path, file, line, column?}]}], last, dropped?}` (Puffer 10 000 Zeilen) |
+| `run.closeCheck` / `run.stopAll` | – | `{policy: ask\|terminate\|keep, active: [Lauf]}` (Einstellung `run.confirmClose`) bzw. IDs der gestoppten Läufe des Projekts |
+| `run.configs.list` | – | `[{id, name, type, values, typeLabel, available, display?, error?, selected?}]` |
+| `run.configs.save` | `{id?, name, type, values}` | gespeicherte Konfiguration (geprüft gegen die Felder des Typs; neuer Name doppelt `-32004`) |
+| `run.configs.delete` / `run.configs.select` | `id` (ID oder Name) | – bzw. Konfiguration |
+| `run.configTypes` | – | `[{id, label, description, plugin?, fields: [{key, kind, label, help?, default?, options?, required?, suggest?}], suggestions?: {feld: [werte]}}]` |
+
+Events: `run.started`, `run.exited` (Lauf), `run.output` (`{runId, lines}`, gebündelt), `run.removed` (`{runId}`), `run.configsChanged` (Liste wie `run.configs.list`). Hooks: Guard `run.before` (`{name, config?, type?, display, rerun?}`), Filter `run.configTypes` (Plugins hängen Typen mit Feldern und `Build` an, z.B. PHPUnit), Filter `run.interpreter` (php-runtime liefert den Interpreter).
 
 **git** – Hunk-Indizes beziehen sich auf `git.diff` mit denselben Optionen. Jeder Hunk in `git.diff` hat `header` und `hash` (Inhalts-Hash); eine Auswahl `{hunk, header?, hash?}` mit diesen Werten wird abgelehnt (-32004 mit `data: {reason: "staleSelection", path, hunk}`), wenn sich der Diff inzwischen geändert hat (z.B. durch Formatierung beim Speichern) – statt still einen anderen Hunk zu nehmen; der Client lädt dann den Diff neu. Ohne `header`/`hash` gilt nur der Index (rückwärtskompatibel). Clients sollten beide mitschicken.
 

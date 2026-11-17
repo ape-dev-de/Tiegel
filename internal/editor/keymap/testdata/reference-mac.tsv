@@ -67,17 +67,17 @@ Toggle Case	Cmd+Shift+U	edit.toggleCase
 Paste from History	Cmd+Shift+V	edit.pasteFromHistory
 Complete Current Statement	Cmd+Shift+Enter	later:M17
 Go to Test / Create Test	Cmd+Shift+T	later:M15
-Run	Ctrl+R	later:M15
+Run	Ctrl+R	run.run
 Debug	Ctrl+D	later:M15
-Run Context Configuration	Ctrl+Shift+R	later:M15
-Rerun (Run window)	Cmd+R	later:M15
+Run Context Configuration	Ctrl+Shift+R	run.runFile
+Rerun (Run window)	Cmd+R	run.rerun
 Generate	Cmd+N	later:M17
 Surround With	Cmd+Alt+T	later:M17
 Insert Live Template	Cmd+J	later:M17
 Extract Variable	Cmd+Alt+V	later:M17
 Extract Method	Cmd+Alt+M	later:M17
 Terminal tool window	Alt+F12	later:M15
-Run tool window	Cmd+4	later:M15
+Run tool window	Cmd+4	view.run
 Bookmarks tool window	Cmd+2	later:M17
 Services tool window	Cmd+8	view.services
 Commit tool window	Cmd+0	view.commit

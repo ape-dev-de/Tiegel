@@ -21,6 +21,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/install"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
+	"github.com/ape-dev-de/tiegel/internal/run"
 	"github.com/ape-dev-de/tiegel/internal/update"
 	"github.com/ape-dev-de/tiegel/internal/version"
 )
@@ -104,6 +105,7 @@ type App struct {
 	closeMu  sync.Once
 	searches searchRegistry // running project searches (search.cancel)
 	installs install.Runner // tool installations (install.*, D194)
+	runs     run.Manager    // processes of the run service (run.*, AP15.1)
 	// trash moves a path to the trash (files.delete); start launches a
 	// detached program (files.reveal). Tests replace both.
 	trash func(path string) error
@@ -172,9 +174,11 @@ func New(opts Options) (*App, error) {
 		return nil, fmt.Errorf("api: autosave: %w", err)
 	}
 	a.saver = saver
-	// Kernel hooks: autosave before commit and debug, file.saved on the bus.
+	// Kernel hooks: autosave before commit, debug and run, file.saved on
+	// the bus.
 	autosave.SaveBeforeGuard(saver, a.hooks, HookCommitBefore, autosave.TriggerBeforeCommit)
 	autosave.SaveBeforeGuard(saver, a.hooks, HookDebugBefore, autosave.TriggerBeforeDebug)
+	autosave.SaveBeforeGuard(saver, a.hooks, HookRunBefore, autosave.TriggerBeforeRun)
 	autosave.Saved.On(a.hooks, 0, func(_ context.Context, ev autosave.SavedEvent) error {
 		b.Publish(TopicFileSaved, FileSavedEvent{Path: a.displayPath(ev.Path), File: ev.Path, Trigger: string(ev.Trigger), Size: ev.Size})
 		return nil
@@ -193,6 +197,7 @@ func New(opts Options) (*App, error) {
 	a.registerKeymap()
 	a.registerEditOps()
 	a.registerInstall()
+	a.registerRun()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)
@@ -216,6 +221,7 @@ func (a *App) Close() error {
 	a.stopWatch()
 	a.saver.Close()
 	a.installs.CancelAll()
+	a.closeRuns()
 	a.preserveUnsaved("unsaved on exit", nil)
 	if err := a.modules.Stop(); err != nil {
 		errs = append(errs, err)

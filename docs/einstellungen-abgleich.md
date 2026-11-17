@@ -30,7 +30,7 @@ Einstellungen werden in **Kern** und **Plugins** getrennt (D190):
 | Theme hell/dunkel/System | ✅ `ui.theme` | Kern | ✔ (`laf.xml`, `colors.scheme.xml` → hell/dunkel) | M16 |
 | UI-Schriftgröße | ✅ `ui.fontSize` | Kern | ✔ | M16 |
 | Native Datei-Dialoge | ✅ (`native`) | Kern | – | – |
-| Bestätigung beim Schließen laufender Prozesse | ❌ | Kern | ✔ (`processCloseConfirmation`) | M15 |
+| Bestätigung beim Schließen laufender Prozesse | ✅ `run.confirmClose` (ask/terminate/keep, D267) | Kern | ✔ (`processCloseConfirmation`) | M15 |
 | Projekt in neuem/diesem Fenster öffnen (Nachfrage) | ✅ `projects.openIn` (ask/new/this) | Kern | ✔ (`confirmOpenNewProject2`) | M12 |
 | Zuletzt geöffnete Projekte | ✅ `ui.recentProjects` | Kern | ✔ (`recentProjects.xml`, nur existierende Pfade, opt-in) | M16 |
 | Tipps beim Start, Statusleisten-Widgets | ⛔ / 🟡 | Kern | – | – |
@@ -52,7 +52,7 @@ Tiegel-Stand (M13 abgeschlossen): ein Katalog aller belegbaren Aktionen (`intern
 | Parameter Info (Cmd+P), Quick Documentation (F1/Ctrl+J) | ✅ | M13 |
 | Next/Previous Highlighted Error (F2/Shift+F2) | ✅ | M13 |
 | Go to Test / Create Test (Cmd+Shift+T) | ❌ (Fixture: später) | M15 |
-| Run/Debug (Ctrl+R/Ctrl+D), Run Context Configuration (Ctrl+Shift+R), Rerun (Cmd+R im Run-Fenster) | ❌ (Fixture: später) | M15 |
+| Run/Debug (Ctrl+R/Ctrl+D), Run Context Configuration (Ctrl+Shift+R), Rerun (Cmd+R im Run-Fenster) | 🟡 Run, Run Current File, Rerun, Run-Fenster Cmd+4 (D269); Debug fehlt | M15 |
 | Generate (Cmd+N), Surround With (Cmd+Alt+T), Live Templates (Cmd+J) | ❌ (Fixture: später) | M17 |
 | Join Lines (Ctrl+Shift+J), Toggle Case (Cmd+Shift+U), Paste from History (Cmd+Shift+V) | ✅ | M13 |
 | Complete Statement (Cmd+Shift+Enter) | ❌ (Fixture: später) | M17 |
@@ -100,7 +100,7 @@ Tiegel-Stand (M13 abgeschlossen): ein Katalog aller belegbaren Aktionen (`intern
 | --- | --- | --- | --- | --- |
 | Docker: Verbindung (Kontext/Socket: OrbStack, Docker Desktop, Colima), `docker`/`docker compose`-Pfad | 🟡 `compose` erkennt Compose-Dateien; kein Kontext, kein Socket, Pfad fest | Plugin `docker` | ✔ (`docker-tools.xml`) | M14 |
 | Services-Fenster (Container, Logs, Start/Stop, Exec) | ❌ | Plugin `docker` | – | M14 |
-| Run-Konfigurationen | ❌ (kein `run.*` in der API) | Kern (Run-Infrastruktur) + Plugins (Typen) | ✔ (`runConfigurations/*.xml`, `workspace.xml`) | M15 |
+| Run-Konfigurationen | 🟡 `run.*` mit Kern-Typen PHP-Skript, Befehl, Composer-Skript; Typen-Hook `run.configTypes` für Plugins (D265); PHPUnit fehlt | Kern (Run-Infrastruktur) + Plugins (Typen) | ✔ (`runConfigurations/*.xml`, `workspace.xml`) | M15 |
 | Deployment (SFTP/FTP) | ⛔ (Konzept) | – | – | – |
 | Debugger (Xdebug-Port, Break at first line, Eval-Modus) | 🟡 Port/Listener | Plugin `debug-xdebug` | ✔ (`debugger.xml`, `php.xml`) | M16 |
 | Coverage | ❌ | Plugin `phpunit` | – | – (später) |
