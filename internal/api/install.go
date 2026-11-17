@@ -100,7 +100,11 @@ func (a *App) makePlan(ctx context.Context, plugin, scope string) (install.Plan,
 			names = append(names, r.Plugin)
 			continue
 		}
-		p, err := install.MakePlan(r, install.Scope(scope), a.InstallEnv())
+		env := a.InstallEnv()
+		// Recipes for the project interpreter run through the run
+		// infrastructure (compose exec, docker run, WSL, local php).
+		env.Wrap = a.runWrap(ctx)
+		p, err := install.MakePlan(r, install.Scope(scope), env)
 		if errors.Is(err, install.ErrUnknownScope) {
 			return install.Plan{}, Errorf(CodeInvalidParams, "%w", err)
 		}

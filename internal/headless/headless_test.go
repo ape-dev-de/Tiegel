@@ -488,6 +488,7 @@ var (
 
 func TestMain(m *testing.M) {
 	dockertest.Main() // the test binary doubles as fake docker
+	runHelperMain()   // … and as the program of the run tests
 	code := m.Run()
 	if buildDir != "" {
 		_ = os.RemoveAll(buildDir)

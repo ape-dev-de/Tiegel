@@ -7,9 +7,10 @@
 // compose.detect, php.version, runtime.mappings.get/set, runtime.execMode,
 // runtime.diagnose.
 // Events: interpreter.changed (and interp.selected), runtime.mappingsChanged.
-// Hooks provided: php.resolveVersion and runtime.pathMappings filters, so
-// other modules (lang-php, php-features, debug-xdebug) get the version and
-// the mappings without calling this module. Hooks used: docker.endpoint
+// Hooks provided: php.resolveVersion, runtime.pathMappings and
+// run.interpreter filters, so other modules (lang-php, php-features,
+// debug-xdebug, the run service) get the version, the mappings and the
+// interpreter without calling this module. Hooks used: docker.endpoint
 // (docker binary, context and PATH from the docker module; without it
 // "docker" from PATH and docker's current context are used).
 // Settings (D190, namespace php-runtime.*): see SettingSpecs; the keys
@@ -152,6 +153,7 @@ func (m *Module) Start(ctx module.Context) error {
 		}
 		return api.PathMappingsQuery{Mappings: res.Mappings, Source: res.Source}, nil
 	}, owner, hooks.WithTimeout(hookTimeout))
+	api.HookRunInterpreter.On(ctx.Hooks(), 0, m.runInterpreter, owner, hooks.WithTimeout(hookTimeout))
 
 	reset := func(bus.Event) {
 		m.mu.Lock()
