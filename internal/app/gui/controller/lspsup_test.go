@@ -49,7 +49,7 @@ func TestLSPSupervisorUI(t *testing.T) {
 		return map[string]bool{"trace": true}, nil
 	})
 	f.answer("lsp.log", []LSPLogEntry{{Seq: 1, Kind: "stderr", Text: "hello"}, {Seq: 2, Kind: "event", Text: "running"}})
-	f.answer("install.plan", InstallPlan{Plugin: "lsp-phpactor", Tool: "Phpactor", Available: true, Scope: "global", Display: "composer global require phpactor/phpactor"})
+	f.answer("install.plan", InstallPlan{Plugin: "lsp-phpactor", Tool: "Phpactor", Available: true, Scope: "global", Display: "composer global require phpactor/phpactor", ID: "plan-1"})
 	f.answer("install.run", map[string]string{"runId": "install-1"})
 	f.answer("install.cancel", map[string]any{})
 	c := started(t, f)
@@ -109,6 +109,12 @@ func TestLSPSupervisorUI(t *testing.T) {
 	c.Settle(time.Second)
 	if !c.LSP.Install.Running() || f.called("install.run") != 1 {
 		t.Fatalf("install %+v", c.LSP.Install)
+	}
+	f.mu.Lock()
+	runParams := string(f.params["install.run"][0])
+	f.mu.Unlock()
+	if !strings.Contains(runParams, `"planId":"plan-1"`) {
+		t.Fatalf("install.run without the confirmed plan id: %s", runParams)
 	}
 	f.emit("install.output", map[string]string{"runId": "install-1", "text": "Using version ^2"})
 	f.emit("install.output", map[string]string{"runId": "other", "text": "ignored"})

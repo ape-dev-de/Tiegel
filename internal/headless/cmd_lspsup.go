@@ -235,7 +235,7 @@ func runInstall(c *cli) error {
 	defer sess.Close()
 	sess.Subscribe(api.TopicInstallOutput)
 	var run api.InstallRunResult
-	if err := c.call("install.run", api.InstallRunParams{Plugin: plugin, Scope: scope, Confirm: true}, &run); err != nil {
+	if err := c.call("install.run", api.InstallRunParams{Plugin: plugin, Scope: scope, Confirm: true, PlanID: plan.ID}, &run); err != nil {
 		return err
 	}
 	done := make(chan install.Result, 1)

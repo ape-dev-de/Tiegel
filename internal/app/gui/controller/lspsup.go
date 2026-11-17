@@ -56,6 +56,8 @@ type InstallPlan struct {
 	Effects             []string `json:"effects"`
 	Hint                string   `json:"hint"`
 	Note                string   `json:"note"`
+	// ID is passed to install.run, which refuses a changed plan.
+	ID string `json:"id"`
 }
 
 // InstallRun is a running or finished installation.
@@ -284,7 +286,7 @@ func (c *Controller) RunInstall(p InstallPlan) {
 		var res struct {
 			RunID string `json:"runId"`
 		}
-		err := c.call(ctx, "install.run", map[string]any{"plugin": p.Plugin, "scope": p.Scope, "confirm": true}, &res)
+		err := c.call(ctx, "install.run", map[string]any{"plugin": p.Plugin, "scope": p.Scope, "confirm": true, "planId": p.ID}, &res)
 		return func() {
 			if err != nil {
 				c.notice(err)

@@ -14,6 +14,9 @@
 package install
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -155,8 +158,26 @@ type Plan struct {
 	Effects []string `json:"effects,omitempty"`
 	Hint    string   `json:"hint,omitempty"`
 	Note    string   `json:"note,omitempty"`
+	// ID identifies exactly what runs (Fingerprint); install.run refuses
+	// to execute a plan whose ID differs from the confirmed preview.
+	ID string `json:"id,omitempty"`
 
 	env []string
+}
+
+// Fingerprint hashes everything that decides what a plan executes:
+// plugin, scope, command, working directory and environment.
+func (p Plan) Fingerprint() string {
+	b, _ := json.Marshal(struct {
+		Plugin    string
+		Scope     Scope
+		Available bool
+		Command   []string
+		Dir       string
+		Env       []string
+	}{p.Plugin, p.Scope, p.Available, p.Command, p.Dir, p.env})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:12])
 }
 
 // ErrUnknownScope is returned for a scope the recipe does not offer.

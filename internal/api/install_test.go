@@ -81,14 +81,14 @@ func TestInstallService(t *testing.T) {
 		t.Fatal("composer ran without confirmation")
 	}
 	// Project scope needs a project.
-	wantCode(t, a, "install.run", InstallRunParams{Plugin: "lsp-x", Scope: "project", Confirm: true}, CodeUnavailable)
+	wantCode(t, a, "install.run", InstallRunParams{Plugin: "lsp-x", Scope: "project", Confirm: true, PlanID: planID(t, a, "lsp-x", "project")}, CodeUnavailable)
 
 	project := t.TempDir()
 	if _, err := a.OpenProject(context.Background(), project); err != nil {
 		t.Fatal(err)
 	}
 	var run InstallRunResult
-	call(t, a, "install.run", InstallRunParams{Plugin: "lsp-x", Scope: "project", Confirm: true}, &run)
+	call(t, a, "install.run", InstallRunParams{Plugin: "lsp-x", Scope: "project", Confirm: true, PlanID: planID(t, a, "lsp-x", "project")}, &run)
 	if run.RunID == "" || !run.Plan.ChangesComposerJSON {
 		t.Fatalf("run %+v", run)
 	}
@@ -121,8 +121,9 @@ func TestInstallService(t *testing.T) {
 	}
 
 	// Cancel a slow one.
-	call(t, a, "install.run", InstallRunParams{Plugin: "lsp-slow", Confirm: true}, &run)
-	wantCode(t, a, "install.run", InstallRunParams{Plugin: "lsp-slow", Confirm: true}, CodeConflict)
+	slowID := planID(t, a, "lsp-slow", "")
+	call(t, a, "install.run", InstallRunParams{Plugin: "lsp-slow", Confirm: true, PlanID: slowID}, &run)
+	wantCode(t, a, "install.run", InstallRunParams{Plugin: "lsp-slow", Confirm: true, PlanID: slowID}, CodeConflict)
 	call(t, a, "install.cancel", InstallRunIDParams{RunID: run.RunID}, nil)
 	call(t, a, "install.wait", InstallWaitParams{RunID: run.RunID}, &res)
 	if res.State != install.StateCancelled {
@@ -135,5 +136,62 @@ func TestInstallService(t *testing.T) {
 	cancel()
 	if _, err := a.installWait(ctx, InstallWaitParams{RunID: run.RunID}); err != nil {
 		t.Fatalf("finished run with cancelled ctx: %v", err) // finished runs return at once
+	}
+}
+
+func planID(t *testing.T, a *App, plugin, scope string) string {
+	t.Helper()
+	var plan install.Plan
+	call(t, a, "install.plan", InstallPlanParams{Plugin: plugin, Scope: scope}, &plan)
+	if plan.ID == "" {
+		t.Fatalf("plan without id: %+v", plan)
+	}
+	return plan.ID
+}
+
+// TestInstallRunRequiresConfirmedPlan: install.run executes only the plan
+// whose id was confirmed; a changed plan is refused.
+func TestInstallRunRequiresConfirmedPlan(t *testing.T) {
+	bin, logFile := fakeComposer(t)
+	home := t.TempDir()
+	a, err := New(Options{
+		ConfigDir: filepath.Join(t.TempDir(), "config"), Interp: interpOptions(nil),
+		LSP:        servers.DetectOptions{HomeDir: home, PathEnv: bin, ComposerHome: filepath.Join(home, "composer"), NoSystemDirs: true},
+		ComposeEnv: map[string]string{}, GOOS: "linux", AppVersion: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	recipe := install.Recipe{Plugin: "lsp-x", Tool: "X", Manager: install.ManagerComposer, Package: "acme/x",
+		Scopes: []install.Scope{install.ScopeProject}}
+	HookInstallRecipes.On(a.Hooks(), 0, func(_ context.Context, l []install.Recipe) ([]install.Recipe, error) {
+		return append(slices.Clone(l), recipe), nil
+	})
+	first := t.TempDir()
+	if _, err := a.OpenProject(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	confirmed := planID(t, a, "lsp-x", "")
+	if again := planID(t, a, "lsp-x", ""); again != confirmed {
+		t.Fatal("plan id not stable")
+	}
+	wantCode(t, a, "install.run", InstallRunParams{Plugin: "lsp-x", Confirm: true}, CodeInvalidParams)
+	wantCode(t, a, "install.run", InstallRunParams{Plugin: "lsp-x", Confirm: true, PlanID: "bogus"}, CodeConflict)
+	// The project changed after the preview: the command would run in
+	// another directory.
+	if _, err := a.OpenProject(context.Background(), t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	wantCode(t, a, "install.run", InstallRunParams{Plugin: "lsp-x", Confirm: true, PlanID: confirmed}, CodeConflict)
+	if _, err := os.Stat(logFile); err == nil {
+		t.Fatal("composer ran without a matching confirmation")
+	}
+	var run InstallRunResult
+	call(t, a, "install.run", InstallRunParams{Plugin: "lsp-x", Confirm: true, PlanID: planID(t, a, "lsp-x", "")}, &run)
+	var res install.Result
+	call(t, a, "install.wait", InstallWaitParams{RunID: run.RunID}, &res)
+	if res.State != install.StateSucceeded || run.Plan.ID == "" {
+		t.Fatalf("result %+v", res)
 	}
 }
