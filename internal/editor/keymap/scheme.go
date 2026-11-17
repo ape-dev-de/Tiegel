@@ -1,6 +1,7 @@
 package keymap
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -24,8 +25,28 @@ type Overrides map[Action][]Chord
 // action, "<action> <chord> <chord>…" (chords in ParseChord syntax,
 // separated by spaces; an action alone means unbound). Later entries for
 // the same action replace earlier ones.
+//
+// A line with an unparseable chord is skipped; the overrides of all other
+// lines are returned nevertheless, together with an error that names the
+// bad lines (errors.Join of one error per line, each wrapping
+// ErrBadChord). One bad line never discards the others (D248).
 func ParseOverrides(lines []string) (Overrides, error) {
+	o, _, err := parseOverrides(lines)
+	return o, err
+}
+
+// InvalidOverrides returns the lines of the stored form that
+// ParseOverrides skips, verbatim.
+func InvalidOverrides(lines []string) []string {
+	_, bad, _ := parseOverrides(lines)
+	return bad
+}
+
+func parseOverrides(lines []string) (Overrides, []string, error) {
 	o := Overrides{}
+	var bad []string
+	var errs []error
+lines:
 	for _, l := range lines {
 		f := strings.Fields(l)
 		if len(f) == 0 {
@@ -35,13 +56,23 @@ func ParseOverrides(lines []string) (Overrides, error) {
 		for _, s := range f[1:] {
 			c, err := ParseChord(s)
 			if err != nil {
-				return nil, fmt.Errorf("keymap override %q: %w", f[0], err)
+				bad = append(bad, l)
+				errs = append(errs, fmt.Errorf("keymap override %q: %w", f[0], err))
+				continue lines
 			}
 			cs = append(cs, c)
 		}
 		o[Action(f[0])] = cs
 	}
-	return o, nil
+	return o, bad, errors.Join(errs...)
+}
+
+// overrideAction returns the action of a stored override line.
+func overrideAction(line string) Action {
+	if f := strings.Fields(line); len(f) > 0 {
+		return Action(f[0])
+	}
+	return ""
 }
 
 // Format returns the stored form of o, sorted by action.
@@ -124,7 +155,7 @@ func NewScheme(p Preset, ov Overrides, extra ...Def) *Scheme {
 		s.index[d.ID] = len(s.entries)
 		s.entries = append(s.entries, e)
 	}
-	for _, e := range s.entries {
+	for _, e := range s.byPriority() {
 		m := s.lookup[e.Context]
 		if m == nil {
 			m = map[Chord]Action{}
@@ -137,6 +168,28 @@ func NewScheme(p Preset, ov Overrides, extra ...Def) *Scheme {
 		}
 	}
 	return s
+}
+
+// byPriority returns the entries in binding priority: user bindings
+// (SourceUser) first, then the defaults, each in catalog order. A chord
+// the user bound therefore shadows a default binding of the same chord,
+// whatever the catalog order (D247); Conflicts still reports the pair.
+func (s *Scheme) byPriority() []*Entry {
+	out := make([]*Entry, 0, len(s.entries))
+	for _, user := range []bool{true, false} {
+		for i := range s.entries {
+			if (s.entries[i].Source == SourceUser) == user {
+				out = append(out, &s.entries[i])
+			}
+		}
+	}
+	return out
+}
+
+// IsUser reports whether the chords of a come from a user override.
+func (s *Scheme) IsUser(a Action) bool {
+	i, ok := s.index[a]
+	return ok && s.entries[i].Source == SourceUser
 }
 
 // Preset returns the scheme's preset.
@@ -202,10 +255,11 @@ func (s *Scheme) Lookup(ctx Context, c Chord) (Action, bool) {
 }
 
 // Keymap returns the keyboard bindings of context ctx (exactly that
-// context, gestures left out) whose action passes keep (nil: all).
+// context, gestures left out) whose action passes keep (nil: all). User
+// bindings win over defaults of the same chord.
 func (s *Scheme) Keymap(ctx Context, keep func(Action) bool) *Keymap {
 	k := New(string(s.preset) + ":" + string(ctx))
-	for _, e := range s.entries {
+	for _, e := range s.byPriority() {
 		if e.Context != ctx || (keep != nil && !keep(e.ID)) {
 			continue
 		}

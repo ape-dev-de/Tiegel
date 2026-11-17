@@ -90,10 +90,10 @@ func (v *View) syncKeymap() {
 	if !preset.Valid() {
 		preset = keymap.PresetFor(v.goos)
 	}
+	// Bad lines are skipped and reported; the valid ones apply (D248).
 	ov, err := keymap.ParseOverrides(k.Overrides)
 	if err != nil {
-		v.ctl.Status.Notice = err.Error()
-		ov = nil
+		v.ctl.Status.Notice = strings.ReplaceAll(err.Error(), "\n", "; ")
 	}
 	v.Registry.SetScheme(keymap.NewScheme(preset, ov))
 }

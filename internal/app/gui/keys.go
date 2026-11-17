@@ -2,6 +2,7 @@ package gui
 
 import (
 	"runtime"
+	"slices"
 
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -263,7 +264,13 @@ func (s *shortcuts) build(r *Registry, scope ActionScope, focus event.Tag) {
 	s.version, s.focus = r.version, focus
 	s.keys = keymap.New("window")
 	s.filters = s.filters[:0]
-	for _, a := range r.Actions() {
+	// User bindings first: they shadow a default of the same chord (D247).
+	sch := r.Scheme()
+	acts := r.Actions()
+	slices.SortStableFunc(acts, func(x, y Action) int {
+		return boolRank(sch.IsUser(y.ID)) - boolRank(sch.IsUser(x.ID))
+	})
+	for _, a := range acts {
 		if a.Scope != scope {
 			continue
 		}
@@ -278,6 +285,13 @@ func (s *shortcuts) build(r *Registry, scope ActionScope, focus event.Tag) {
 			s.filters = append(s.filters, key.Filter{Focus: focus, Name: gioKey(c.Key), Required: gioMods(c.Mods)})
 		}
 	}
+}
+
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // process runs the actions whose shortcuts were pressed. It must run
