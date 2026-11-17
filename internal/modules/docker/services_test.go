@@ -256,6 +256,53 @@ func TestLogs(t *testing.T) {
 	_ = res
 }
 
+// Stop waits for the followed streams: no docker.log event is published
+// after it returned, and no stream starts after it (D309).
+func TestLogsStopWaitsForStreams(t *testing.T) {
+	t.Parallel()
+	f := dockertest.New(t)
+	f.Write(t, "logs.txt", "web-1  | hello\n")
+	l := &launcher{}
+	a, m := newApp(t, Options{Binary: f.Binary, Env: f.Env, GOOS: "linux", Launch: l.launch})
+	modtest.Project(t, a, map[string]string{"compose.yaml": shopCompose})
+	rec := modtest.Record(t, a, TopicLog)
+	var res LogsResult
+	modtest.Call(t, a, "docker.logs", LogsParams{Follow: true}, &res)
+	id := res.ID
+	rec.Wait(t, TopicLog, func(e bus.Event) bool { ev := e.Payload.(LogEvent); return ev.ID == id && len(ev.Lines) > 0 })
+
+	if err := m.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	// Publish only enqueues: draining delivers everything published
+	// before Stop returned.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := a.Bus().Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	n := len(rec.Events(TopicLog))
+	done := false
+	for _, e := range rec.Events(TopicLog) {
+		if ev := e.Payload.(LogEvent); ev.ID == id && ev.Done {
+			done = true
+		}
+	}
+	if !done {
+		t.Fatal("stream still running after Stop returned")
+	}
+	if _, err := m.logs(context.Background(), LogsParams{Follow: true}); err == nil {
+		t.Fatal("stream started after Stop")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if err := a.Bus().Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(rec.Events(TopicLog)); got != n {
+		t.Fatalf("%d docker.log events after Stop", got-n)
+	}
+}
+
 func TestWatch(t *testing.T) {
 	t.Parallel()
 	f := dockertest.New(t)
@@ -367,6 +414,13 @@ func TestShellAndOpenURL(t *testing.T) {
 	modtest.WantCode(t, a, "docker.shell", ShellParams{}, api.CodeInvalidParams)
 	modtest.WantCode(t, a, "docker.shell", ShellParams{Service: "-x"}, api.CodeInvalidParams)
 	modtest.WantCode(t, a, "docker.shell", ShellParams{Container: "-x"}, api.CodeInvalidParams)
+	// Names and shells with shell/cmd metacharacters are refused (D308).
+	for _, bad := range []string{"a&calc", "%COMSPEC%", "a;b", "a|b", `a"b`} {
+		modtest.WantCode(t, a, "docker.shell", ShellParams{Container: bad}, api.CodeInvalidParams)
+		modtest.WantCode(t, a, "docker.shell", ShellParams{Container: "adminer", Shell: bad}, api.CodeInvalidParams)
+		modtest.WantCode(t, a, "docker.shell", ShellParams{Service: "app", Shell: bad}, api.CodeInvalidParams)
+		modtest.WantCode(t, a, "docker.logs", LogsParams{Container: bad}, api.CodeInvalidParams)
+	}
 
 	modtest.Call(t, a, "docker.openURL", URLParams{URL: "http://localhost:8080"}, &res)
 	if got := l.last(); got[0] != "xdg-open" || got[1] != "http://localhost:8080" {

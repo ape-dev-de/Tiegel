@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -94,12 +95,34 @@ const (
 // Actions lists the supported actions.
 var Actions = []string{ActionUp, ActionStart, ActionStop, ActionRestart, ActionDown}
 
-// CheckServices rejects service names that docker would read as options.
+// nameRe is the charset of service and container names (and IDs). Names
+// end up on terminal command lines (cmd.exe, wt, launcher scripts), so
+// nothing a shell interprets passes, and no leading "-" docker would
+// read as an option (D308).
+var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./-]*$`)
+
+// shellRe additionally allows an absolute shell path ("/bin/bash").
+var shellRe = regexp.MustCompile(`^/?[A-Za-z0-9][A-Za-z0-9_./-]*$`)
+
+// ValidName reports whether name is a safe service or container name.
+func ValidName(name string) bool { return nameRe.MatchString(name) }
+
+// CheckServices rejects service names outside the safe charset
+// (ValidName), e.g. names docker would read as options.
 func CheckServices(services []string) error {
 	for _, s := range services {
-		if s == "" || strings.HasPrefix(s, "-") || strings.ContainsAny(s, " \t\n") {
+		if !ValidName(s) {
 			return fmt.Errorf("compose: invalid service name %q", s)
 		}
+	}
+	return nil
+}
+
+// CheckShell rejects a shell (program in the container) outside the safe
+// charset: a name or an absolute path.
+func CheckShell(shell string) error {
+	if !shellRe.MatchString(shell) {
+		return fmt.Errorf("compose: invalid shell %q", shell)
 	}
 	return nil
 }
@@ -181,6 +204,9 @@ func (s Stack) ShellArgs(service, shell string) ([]string, error) {
 	}
 	if shell == "" {
 		shell = "sh"
+	}
+	if err := CheckShell(shell); err != nil {
+		return nil, err
 	}
 	return append([]string{s.Client.Bin()}, s.Client.Args(s.args("exec", service, shell)...)...), nil
 }

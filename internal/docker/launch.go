@@ -70,12 +70,21 @@ func TerminalCommand(o TerminalOptions, argv []string) ([]string, error) {
 		return []string{"open", "-a", app, script}, nil
 	case "windows":
 		if choice != "" {
-			return append(strings.Fields(choice), argv...), nil
+			prefix := strings.Fields(choice)
+			if isWT(prefix[0]) {
+				argv = wtEscape(argv)
+			}
+			return append(prefix, argv...), nil
 		}
-		if look("wt") {
-			return append([]string{"wt"}, argv...), nil
+		// cmd.exe only (D307): `wt` re-splits its command line at ";" and
+		// `cmd /c start "" cmd /k` parses it twice. The launcher starts
+		// this argv verbatim in a new console (WindowsRawCmd), which the
+		// default terminal application of Windows hosts.
+		line, err := CmdLine(argv)
+		if err != nil {
+			return nil, err
 		}
-		return append([]string{"cmd", "/c", "start", "", "cmd", "/k"}, argv...), nil
+		return append(append([]string(nil), cmdPrefix...), `"`+line+`"`), nil
 	}
 	if choice != "" {
 		return append(strings.Fields(choice), argv...), nil
@@ -96,6 +105,113 @@ func TerminalCommand(o TerminalOptions, argv []string) ([]string, error) {
 		}
 	}
 	return nil, ErrNoTerminal
+}
+
+// cmdPrefix starts cmd.exe without AutoRun (/d), without delayed
+// expansion (/v:off) and with /s: it strips exactly the outer quotes of
+// the line after /k and runs the rest as typed.
+var cmdPrefix = []string{"cmd", "/d", "/v:off", "/s", "/k"}
+
+// WindowsRawCmd reports whether argv is a cmd.exe command returned by
+// TerminalCommand for Windows: its elements are already quoted for
+// cmd.exe, so a launcher must join them with spaces verbatim (as the
+// command line, without per-argument quoting) and open a new console.
+func WindowsRawCmd(argv []string) bool {
+	if len(argv) != len(cmdPrefix)+1 {
+		return false
+	}
+	for i, a := range cmdPrefix {
+		if argv[i] != a {
+			return false
+		}
+	}
+	return true
+}
+
+// cmdMeta are the characters cmd.exe interprets outside of quotes.
+const cmdMeta = `()%!^"<>&|`
+
+// CmdLine returns argv as a line for `cmd /s /k "<line>"` that runs
+// argv[0] with exactly argv[1:] as its arguments. The program is quoted
+// (cmd needs real quotes to find a path with spaces); every argument is
+// quoted for CommandLineToArgvW and each cmd.exe metacharacter in it,
+// quotes included, is escaped with ^. Escaped quotes do not switch cmd
+// into quote mode, so &, |, < and > stay literal, and %VAR% becomes
+// ^%VAR^%: cmd looks up the variable "VAR^", finds none and leaves the
+// text, then removes the carets.
+func CmdLine(argv []string) (string, error) {
+	if len(argv) == 0 {
+		return "", errors.New("docker: empty command")
+	}
+	prog := argv[0]
+	if prog == "" || strings.ContainsAny(prog, "\"%\r\n\x00") {
+		return "", fmt.Errorf("docker: program path %q cannot be started by cmd.exe", prog)
+	}
+	var b strings.Builder
+	b.WriteString(`"` + prog + `"`)
+	for _, a := range argv[1:] {
+		if strings.ContainsAny(a, "\r\n\x00") {
+			return "", fmt.Errorf("docker: argument %q cannot be passed through cmd.exe", a)
+		}
+		b.WriteByte(' ')
+		for _, r := range WindowsQuote(a) {
+			if strings.ContainsRune(cmdMeta, r) {
+				b.WriteByte('^')
+			}
+			b.WriteRune(r)
+		}
+	}
+	return b.String(), nil
+}
+
+// WindowsQuote quotes s as one argument for CommandLineToArgvW (and the
+// Go and MSVC runtimes), like syscall.EscapeArg but on every platform.
+func WindowsQuote(s string) string {
+	if s == "" {
+		return `""`
+	}
+	if !strings.ContainsAny(s, " \t\"") {
+		return s
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	slashes := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '\\':
+			slashes++
+		case '"':
+			// Backslashes before a quote are doubled, the quote escaped.
+			b.WriteString(strings.Repeat(`\`, slashes+1))
+			slashes = 0
+		default:
+			slashes = 0
+		}
+		b.WriteByte(c)
+	}
+	// Backslashes before the closing quote are doubled.
+	b.WriteString(strings.Repeat(`\`, slashes))
+	b.WriteByte('"')
+	return b.String()
+}
+
+// isWT reports whether program is Windows Terminal.
+func isWT(program string) bool {
+	base := strings.ToLower(program)
+	if i := strings.LastIndexAny(base, `\/`); i >= 0 {
+		base = base[i+1:]
+	}
+	return base == "wt" || base == "wt.exe"
+}
+
+// wtEscape escapes ";" (Windows Terminal's command separator) as `\;`.
+func wtEscape(argv []string) []string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		out[i] = strings.ReplaceAll(a, ";", `\;`)
+	}
+	return out
 }
 
 // ShellQuote quotes s for a POSIX shell.

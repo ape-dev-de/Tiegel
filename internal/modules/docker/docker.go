@@ -125,6 +125,9 @@ func (m *Module) Start(ctx module.Context) error {
 	m.app = app
 	m.binValid = false
 	m.mu.Unlock()
+	m.sv.mu.Lock()
+	m.sv.closing, m.sv.stopped = false, false
+	m.sv.mu.Unlock()
 	cur, _ := m.selectedContext()
 	m.mu.Lock()
 	m.last = cur
@@ -180,7 +183,7 @@ func (m *Module) Start(ctx module.Context) error {
 
 // Stop implements module.Module: it ends followed logs and watches.
 func (m *Module) Stop() error {
-	m.stopLogs()
+	m.shutdownLogs()
 	m.stopWatch()
 	return nil
 }
