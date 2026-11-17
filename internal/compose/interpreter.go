@@ -157,20 +157,7 @@ func (c *Interpreter) DockerArgs(useExec bool, args ...string) []string {
 // BaseArgs returns the `docker` arguments that select the project:
 // compose --project-directory DIR -p NAME -f FILE... --profile P...
 func (c *Interpreter) BaseArgs() []string {
-	args := []string{"compose"}
-	if c.Dir != "" {
-		args = append(args, "--project-directory", c.Dir)
-	}
-	if c.Project != "" {
-		args = append(args, "-p", c.Project)
-	}
-	for _, f := range c.Files {
-		args = append(args, "-f", f)
-	}
-	for _, p := range c.Profiles {
-		args = append(args, "--profile", p)
-	}
-	return args
+	return Stack{Project: c.Project, Dir: c.Dir, Files: c.Files, Profiles: c.Profiles}.BaseArgs()
 }
 
 // ExecArgs returns the docker arguments to run php with args, via exec when
@@ -214,11 +201,25 @@ func (c *Interpreter) Command(ctx context.Context, args ...string) (*exec.Cmd, e
 
 // ContainerState is one entry of `docker compose ps --format json`.
 type ContainerState struct {
-	Name    string `json:"Name"`
-	Service string `json:"Service"`
-	State   string `json:"State"`
-	Health  string `json:"Health"`
-	Status  string `json:"Status"`
+	ID         string      `json:"ID,omitempty"`
+	Name       string      `json:"Name"`
+	Image      string      `json:"Image,omitempty"`
+	Project    string      `json:"Project,omitempty"`
+	Service    string      `json:"Service"`
+	State      string      `json:"State"`
+	Health     string      `json:"Health"`
+	Status     string      `json:"Status"`
+	ExitCode   int         `json:"ExitCode,omitempty"`
+	Publishers []Publisher `json:"Publishers,omitempty"`
+}
+
+// Publisher is a port of a compose container (`docker compose ps`);
+// PublishedPort is 0 for ports that are only exposed.
+type Publisher struct {
+	URL           string `json:"URL"`
+	TargetPort    int    `json:"TargetPort"`
+	PublishedPort int    `json:"PublishedPort"`
+	Protocol      string `json:"Protocol"`
 }
 
 // Status lists the containers of the project (all services).

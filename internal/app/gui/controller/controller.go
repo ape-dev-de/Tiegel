@@ -199,6 +199,8 @@ type Controller struct {
 	Work *Workspace
 	// LSP is the language server supervisor state (lspsup.go).
 	LSP LSPInfo
+	// Services is the Services tool window (services.go).
+	Services *Services
 }
 
 // New returns a controller for be. Call Close when done.
@@ -214,8 +216,9 @@ func New(be Backend) *Controller {
 	c.Vcs = newGit(c)
 	c.Debug = newDebug(c)
 	c.Work = newWorkspace(c)
+	c.Services = newServices(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
-		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*"}, func(e api.Event) {
+		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*"}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
 	})
 	if err != nil {
@@ -228,6 +231,7 @@ func New(be Backend) *Controller {
 
 // Close stops background work and event delivery.
 func (c *Controller) Close() {
+	c.Services.shutdown()
 	c.unsub()
 	c.cancel()
 }
@@ -565,6 +569,10 @@ func (c *Controller) Rel(abs string) string {
 func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 	if strings.HasPrefix(topic, "debug.") {
 		c.Debug.handleEvent(topic, payload)
+		return
+	}
+	if strings.HasPrefix(topic, "docker.") {
+		c.Services.handleEvent(topic, payload)
 		return
 	}
 	switch topic {

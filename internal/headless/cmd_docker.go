@@ -14,7 +14,7 @@ func init() {
 	flagSpec["clear"] = false
 	flagSpec["refresh"] = false
 	register(
-		&command{name: "docker", usage: "docker [contexts | status [CONTEXT] | use NAME [--global] | use --clear [--global] | path [PATH | --clear]]", summary: "Docker binary and contexts (OrbStack, Docker Desktop, …); status contacts the engine (exit 1 if unreachable)", maxArgs: 2, cwdProject: true, run: runDocker},
+		&command{name: "docker", usage: "docker [contexts | status [CONTEXT] | use NAME [--global] | use --clear [--global] | path [PATH | --clear]" + dockerServiceUsage + "]", summary: "Docker binary and contexts (OrbStack, Docker Desktop, …); compose services, actions and logs; status, ps, logs and actions contact the engine", maxArgs: 2, cwdProject: true, run: runDocker},
 		&command{name: "interp-probe", usage: "interp-probe [ID] [--refresh] [--start]", summary: "interpreter info: PHP version, extensions, Xdebug, ini files (cached; --refresh re-reads)", maxArgs: 1, cwdProject: true, run: runInterpProbe},
 		&command{name: "interp-status", usage: "interp-status [ID]", summary: "Docker context and service/image state of a compose or image interpreter", maxArgs: 1, cwdProject: true, run: runInterpStatus},
 		&command{name: "interp-image", usage: "interp-image [add IMAGE [REMOTE] | remove IMAGE]", summary: "list, add or remove Docker image interpreters (docker run --rm -v project:REMOTE)", maxArgs: 3, cwdProject: true, run: runInterpImage},
@@ -117,6 +117,9 @@ func runDocker(c *cli) error {
 			out.Path, out.Source = res.Binary.Path, res.Binary.Source
 		}
 		return c.emit(out, func(w io.Writer) { fmt.Fprintf(w, "%s\t%s\n", out.Path, out.Source) })
+	}
+	if ok, err := runDockerServices(c, sub, arg); ok {
+		return err
 	}
 	return usagef("usage: tiegel --headless %s", commands["docker"].usage)
 }

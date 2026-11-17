@@ -3,11 +3,15 @@
 // the chosen context (global default, per-project override) and checks
 // whether an engine is reachable – the latter only when asked.
 //
-// API: docker.contexts, docker.status, docker.setContext, docker.setPath.
-// Events: docker.contextChanged.
+// API: docker.contexts, docker.status, docker.setContext, docker.setPath;
+// Services window: docker.services, docker.serviceAction, docker.logs,
+// docker.logsStop, docker.watchStart, docker.watchStop, docker.shell,
+// docker.openURL.
+// Events: docker.contextChanged, docker.log, docker.servicesChanged.
 // Hooks provided: docker.endpoint (binary, context and PATH for running
 // docker), used by php-runtime for compose and image interpreters.
-// Settings: docker.path, docker.context, docker.timeoutSeconds.
+// Settings: docker.path, docker.context, docker.timeoutSeconds,
+// docker.servicesRefreshSeconds, docker.terminal.
 package docker
 
 import (
@@ -58,6 +62,16 @@ type Options struct {
 	Env []string
 	// Getenv reads DOCKER_HOST/DOCKER_CONTEXT; nil means os.Getenv.
 	Getenv func(string) string
+	// GOOS overrides the platform for terminals and browsers (tests).
+	GOOS string
+	// Launch starts external programs (terminal, browser) without
+	// waiting; nil starts them for real (tests record instead).
+	Launch func(argv, env []string) error
+	// LookPath finds terminal programs; nil means exec.LookPath.
+	LookPath func(string) (string, error)
+	// TempDir receives the macOS terminal launcher scripts; empty means
+	// os.TempDir.
+	TempDir string
 }
 
 // Module is the docker module.
@@ -73,10 +87,12 @@ type Module struct {
 	binErr   error
 	login    string
 	last     string // last effective context, for docker.contextChanged
+
+	sv *servicesState // Services window (services.go)
 }
 
 // New creates the module.
-func New(opts Options) *Module { return &Module{opts: opts} }
+func New(opts Options) *Module { return &Module{opts: opts, sv: newServicesState()} }
 
 // ID implements module.Module.
 func (m *Module) ID() string { return ID }
@@ -89,14 +105,14 @@ func (m *Module) Claims() []string { return []string{"docker.*"} }
 
 // SettingSpecs implements module.SettingsProvider.
 func (m *Module) SettingSpecs() []settings.Spec {
-	return []settings.Spec{
+	return append([]settings.Spec{
 		{Key: SettingPath, Kind: settings.KindPath, Scope: settings.ScopeGlobal, Label: "Docker binary",
 			Help: "Path to the docker CLI; empty searches PATH, the login shell PATH and the usual install directories (Homebrew, OrbStack, Docker Desktop)."},
 		{Key: SettingContext, Kind: settings.KindString, Default: "", Scope: settings.ScopeProject, Label: "Docker context",
 			Help: "Context for compose and image interpreters (e.g. orbstack, desktop-linux); empty uses docker's current context."},
 		{Key: SettingTimeout, Kind: settings.KindInt, Default: 5, Scope: settings.ScopeGlobal, Label: "Connection check timeout (seconds)",
 			Min: settings.IntPtr(1), Max: settings.IntPtr(120)},
-	}
+	}, serviceSpecs()...)
 }
 
 // Start registers the API and the docker.endpoint hook.
@@ -119,6 +135,7 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "docker.status", "Docker binary, effective context and whether its engine answers (contacts the engine)", m.status)
 	api.Add(p, "docker.setContext", "Choose the Docker context for the project (or globally); clear restores the default", m.setContext)
 	api.Add(p, "docker.setPath", "Set or clear the docker binary path (docker.path)", m.setPath)
+	m.registerServices(p)
 	if err := p.Err(); err != nil {
 		return err
 	}
@@ -139,20 +156,34 @@ func (m *Module) Start(ctx module.Context) error {
 		if ch.Key == SettingContext || ch.Key == SettingPath {
 			m.announce(string(ch.Scope))
 		}
+		if ch.Key == SettingContext || ch.Key == SettingPath || ch.Key == SettingRefresh {
+			// Followed logs belong to the old engine; a watch restarts
+			// with the new context or interval.
+			if ch.Key != SettingRefresh {
+				m.stopLogs()
+			}
+			go m.restartWatch()
+		}
 	}))
 	reset := func(bus.Event) {
 		cur, _ := m.selectedContext()
 		m.mu.Lock()
 		m.last = cur
 		m.mu.Unlock()
+		m.stopLogs()
+		go m.restartWatch()
 	}
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicProjectOpened, reset))
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicProjectClosed, reset))
 	return nil
 }
 
-// Stop implements module.Module.
-func (m *Module) Stop() error { return nil }
+// Stop implements module.Module: it ends followed logs and watches.
+func (m *Module) Stop() error {
+	m.stopLogs()
+	m.stopWatch()
+	return nil
+}
 
 // announce publishes docker.contextChanged with the effective context.
 func (m *Module) announce(scope string) {

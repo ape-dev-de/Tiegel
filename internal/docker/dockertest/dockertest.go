@@ -12,6 +12,17 @@
 //	                           unreachable engine; <dir>/slow sleeps 5 s
 //	image ls -q REF            an ID if REF is listed in <dir>/images
 //	compose … ps …             contents of <dir>/ps.json
+//	compose … logs …, logs …   contents of <dir>/logs.txt; with --follow
+//	                           it then prints <dir>/logs-next (removing
+//	                           it) whenever it appears, until killed
+//	compose … up|down|start|stop|restart …, start|stop|restart ID
+//	                           print progress on stderr; fail when the
+//	                           action is listed in <dir>/fail
+//	ps …                       contents of <dir>/containers.json
+//	events …                   contents of <dir>/events.json, then
+//	                           <dir>/events-next whenever it appears,
+//	                           until killed; fails when <dir>/events-fail
+//	                           exists
 //	compose … exec|run …, run …  behave like php (-m, -r with the version,
 //	                           ini or probe script); `run` of an image not
 //	                           in <dir>/images with --pull never fails
@@ -87,6 +98,26 @@ func New(t TB) *Fake {
 func (f *Fake) Write(t TB, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(f.Dir, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Emit publishes content as file name atomically (write and rename), for
+// the files a running fake picks up (logs-next, events-next). It waits
+// until a previous emission was consumed.
+func (f *Fake) Emit(t TB, name, content string) {
+	t.Helper()
+	p := filepath.Join(f.Dir, name)
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(p); err != nil {
+			break
+		}
+	}
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, p); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -169,14 +200,33 @@ func play(dir string, args []string) int {
 		}
 		return 0
 	case "compose":
-		for _, a := range args {
-			if a == "ps" {
-				out, _ := read(dir, "ps.json")
-				fmt.Print(out)
-				return 0
-			}
+		switch sub := composeSub(args); sub {
+		case "ps":
+			out, _ := read(dir, "ps.json")
+			fmt.Print(out)
+			return 0
+		case "logs":
+			return logs(dir, args[subIndex(args)+1:])
+		case "up", "down", "start", "stop", "restart":
+			return action(dir, sub)
 		}
 		return php(dir, args)
+	case "start", "stop", "restart":
+		return action(dir, args[0])
+	case "logs":
+		return logs(dir, args[1:])
+	case "ps":
+		out, _ := read(dir, "containers.json")
+		fmt.Print(out)
+		return 0
+	case "events":
+		if _, bad := read(dir, "events-fail"); bad {
+			return fail("Error response from daemon: events not supported")
+		}
+		out, _ := read(dir, "events.json")
+		fmt.Print(out)
+		tail(dir, "events-next")
+		return 0
 	case "run":
 		noPull := false
 		for i, a := range args {
@@ -194,6 +244,62 @@ func play(dir string, args []string) int {
 		return fail("run without --entrypoint")
 	}
 	return fail("unknown command " + args[0])
+}
+
+// subIndex returns the index of the compose subcommand after the global
+// options (len(args) if there is none).
+func subIndex(args []string) int {
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--project-directory", "-p", "-f", "--profile":
+			i++
+			continue
+		}
+		return i
+	}
+	return len(args)
+}
+
+// composeSub returns the compose subcommand after the global options.
+func composeSub(args []string) string {
+	if i := subIndex(args); i < len(args) {
+		return args[i]
+	}
+	return ""
+}
+
+// logs prints logs.txt and, with --follow, keeps printing logs-next.
+func logs(dir string, args []string) int {
+	out, _ := read(dir, "logs.txt")
+	fmt.Print(out)
+	for _, a := range args {
+		if a == "--follow" || a == "-f" {
+			tail(dir, "logs-next")
+		}
+	}
+	return 0
+}
+
+// action plays a compose or container action.
+func action(dir, name string) int {
+	if listed(dir, "fail", name) {
+		return fail("Error response from daemon: " + name + " failed")
+	}
+	fmt.Fprintf(os.Stderr, " Container fake-1  %s\n", name)
+	return 0
+}
+
+// tail prints the file name whenever it appears (and removes it) until
+// the process is killed; it gives up after a minute.
+func tail(dir, name string) {
+	p := filepath.Join(dir, name)
+	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); {
+		if data, err := os.ReadFile(p); err == nil {
+			_ = os.Remove(p)
+			fmt.Print(string(data))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // php answers the queries of package interp.
