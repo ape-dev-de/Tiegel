@@ -27,7 +27,8 @@ const statusTimeout = 10 * time.Second
 func (m *Module) SettingSpecs() []settings.Spec {
 	return []settings.Spec{
 		{Key: SettingInterpreter, Kind: settings.KindString, Default: "", Scope: settings.ScopeProject, Label: "PHP interpreter",
-			Help: "Selected interpreter (see interp.list): local:<path>, compose:<project>:<service>, docker:<image> or wsl:<distro>:<path>."},
+			Help:     "Selected interpreter (see interp.list): local:<path>, compose:<project>:<service>, docker:<image> or wsl:<distro>:<path>.",
+			ReadOnly: true, ReadOnlyHint: "choose the interpreter with interp.select (headless: interpreters select ID) or the interpreter picker"},
 		{Key: SettingExecMode, Kind: settings.KindEnum, Default: "auto", Options: []string{"auto", "exec", "run"}, Scope: settings.ScopeProject,
 			Label: "Compose: start PHP with", Group: "Docker",
 			Help: "auto uses docker compose exec when the service runs and run --rm otherwise; exec and run force one of them."},
