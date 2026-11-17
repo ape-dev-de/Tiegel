@@ -48,6 +48,16 @@ type LSPServerDecl struct {
 	AutoSelect bool `json:"autoSelect"`
 }
 
+// EffectiveArgs returns the arguments the server is started with: the
+// user's override (Args) if set, else the plugin's defaults
+// (Definition.Args, e.g. "language-server" or "--stdio").
+func (d LSPServerDecl) EffectiveArgs() []string {
+	if d.Args != nil {
+		return d.Args
+	}
+	return d.Definition.Args
+}
+
 // Hook points of language server plugins and installation recipes.
 var (
 	// HookLSPServers collects the language servers of the running lsp-*
