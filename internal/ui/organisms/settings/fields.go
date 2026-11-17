@@ -11,8 +11,9 @@ import (
 
 // fieldState is the widget state of one setting, generated from its kind:
 // bool → checkbox, enum (or a string with Choices) → dropdown, int, float,
-// string, list → text field (committed on Enter or focus loss), path →
-// text field with a chooser button.
+// string → text field (committed on Enter or focus loss), list →
+// multi-line text field with one entry per line (committed on focus loss),
+// path → text field with a chooser button.
 type fieldState struct {
 	check  atoms.Checkbox
 	sel    *molecules.Dropdown
@@ -43,6 +44,11 @@ func (p *Panel) field(f Field) *fieldState {
 		if st.text == nil {
 			st.text = atoms.NewTextField(placeholder(f))
 			st.text.Mono = f.Kind == KindPath || f.Kind == KindList
+			if f.Kind == KindList {
+				// Enter starts a new entry; the value is committed when
+				// the field loses focus.
+				st.text.Editor.SingleLine, st.text.Editor.Submit = false, false
+			}
 		}
 	}
 	return st
@@ -51,7 +57,7 @@ func (p *Panel) field(f Field) *fieldState {
 func placeholder(f Field) string {
 	switch f.Kind {
 	case KindList:
-		return "comma-separated"
+		return "one entry per line"
 	case KindPath:
 		return "path"
 	}
