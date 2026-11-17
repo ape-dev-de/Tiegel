@@ -185,6 +185,8 @@ type Supervisor struct {
 	startCancel context.CancelFunc
 	closed      bool
 	trace       atomic.Bool
+	// reqTimeout is the request limit of new and running clients (0: off).
+	reqTimeout atomic.Int64
 }
 
 // ErrClosed is returned after Close.
@@ -222,6 +224,9 @@ func New(opts Options) *Supervisor {
 	}
 	s := &Supervisor{opts: opts, log: l}
 	s.st = Status{State: StateOff, Since: time.Now()}
+	if opts.RequestTimeout > 0 {
+		s.reqTimeout.Store(int64(opts.RequestTimeout))
+	}
 	return s
 }
 
@@ -245,6 +250,24 @@ func (s *Supervisor) SetTrace(on bool) {
 	s.st.Trace = on
 	s.mu.Unlock()
 }
+
+// SetRequestTimeout changes the request limit (d <= 0: no limit). It
+// applies to the running server immediately and to every later start.
+func (s *Supervisor) SetRequestTimeout(d time.Duration) {
+	d = max(d, 0)
+	s.reqTimeout.Store(int64(d))
+	s.mu.Lock()
+	inst := s.inst
+	s.mu.Unlock()
+	if inst != nil {
+		if c := inst.Client(); c != nil {
+			c.SetRequestTimeout(d)
+		}
+	}
+}
+
+// RequestTimeout returns the current request limit (0: none).
+func (s *Supervisor) RequestTimeout() time.Duration { return time.Duration(s.reqTimeout.Load()) }
 
 // Status returns the current status.
 func (s *Supervisor) Status() Status {
@@ -351,11 +374,18 @@ func (s *Supervisor) start(ctx context.Context, t Target, force bool) error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 	s.mu.Lock()
+	if s.closed { // closed while waiting for opMu
+		s.mu.Unlock()
+		return ErrClosed
+	}
 	if !force && s.target != nil && s.target.key() == t.key() && s.st.State == StateRunning {
 		s.mu.Unlock()
 		return nil
 	}
 	s.mu.Unlock()
+	if err := ctx.Err(); err != nil { // the caller gave up while waiting
+		return fmt.Errorf("supervisor: start of %s: %w", t.ID, err)
+	}
 	s.shutdownLocked()
 	s.mu.Lock()
 	s.epoch++
@@ -384,6 +414,15 @@ func (s *Supervisor) Restart(ctx context.Context) error {
 
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed { // closed while waiting for opMu
+		return ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("supervisor: restart: %w", err)
+	}
 	s.shutdownLocked()
 	s.mu.Lock()
 	if s.target == nil { // stopped meanwhile
@@ -448,12 +487,14 @@ func (s *Supervisor) NotFound(t Target, reason string) {
 	s.publish()
 }
 
-// Close stops the server and refuses further starts.
+// Close stops the server and refuses further starts. closed is set before
+// stopping so that an operation waiting for opMu cannot launch a server
+// after the stop (it would be orphaned).
 func (s *Supervisor) Close() {
-	s.Stop(StateOff, "closed", nil)
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
+	s.Stop(StateOff, "closed", nil)
 }
 
 // cancelPendingLocked cancels a scheduled restart and aborts a start in
@@ -553,7 +594,22 @@ func (s *Supervisor) launch(ctx context.Context, epoch int) error {
 	s.mu.Lock()
 	s.startCancel = nil
 	aborted := s.epoch != epoch || s.inst != inst
+	cancelled := !aborted && err != nil && errors.Is(ctx.Err(), context.Canceled)
+	if cancelled {
+		// The caller cancelled the start (e.g. lsp.stop during a hanging
+		// initialize): no crash, no restart.
+		s.inst = nil
+		s.setStateLocked(StateStopped, "start cancelled")
+	}
 	s.mu.Unlock()
+	if cancelled {
+		if c != nil {
+			c.Close()
+		}
+		s.event(t.ID, "start cancelled")
+		s.publish()
+		return fmt.Errorf("supervisor: start of %s: %w", t.ID, context.Canceled)
+	}
 	if aborted {
 		// Aborted by Stop or Start, which report their own state.
 		if c != nil {
@@ -626,11 +682,15 @@ func (s *Supervisor) config(inst *Instance, command string) lsp.Config {
 		}
 		s.log.Append(kind, id, string(msg))
 	}
-	if cfg.RequestTimeout == 0 && s.opts.RequestTimeout > 0 {
-		cfg.RequestTimeout = s.opts.RequestTimeout
+	if cfg.RequestTimeout == 0 {
+		cfg.RequestTimeout = s.RequestTimeout()
 	}
 	cfg.OnTimeout = func(method string, n int) {
-		s.event(id, "%s: no answer within %s (%d in a row)", method, cfg.RequestTimeout, n)
+		limit := cfg.RequestTimeout
+		if c := inst.Client(); c != nil {
+			limit = c.RequestTimeout()
+		}
+		s.event(id, "%s: no answer within %s (%d in a row)", method, limit, n)
 		if n >= s.opts.HungLimit && !inst.Closed() {
 			inst.hung.Store(fmt.Sprintf("not responding (%d requests timed out, last %s)", n, method))
 			if c := inst.Client(); c != nil {

@@ -404,7 +404,13 @@ func TestCheckFailsAndStableRuns(t *testing.T) {
 		t.Fatalf("checked command %q", cmd)
 	}
 	// With StableAfter ~0 every crash starts a new series: never gives up.
+	// The run time must be measurable first: on Windows the monotonic
+	// clock advances in ticks of up to ~16ms, so a crash right after the
+	// restart measures a run time of 0 (< StableAfter) and counts as "in a
+	// row" — which is correct behaviour, not a double count.
 	for i := 0; i < 4; i++ {
+		inst := s.Current()
+		waitFor(t, func() bool { return time.Since(inst.started) >= s.opts.StableAfter })
 		_ = f.last().Close()
 		st := r.wait(t, "crashed", state(StateCrashed))
 		if st.Crashes != 1 {
