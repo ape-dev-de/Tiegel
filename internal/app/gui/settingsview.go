@@ -15,6 +15,7 @@ var corePageExtras = map[string]string{
 	"Editor":      settingsui.ExtraFontPreview,
 	"Interpreter": settingsui.ExtraInterpreter,
 	"Updates":     settingsui.ExtraUpdates,
+	"Keymap":      settingsui.ExtraKeymap, // the keymap editor replaces the raw specs
 }
 
 // settingsPages builds the dialog tree from the settings schema: core
@@ -38,6 +39,9 @@ func settingsPages(c *controller.Controller) []settingsui.Page {
 		fields, extra := byGroup[g], corePageExtras[g]
 		if len(fields) == 0 && extra == "" {
 			continue
+		}
+		if extra == settingsui.ExtraKeymap {
+			fields = nil // changed through keymap.* only (keymapview.go)
 		}
 		pages = append(pages, settingsui.Page{ID: "core:" + g, Title: g, Fields: fields, Extra: extra})
 	}
@@ -86,6 +90,8 @@ func (v *View) handleSettingsEvent(e settingsui.Event) {
 		c.CheckUpdate()
 	case settingsui.RuntimeEvent:
 		v.handleRuntimeEvent(e.Event)
+	case settingsui.KeymapEvent:
+		v.handleKeymapEvent(e.Event)
 	}
 }
 

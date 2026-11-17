@@ -22,6 +22,7 @@ import (
 
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/keymapeditor"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/runtime"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
@@ -49,6 +50,9 @@ const (
 	ExtraInterpreter = "interpreter" // interpreter picker, path mappings, Xdebug hints
 	ExtraUpdates     = "updates"     // "Check now" with status
 	ExtraFontPreview = "fontPreview" // sample line in the editor font
+	// ExtraKeymap replaces the page's fields by the keymap editor
+	// (Panel.Keymap), which fills the page.
+	ExtraKeymap = "keymap"
 )
 
 // Field is one declared setting with its current value.
@@ -149,6 +153,11 @@ type RuntimeEvent struct{ Event runtime.Event }
 // CloseEvent: the dialog was closed.
 type CloseEvent struct{}
 
+// KeymapEvent wraps an event of the keymap page.
+type KeymapEvent struct{ Event keymapeditor.Event }
+
+func (KeymapEvent) isSettingsEvent() {}
+
 func (SetEvent) isSettingsEvent()        {}
 func (ResetEvent) isSettingsEvent()      {}
 func (ChoosePathEvent) isSettingsEvent() {}
@@ -183,6 +192,8 @@ type Panel struct {
 	Interpreter runtime.InterpreterPicker
 	Mappings    runtime.PathMappingEditor
 	Hints       runtime.XdebugHintsList
+	// Keymap is the keymap page (ExtraKeymap); the host fills its data.
+	Keymap keymapeditor.Editor
 
 	search   *molecules.SearchField
 	scopeSel *molecules.Dropdown
@@ -365,10 +376,31 @@ func ParseValue(f Field, text string) (any, error) {
 	return text, nil
 }
 
+// keymapShown reports whether the keymap page is on screen (search off).
+func (p *Panel) keymapShown() bool {
+	pg := p.Page()
+	return pg != nil && pg.Extra == ExtraKeymap && strings.TrimSpace(p.search.Text()) == ""
+}
+
+// Recording reports whether the keymap page records a shortcut: the host
+// must then leave key events (its shortcuts, Escape) to the dialog.
+func (p *Panel) Recording() bool {
+	p.init()
+	return p.keymapShown() && p.Keymap.Recording()
+}
+
 // Update returns the user's changes.
 func (p *Panel) Update(gtx layout.Context) []Event {
 	p.init()
 	var out []Event
+	// The keymap page first: its recorders take every key while active.
+	if p.keymapShown() {
+		for _, e := range p.Keymap.Update(gtx) {
+			out = append(out, KeymapEvent{e})
+		}
+	} else {
+		p.Keymap.CancelRecording()
+	}
 	if p.closeBtn.Clicked(gtx) {
 		out = append(out, CloseEvent{})
 	}
@@ -559,6 +591,14 @@ func (p *Panel) layoutContent(gtx layout.Context, th *tokens.Theme) layout.Dimen
 	pg := p.Page()
 	if pg == nil {
 		return atoms.Small("No settings.").Layout(gtx, th)
+	}
+	if pg.Extra == ExtraKeymap {
+		// The keymap editor scrolls its own table and fills the page.
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(p.pageHeader(th, pg)),
+			layout.Rigid(layout.Spacer{Height: th.Space.M}.Layout),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return p.Keymap.Layout(gtx, th) }),
+		)
 	}
 	rows = append(rows, p.pageHeader(th, pg))
 	spacer(th.Space.M)

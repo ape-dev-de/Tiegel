@@ -38,28 +38,32 @@ Einstellungen werden in **Kern** und **Plugins** getrennt (D190):
 
 ## 2. Keymap (Kern)
 
-Tiegel-Stand: Editor-Keymap als Code-Tabelle (`keymap/defaults.go`), GUI-Aktionen mit festen Chords (`keys.go`, `actions/*`); **keine Nutzer-Bindungen**, keine zweite Belegung je Aktion, keine Maustasten.
+Tiegel-Stand (M13 abgeschlossen): ein Katalog aller belegbaren Aktionen (`internal/editor/keymap`, D220) mit Presets macOS/PC, mehreren Chords je Aktion, Kontexten global/Editor/Tool-Fenster, Maustasten und Gesten (D224), eigenen Belegungen in `keymap.overrides` (D221, eigene schlagen Standard D247, kaputte Zeilen bleiben erhalten D248) und Konflikterkennung (D223). Parität mit der macOS-Standardbelegung ist als Fixture getestet (D225). Bearbeitung im **Keymap-Editor** des Einstellungsdialogs (AP13.3, D280–D284) und per `tiegel --headless keymap …`.
 
 | Aktion (macOS-Standard der Referenz) | Tiegel | MS |
 | --- | --- | --- |
-| Back / Forward: Cmd+[ / Cmd+] **und Cmd+Alt+← / Cmd+Alt+→**, Maustasten 4/5, Trackpad-Wischen | 🟡 nur Cmd+[ / Cmd+] | M13 |
-| Last Edit Location (Cmd+Shift+⌫) | ❌ | M13 |
-| Recent Locations (Cmd+Shift+E) | ❌ | M13 |
+| Back / Forward: Cmd+[ / Cmd+] **und Cmd+Alt+← / Cmd+Alt+→**, Maustasten 4/5, Trackpad-Wischen | ✅ (Zwei-Finger-Wischen offen, D224) | M13 |
+| Last Edit Location (Cmd+Shift+⌫) | ✅ | M13 |
+| Recent Locations (Cmd+Shift+E) | ✅ | M13 |
 | Wortweise Bewegung/Auswahl/Löschen mit Option, Zeilenanfang/-ende mit Cmd | ✅ | – |
 | Go to Class/File/Symbol (Cmd+O / Cmd+Shift+O / Cmd+Alt+O), Search Everywhere (⇧⇧), Find Action (Cmd+Shift+A) | ✅ | – |
 | Find/Replace in Path (Cmd+Shift+F/R), Find Usages (Alt+F7), Alt+Enter, Reformat (Cmd+Alt+L), Rename (Shift+F6) | ✅ | – |
-| File Structure-Popup (Cmd+F12) | ❌ (nur Structure-Fenster Cmd+7) | M13 |
-| Parameter Info (Cmd+P), Quick Documentation (F1/Ctrl+J) | ❌ als Shortcut | M13 |
-| Next/Previous Highlighted Error (F2/Shift+F2) | ❌ | M13 |
-| Go to Test / Create Test (Cmd+Shift+T) | ❌ | M15 |
-| Run/Debug (Ctrl+R/Ctrl+D), Run Context Configuration (Ctrl+Shift+R), Rerun (Cmd+R im Run-Fenster) | ❌ | M15 |
-| Generate (Cmd+N), Surround With (Cmd+Alt+T), Live Templates (Cmd+J) | ❌ | M17 |
-| Join Lines (Ctrl+Shift+J), Toggle Case (Cmd+Shift+U), Complete Statement (Cmd+Shift+Enter), Paste from History (Cmd+Shift+V) | ❌ | M13 |
+| File Structure-Popup (Cmd+F12) | ✅ | M13 |
+| Parameter Info (Cmd+P), Quick Documentation (F1/Ctrl+J) | ✅ | M13 |
+| Next/Previous Highlighted Error (F2/Shift+F2) | ✅ | M13 |
+| Go to Test / Create Test (Cmd+Shift+T) | ❌ (Fixture: später) | M15 |
+| Run/Debug (Ctrl+R/Ctrl+D), Run Context Configuration (Ctrl+Shift+R), Rerun (Cmd+R im Run-Fenster) | ❌ (Fixture: später) | M15 |
+| Generate (Cmd+N), Surround With (Cmd+Alt+T), Live Templates (Cmd+J) | ❌ (Fixture: später) | M17 |
+| Join Lines (Ctrl+Shift+J), Toggle Case (Cmd+Shift+U), Paste from History (Cmd+Shift+V) | ✅ | M13 |
+| Complete Statement (Cmd+Shift+Enter) | ❌ (Fixture: später) | M17 |
 | Extract Variable/Method (Cmd+Alt+V/M) | ❌ (LSP-Code-Actions) | M17 |
-| Terminal (Alt+F12), Tool-Fenster Cmd+0…9 | 🟡 Cmd+1/Cmd+7; Terminal fehlt | M13/M15 |
+| Tool-Fenster Cmd+0…9 | 🟡 0/1/3/5/6/7/9 (D228); 2/4/8 folgen mit ihren Fenstern | M14/M15/M17 |
+| Terminal (Alt+F12) | ❌ | M15 |
 | Debug: F8/F7/Shift+F8/F9, Cmd+F8 | ✅ | – |
-| Nutzer-Bindungen, mehrere Chords je Aktion, Konflikterkennung | ❌ | M13 |
-| Keymap-Presets (macOS / PC / „Referenz-IDE macOS“) | 🟡 macOS/PC | M13 |
+| Nutzer-Bindungen, mehrere Chords je Aktion, Konflikterkennung | ✅ (D220–D223, D247, D248) | M13 |
+| Keymap-Editor: Suche nach Aktion und nach Tastenkombination, Aufnahme-Feld (inkl. ⇧⇧, Maustasten, Gesten), Konfliktwarnung mit „Keep both“ / „Remove from other“, „No shortcut“, Zurücksetzen je Aktion und gesamt, ungültige Zeilen entfernen | ✅ (D280–D284) | M13 |
+| Keymap-Presets (macOS / PC / „Referenz-IDE macOS“) | ✅ macOS/PC; das macOS-Preset entspricht der Referenz-Standardbelegung (D225) | M13 |
+| Tool-Fenster-Fokuskontext (Cmd+D = Show Diff nur im Tool-Fenster) | 🟡 GUI bindet global und leitet weiter (D229) | – |
 | Terminal: Option als Meta | ❌ (kein Terminal) | M15 |
 
 ## 3. Editor (Kern)

@@ -122,6 +122,7 @@ type View struct {
 
 	settings     settingsui.Panel
 	settingsOpen bool
+	keymapSeen   uint64 // KeymapEdit.Version shown by the keymap page
 	mappings     []controller.Mapping
 
 	welcome welcome.View
@@ -522,6 +523,8 @@ func (v *View) openPHPChooser() {
 func (v *View) openSettings() {
 	v.chooseMode = chooseNone
 	v.settingsOpen = true
+	v.settings.Keymap.CancelRecording()
+	v.ctl.LoadKeymapList()
 	v.ctl.LoadSettingsData()
 	v.ctl.LoadMonoFonts(tokens.MonospaceFamilies)
 	v.mappings = nil
@@ -681,7 +684,8 @@ func (v *View) handleSettings(gtx layout.Context) {
 		}
 		p.Hints.Items = append(p.Hints.Items, rtui.Hint{Severity: sev, Code: h.Code, Message: h.Message})
 	}
-	for {
+	v.fillKeymapEditor()
+	for !p.Recording() { // a recording keymap editor gets Escape itself
 		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
 		if !ok {
 			break

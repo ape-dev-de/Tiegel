@@ -40,7 +40,9 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 	}
 	v.syncTools()
 	v.global.build(v.Registry, ScopeGlobal, nil)
-	v.global.process(gtx, v)
+	if !v.keymapRecording() {
+		v.global.process(gtx, v)
+	}
 	v.handleBench(gtx)
 	v.handleTree(gtx)
 	v.handleStatus(gtx)
@@ -86,7 +88,9 @@ func (v *View) frameWelcome(gtx layout.Context) layout.Dimensions {
 		}
 	}
 	v.global.build(v.Registry, ScopeGlobal, nil)
-	v.global.process(gtx, v)
+	if !v.keymapRecording() {
+		v.global.process(gtx, v)
+	}
 	for _, e := range v.bench.Update(gtx) {
 		if _, ok := e.(templates.DismissEvent); ok {
 			v.closeOverlay()

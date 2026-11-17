@@ -35,7 +35,9 @@ func (c *Controller) LoadKeymap() {
 		if oerr == nil && o.Found {
 			_ = json.Unmarshal(o.Value, &lines)
 		}
+		apply := c.fetchKeymapList(ctx)
 		return func() {
+			apply()
 			if preset == c.Keymap.Preset && slices.Equal(lines, c.Keymap.Overrides) && c.Keymap.Version > 0 {
 				return
 			}

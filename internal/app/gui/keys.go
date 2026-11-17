@@ -189,6 +189,10 @@ func (r *Registry) chordsOf(a Action) []keymap.Chord {
 // (keymap.KeyMouseBack, KeySwipeForward, KeyDoubleShift, ...) in the
 // focus context; it reports whether one ran.
 func (v *View) Gesture(name string) bool {
+	if v.keymapRecording() {
+		// The keymap editor records it as a shortcut instead.
+		return v.settings.Keymap.Gesture(name)
+	}
 	ctx := keymap.CtxGlobal
 	if s := v.activeSession(); s != nil && s.ed.Focused() {
 		ctx = keymap.CtxEditor

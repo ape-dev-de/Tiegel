@@ -28,7 +28,7 @@ func buildPages() []*page {
 		editorPage(),
 		debugToolbarPage(), callStackPage(), variablesPage(), watchesPage(), breakpointsListPage(), sessionListPage(),
 		interpreterPickerPage(), pathMappingPage(), hintsPage(), statusbarVersionPage(),
-		debugPanelPage(), settingsPage(),
+		debugPanelPage(), settingsPage(), keymapEditorPage(),
 	}, append(gitPages(), diffPages()...)...)
 	// Group by level so the sidebar shows each level once.
 	order := map[string]int{"Tokens": 0, "Atoms": 1, "Molecules": 2, "Organisms": 3, "Templates": 4}
