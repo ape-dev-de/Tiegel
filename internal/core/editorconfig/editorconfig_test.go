@@ -106,6 +106,18 @@ x = y
 	}
 }
 
+func TestMaxLineLength(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, FileName), "root = true\n[*]\nmax_line_length = 100\n[*.md]\nmax_line_length = off\n")
+	p, err := Resolve(filepath.Join(dir, "a.php"), dir)
+	if err != nil || p.MaxLineLength != 100 || p.Empty() {
+		t.Fatalf("php: %+v %v", p, err)
+	}
+	if p, _ := Resolve(filepath.Join(dir, "a.md"), dir); p.MaxLineLength != 0 {
+		t.Fatalf("off: %+v", p)
+	}
+}
+
 func TestGlobs(t *testing.T) {
 	cases := []struct {
 		glob, path string

@@ -355,7 +355,7 @@ func (e *Editor) gutterPress(pe pointer.Event, pt image.Point) {
 	if pt.Y+e.scroll.Y < 0 || row >= g.rows {
 		return
 	}
-	line := e.folds.VisibleToDoc(row)
+	line := e.rowLine(row)
 	area := GutterIcons
 	switch {
 	case pt.X < g.annotW:
@@ -396,7 +396,7 @@ func (e *Editor) secondaryPress(pe pointer.Event) {
 	case pt.X >= g.iconX+g.iconW:
 		area = GutterNumbers
 	}
-	e.emit(GutterClickEvent{Line: e.folds.VisibleToDoc(row), Area: area, Mods: mods(pe.Modifiers), Clicks: 1, Secondary: true})
+	e.emit(GutterClickEvent{Line: e.rowLine(row), Area: area, Mods: mods(pe.Modifiers), Clicks: 1, Secondary: true})
 }
 
 func (e *Editor) drag(gtx layout.Context, pe pointer.Event) {
@@ -524,29 +524,38 @@ func lineRange(s buffer.Snapshot, off int) (int, int) {
 	return s.LineStart(l), end
 }
 
-// lineColAt maps a point to a document line and visual column.
-func (e *Editor) lineColAt(pt image.Point) (line, col int) {
+// rowColAt maps a point to a visual row and a visual column in it.
+func (e *Editor) rowColAt(pt image.Point) (row, col int) {
 	g := &e.geo
 	y := pt.Y + e.scroll.Y
-	row := 0
 	if y > 0 {
 		row = y / max(1, g.lineH)
 	}
 	row = min(row, max(0, g.rows-1))
-	line = e.folds.VisibleToDoc(row)
 	x := float64(pt.X - g.textX + e.scroll.X)
 	cw := float64(e.met.cellW) / 64
 	if cw > 0 && x > 0 {
 		col = int(math.Floor(x/cw + 0.5))
 	}
-	return line, col
+	return row, col
+}
+
+// lineColAt maps a point to a document line and visual column (within
+// the row of a wrapped line).
+func (e *Editor) lineColAt(pt image.Point) (line, col int) {
+	row, col := e.rowColAt(pt)
+	return e.rowLine(row), col
 }
 
 // offsetAt maps a point in editor coordinates to the nearest document
 // offset (a grapheme boundary).
 func (e *Editor) offsetAt(pt image.Point) int {
 	s := e.buf.Snapshot()
-	line, col := e.lineColAt(pt)
+	row, col := e.rowColAt(pt)
+	if e.wrapped {
+		return e.view.OffsetAt(s, row, col)
+	}
+	line := e.folds.VisibleToDoc(row)
 	return s.LineStart(line) + buffer.ByteColFromVisual(s.Line(line), col, e.tabWidth())
 }
 

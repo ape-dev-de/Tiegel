@@ -76,9 +76,9 @@ func (m *Model) move(s buffer.Snapshot, sel Selection, mv Movement, extend bool)
 		sel = m.vertical(s, sel, m.verticalDelta(mv))
 		head = sel.Head
 	case Home:
-		head = smartHome(s, sel.Head)
+		head = m.home(s, sel.Head)
 	case End:
-		head = s.LineEnd(s.OffsetToPos(sel.Head).Line)
+		head = m.end(s, sel.Head)
 	case DocStart:
 		head = 0
 	case DocEnd:
@@ -123,6 +123,21 @@ func (m *Model) tabWidth() int {
 // vertical moves the head by delta visible rows and returns the selection
 // with the new head and its goal column set.
 func (m *Model) vertical(s buffer.Snapshot, sel Selection, delta int) Selection {
+	if m.Rows != nil {
+		row, col := m.Rows.RowOf(s, sel.Head)
+		if !sel.HasGoal {
+			sel.Goal, sel.HasGoal = col, true
+		}
+		switch row += delta; {
+		case row < 0:
+			sel.Head = 0
+		case row >= m.Rows.RowCount():
+			sel.Head = s.Len()
+		default:
+			sel.Head = m.Rows.OffsetAt(s, row, sel.Goal)
+		}
+		return sel
+	}
 	pos := s.OffsetToPos(sel.Head)
 	if !sel.HasGoal {
 		sel.Goal = buffer.VisualCol(s.Line(pos.Line), pos.Col, m.tabWidth())
@@ -156,11 +171,42 @@ func (m *Model) AddCursorVertical(delta int) {
 	s := m.buf.Snapshot()
 	p := m.Primary()
 	moved := m.vertical(s, Caret(p.Head), delta)
-	if line := s.OffsetToPos(moved.Head).Line; line == s.OffsetToPos(p.Head).Line {
+	if m.Rows != nil {
+		r0, _ := m.Rows.RowOf(s, p.Head)
+		if r1, _ := m.Rows.RowOf(s, moved.Head); r1 == r0 {
+			return // no row in that direction
+		}
+	} else if line := s.OffsetToPos(moved.Head).Line; line == s.OffsetToPos(p.Head).Line {
 		return // no line in that direction
 	}
 	moved.Anchor = moved.Head
 	m.AddSelection(moved)
+}
+
+// home moves to the start of the visual row (soft wrap) or, on the first
+// row or when already there, to the smart line start.
+func (m *Model) home(s buffer.Snapshot, off int) int {
+	if m.Rows != nil {
+		start, _, _ := m.Rows.RowBounds(s, off)
+		if start != s.LineStart(s.OffsetToPos(off).Line) && off != start {
+			return start
+		}
+	}
+	return smartHome(s, off)
+}
+
+// end moves to the end of the visual row (soft wrap: before the last
+// cluster of a continued row) or, when already there, to the line end.
+func (m *Model) end(s buffer.Snapshot, off int) int {
+	if m.Rows != nil {
+		start, end, last := m.Rows.RowBounds(s, off)
+		if !last {
+			if e := max(start, s.PrevGrapheme(end)); off != e {
+				return e
+			}
+		}
+	}
+	return s.LineEnd(s.OffsetToPos(off).Line)
 }
 
 func smartHome(s buffer.Snapshot, off int) int {

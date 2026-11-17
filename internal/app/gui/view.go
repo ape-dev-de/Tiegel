@@ -258,6 +258,38 @@ func (v *View) zoom(delta int) {
 	v.zoomDelta = min(max(v.zoomDelta+float32(delta), 6-base), 48-base)
 }
 
+// toggleSoftWrap switches soft wrap of the active editor (only this
+// editor; the setting editor.softWrap stays as it is, D285).
+func (v *View) toggleSoftWrap() {
+	s := v.activeSession()
+	if s == nil {
+		return
+	}
+	want := !s.softWrap(v.ctl.Prefs)
+	s.wrapToggle = 0 // back to the setting when that is what is wanted
+	switch {
+	case want == s.softWrap(v.ctl.Prefs):
+	case want:
+		s.wrapToggle = 1
+	default:
+		s.wrapToggle = -1
+	}
+	s.ed.SoftWrap = want
+	v.focusEditor = true
+}
+
+// toggleWhitespace switches editor.showWhitespace between none and all
+// (any other mode counts as shown and switches it off).
+func (v *View) toggleWhitespace() {
+	next := "all"
+	if v.ctl.Prefs.ShowWhitespace != "" && v.ctl.Prefs.ShowWhitespace != "none" {
+		next = "none"
+	}
+	v.ctl.Prefs.ShowWhitespace = next
+	v.ctl.SetSetting(controller.KeyShowWhitespace, "global", next)
+	v.focusEditor = true
+}
+
 // applyTheme rebuilds the theme when the preference changed.
 func (v *View) applyTheme() {
 	pref := v.ctl.Prefs.Theme

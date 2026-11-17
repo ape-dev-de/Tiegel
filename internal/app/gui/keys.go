@@ -88,6 +88,8 @@ func defaultActions() []Action {
 		{ID: ActZoomIn, Title: "Increase Editor Font Size", Mac: "Cmd+=", PC: "Ctrl+=", Menu: "View", Section: "zoom", Run: func(v *View) { v.zoom(1) }},
 		{ID: ActZoomOut, Title: "Decrease Editor Font Size", Mac: "Cmd+-", PC: "Ctrl+-", Menu: "View", Section: "zoom", Run: func(v *View) { v.zoom(-1) }},
 		{ID: ActZoomReset, Title: "Reset Editor Font Size", Menu: "View", Section: "zoom", Run: func(v *View) { v.zoom(0) }},
+		{ID: keymap.ViewSoftWrap, Title: "Soft-Wrap", Menu: "View", Section: "editor", Run: (*View).toggleSoftWrap},
+		{ID: keymap.ViewShowWhitespace, Title: "Show Whitespaces", Menu: "View", Section: "editor", Run: (*View).toggleWhitespace},
 		// Navigate
 		{ID: ActQuickOpen, Title: "Go to File…", Mac: "Cmd+Shift+O", PC: "Ctrl+Shift+N", Menu: "Navigate", Section: "goto", Run: (*View).openQuickOpen},
 		{ID: ActRecentFiles, Title: "Recent Files…", Mac: "Cmd+E", PC: "Ctrl+E", Menu: "Navigate", Section: "goto", Run: (*View).openRecent},

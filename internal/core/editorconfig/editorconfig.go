@@ -43,7 +43,10 @@ type Props struct {
 	// Charset is "utf-8", "utf-8-bom", "latin1", "utf-16be" or "utf-16le".
 	Charset                string `json:"charset,omitempty"`
 	TrimTrailingWhitespace *bool  `json:"trimTrailingWhitespace,omitempty"`
-	InsertFinalNewline     *bool  `json:"insertFinalNewline,omitempty"`
+	// MaxLineLength is max_line_length (0: not set or "off"); the editor
+	// draws its right margin ruler there (D287).
+	MaxLineLength      int   `json:"maxLineLength,omitempty"`
+	InsertFinalNewline *bool `json:"insertFinalNewline,omitempty"`
 	// Files lists the .editorconfig files that were read, closest first.
 	Files []string `json:"files,omitempty"`
 }
@@ -51,7 +54,7 @@ type Props struct {
 // Empty reports whether no property is set.
 func (p Props) Empty() bool {
 	return p.IndentStyle == "" && p.IndentSize == 0 && p.TabWidth == 0 && p.EndOfLine == "" &&
-		p.Charset == "" && p.TrimTrailingWhitespace == nil && p.InsertFinalNewline == nil
+		p.Charset == "" && p.TrimTrailingWhitespace == nil && p.InsertFinalNewline == nil && p.MaxLineLength == 0
 }
 
 type section struct {
@@ -310,6 +313,9 @@ func fromRaw(raw map[string]string) Props {
 	switch v := raw["charset"]; v {
 	case "utf-8", "utf-8-bom", "latin1", "utf-16be", "utf-16le":
 		p.Charset = v
+	}
+	if n, err := strconv.Atoi(raw["max_line_length"]); err == nil && n > 0 {
+		p.MaxLineLength = n
 	}
 	p.TrimTrailingWhitespace = boolProp(raw["trim_trailing_whitespace"])
 	p.InsertFinalNewline = boolProp(raw["insert_final_newline"])

@@ -166,3 +166,36 @@ func TestResolveEffectiveMigrate(t *testing.T) {
 		t.Fatal("value kept")
 	}
 }
+
+// TestEditorDisplaySpecs covers the M12.3 editor settings (D285–D287).
+func TestEditorDisplaySpecs(t *testing.T) {
+	ok := []struct {
+		key string
+		v   any
+	}{
+		{KeySoftWrap, SoftWrapAll}, {KeySoftWrapFiles, []string{"*.md"}}, {KeyShowWhitespace, WhitespaceTrailing},
+		{KeyRightMargin, 0}, {KeyRightMargin, 80}, {KeyShowRightMargin, false},
+	}
+	for _, c := range ok {
+		sp, found := CoreSpec(c.key)
+		if !found || sp.Group != PageEditor {
+			t.Fatalf("%s not on the editor page", c.key)
+		}
+		if err := sp.Check(c.v); err != nil {
+			t.Errorf("%s = %v: %v", c.key, c.v, err)
+		}
+	}
+	bad := []struct {
+		key string
+		v   any
+	}{{KeySoftWrap, "sometimes"}, {KeyShowWhitespace, "tabs"}, {KeyRightMargin, -1}, {KeyRightMargin, 5000}}
+	for _, c := range bad {
+		sp, _ := CoreSpec(c.key)
+		if sp.Check(c.v) == nil {
+			t.Errorf("%s = %v accepted", c.key, c.v)
+		}
+	}
+	if sp, _ := CoreSpec(KeyRightMargin); sp.Scope != ScopeProject {
+		t.Error("right margin must allow project values")
+	}
+}
