@@ -65,6 +65,14 @@ type Context interface {
 	OnStop(fn func())
 }
 
+// SettingsProvider is implemented by modules that declare settings
+// (decision D190). Keys must use the module's namespace "<ID>.<name>".
+// The registry collects them for the settings dialog, the settings.schema
+// API, the headless CLI and the IDE import.
+type SettingsProvider interface {
+	SettingSpecs() []settings.Spec
+}
+
 // StateStore persists module on/off states. *settings.Store implements it.
 type StateStore interface {
 	ModuleEnabled(id string) (enabled, known bool)
