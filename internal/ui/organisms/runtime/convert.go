@@ -10,7 +10,7 @@ import (
 
 // FromImage converts a Docker image interpreter.
 func FromImage(d *docker.ImageInterpreter) Interpreter {
-	return Interpreter{ID: d.ID(), Label: d.Label(), Kind: KindDocker, Version: d.PHPVersion,
+	return Interpreter{ID: d.ID(), Label: d.Label(), Kind: KindDocker, Version: d.CachedVersion(),
 		Detail: d.Image + " → " + d.RemoteDir(), Context: d.Client.Context}
 }
 
@@ -34,7 +34,7 @@ func FromLocal(l *interp.Local) Interpreter {
 	if detail == "" {
 		detail = l.Path
 	}
-	return Interpreter{ID: l.ID(), Label: "php (" + detail + ")", Kind: KindLocal, Version: l.PHPVersion, Detail: l.Path}
+	return Interpreter{ID: l.ID(), Label: "php (" + detail + ")", Kind: KindLocal, Version: l.CachedVersion(), Detail: l.Path}
 }
 
 // FromCandidate converts a Compose candidate of project; the ID matches

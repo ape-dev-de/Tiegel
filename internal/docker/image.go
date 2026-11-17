@@ -44,8 +44,13 @@ type ImageInterpreter struct {
 	// NoPull passes --pull never: the image must exist locally. Automatic
 	// probes use it so that no image is downloaded without a user action.
 	NoPull bool
-	// PHPVersion caches the last successful Version result.
+	// PHPVersion is a known version (e.g. from a cached probe); it is only
+	// set before the interpreter is shared and never written by methods.
+	// Version results go to an internal, synchronised cache (see
+	// CachedVersion).
 	PHPVersion string
+
+	detected *interp.VersionCache
 }
 
 var _ interp.Interpreter = (*ImageInterpreter)(nil)
@@ -81,10 +86,11 @@ func FormatImageSpec(image, remote string) string {
 // NewImageInterpreter returns an interpreter for image with the project
 // directory hostDir mounted at remote.
 func NewImageInterpreter(image, remote, hostDir string, c Client) *ImageInterpreter {
-	return &ImageInterpreter{Image: image, Remote: remote, HostDir: hostDir, Client: c}
+	return &ImageInterpreter{Image: image, Remote: remote, HostDir: hostDir, Client: c, detected: interp.NewVersionCache()}
 }
 
 // WithoutPull returns a copy that never pulls the image (--pull never).
+// The copy shares the version cache with d.
 func (d *ImageInterpreter) WithoutPull() *ImageInterpreter {
 	cp := *d
 	cp.NoPull = true
@@ -96,8 +102,8 @@ func (d *ImageInterpreter) ID() string { return ImageID(d.Image) }
 
 // Label implements interp.Interpreter.
 func (d *ImageInterpreter) Label() string {
-	if d.PHPVersion != "" {
-		return fmt.Sprintf("PHP %s (docker %s)", d.PHPVersion, d.Image)
+	if v := d.CachedVersion(); v != "" {
+		return fmt.Sprintf("PHP %s (docker %s)", v, d.Image)
 	}
 	return fmt.Sprintf("PHP (docker %s)", d.Image)
 }
@@ -155,8 +161,18 @@ func (d *ImageInterpreter) Version(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	d.PHPVersion = v
+	d.detected.Set(v)
 	return v, nil
+}
+
+// CachedVersion returns the version of the last successful Version call
+// (shared with copies from WithoutPull), else PHPVersion. Safe for
+// concurrent use.
+func (d *ImageInterpreter) CachedVersion() string {
+	if v := d.detected.Get(); v != "" {
+		return v
+	}
+	return d.PHPVersion
 }
 
 // Modules implements interp.Interpreter.

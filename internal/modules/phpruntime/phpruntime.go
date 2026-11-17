@@ -267,7 +267,7 @@ func (m *Module) interpList(ctx context.Context, p InterpListParams) ([]Interpre
 	out := []InterpreterInfo{}
 	for _, l := range interp.Discover(ctx, m.app.Options().Interp) {
 		found[l.ID()] = l
-		out = append(out, InterpreterInfo{ID: l.ID(), Label: l.Label(), Kind: string(l.Kind()), Version: l.PHPVersion, Path: l.Path})
+		out = append(out, InterpreterInfo{ID: l.ID(), Label: l.Label(), Kind: string(l.Kind()), Version: l.CachedVersion(), Path: l.Path})
 	}
 	// PHP inside WSL distributions (Windows only; a no-op elsewhere).
 	wsls, err := interp.DiscoverWSL(ctx, interp.WSLOptions{})
@@ -526,11 +526,13 @@ type PHPVersionResult struct {
 // the probe did not start it.
 const HintContainerNotRunning = "container-not-running"
 
-// probeInterpreter returns i for an automatic probe: compose interpreters
-// are restricted to `exec` unless start is true (see
+// probeInterpreter returns i for a probe without start: compose
+// interpreters are restricted to `exec` unless start is true (see
 // compose.Interpreter.ExecOnly), image interpreters never pull (--pull
 // never). The second result is the compose interpreter to ask for the
-// running state when the probe fails.
+// running state when the probe fails. Image interpreters still run a
+// container here, so only an explicit re-read may use it; automatic
+// queries use automaticInterpreter.
 func probeInterpreter(i interp.Interpreter, start bool) (interp.Interpreter, *compose.Interpreter) {
 	if start {
 		return i, nil
@@ -542,6 +544,18 @@ func probeInterpreter(i interp.Interpreter, start bool) (interp.Interpreter, *co
 		return c.WithoutPull(), nil
 	}
 	return i, nil
+}
+
+// automaticInterpreter returns i for an automatic query (php.version and
+// the version hook, runtime.diagnose without start): like
+// probeInterpreter, but an image interpreter never starts a container at
+// all (D250) – it answers from the probe cache (*cachedImage).
+func (m *Module) automaticInterpreter(i interp.Interpreter, start bool) (interp.Interpreter, *compose.Interpreter) {
+	if d, ok := i.(*dockercli.ImageInterpreter); ok && !start {
+		e, cached := m.cachedProbe(d.ID())
+		return &cachedImage{ImageInterpreter: d, entry: e, cached: cached}, nil
+	}
+	return probeInterpreter(i, start)
 }
 
 // stoppedHint returns the container-not-running hint if ci's service is
@@ -581,6 +595,7 @@ func (m *Module) phpVersion(ctx context.Context, p PHPVersionParams) (PHPVersion
 		opts.Override = &v
 	}
 	var probed *compose.Interpreter
+	var cached *cachedImage
 	if !p.NoInterpreter && opts.Override == nil {
 		id := p.Interpreter
 		if id == "" {
@@ -592,9 +607,14 @@ func (m *Module) phpVersion(ctx context.Context, p PHPVersionParams) (PHPVersion
 				return PHPVersionResult{}, err
 			}
 			// Privacy: never start a container for this (often automatic)
-			// query unless explicitly allowed.
-			i, probed = probeInterpreter(i, p.Start)
-			opts.Runner = Runner{i}
+			// query unless explicitly allowed (D250).
+			i, probed = m.automaticInterpreter(i, p.Start)
+			if c, ok := i.(*cachedImage); ok {
+				cached = c
+				opts.Runner = c
+			} else {
+				opts.Runner = Runner{i}
+			}
 		} else if locals := interp.Discover(ctx, m.app.Options().Interp); len(locals) > 0 {
 			// No explicit choice: the concept puts the real interpreter
 			// first, so fall back to the first discovered local binary.
@@ -603,8 +623,12 @@ func (m *Module) phpVersion(ctx context.Context, p PHPVersionParams) (PHPVersion
 	}
 	res, err := phpver.Detect(ctx, opts)
 	var hint *HintInfo
-	if probed != nil && (err != nil || res.Source != phpver.SourceInterpreter) {
-		hint = stoppedHint(ctx, probed)
+	if err != nil || res.Source != phpver.SourceInterpreter {
+		if probed != nil {
+			hint = stoppedHint(ctx, probed)
+		} else if cached != nil {
+			hint = cached.hint(ctx)
+		}
 	}
 	if err != nil {
 		if hint != nil {
@@ -804,15 +828,14 @@ func (m *Module) diagnose(ctx context.Context, p DiagnoseParams) (Diagnosis, err
 	if d, ok := i.(*dockercli.ImageInterpreter); ok {
 		res.Interpreter.Image, res.Interpreter.Remote, res.Interpreter.Context = d.Image, d.RemoteDir(), d.Client.Context
 	}
-	orig := i
-	i, probed := probeInterpreter(i, p.Start)
+	i, probed := m.automaticInterpreter(i, p.Start)
 	if res.Version, err = i.Version(ctx); err != nil {
 		if h := stoppedHint(ctx, probed); h != nil {
 			res.Hints = append(res.Hints, *h)
 			return res, nil
 		}
-		if h := imageHint(ctx, orig, p.Start); h != nil {
-			res.Hints = append(res.Hints, *h)
+		if c, ok := i.(*cachedImage); ok {
+			res.Hints = append(res.Hints, *c.hint(ctx))
 			return res, nil
 		}
 		res.Hints = append(res.Hints, HintInfo{"warning", HintInterpreterError, fmt.Sprintf("interpreter does not answer: %v", err)})

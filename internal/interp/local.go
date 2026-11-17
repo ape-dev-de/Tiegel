@@ -19,7 +19,12 @@ type Local struct {
 	// symlinks (e.g. /opt/homebrew/bin/php).
 	Found string
 	// PHPVersion is the version detected during discovery; empty if unknown.
+	// It is only set before the interpreter is shared (Discover, struct
+	// literals) and never written afterwards; later Version results go to
+	// an internal, synchronised cache (see CachedVersion).
 	PHPVersion string
+
+	detected *VersionCache
 }
 
 var _ Interpreter = (*Local)(nil)
@@ -31,7 +36,16 @@ func NewLocal(path string) *Local {
 	if r, err := filepath.EvalSymlinks(path); err == nil {
 		real = r
 	}
-	return &Local{Path: real, Found: path}
+	return &Local{Path: real, Found: path, detected: NewVersionCache()}
+}
+
+// CachedVersion returns the version of the last successful Version call,
+// else PHPVersion. Safe for concurrent use.
+func (l *Local) CachedVersion() string {
+	if v := l.detected.Get(); v != "" {
+		return v
+	}
+	return l.PHPVersion
 }
 
 // ID implements Interpreter.
@@ -43,8 +57,8 @@ func (l *Local) Label() string {
 	if shown == "" {
 		shown = l.Path
 	}
-	if l.PHPVersion != "" {
-		return "PHP " + l.PHPVersion + " (" + shown + ")"
+	if v := l.CachedVersion(); v != "" {
+		return "PHP " + v + " (" + shown + ")"
 	}
 	return "PHP (" + shown + ")"
 }
@@ -52,13 +66,14 @@ func (l *Local) Label() string {
 // Kind implements Interpreter.
 func (l *Local) Kind() Kind { return KindLocal }
 
-// Version implements Interpreter. A successful query is cached in PHPVersion.
+// Version implements Interpreter. A successful query is cached (see
+// CachedVersion); concurrent calls and Label are safe.
 func (l *Local) Version(ctx context.Context) (string, error) {
 	v, err := QueryVersion(ctx, l)
 	if err != nil {
 		return "", err
 	}
-	l.PHPVersion = v
+	l.detected.Set(v)
 	return v, nil
 }
 
@@ -241,11 +256,12 @@ func Discover(ctx context.Context, opts DiscoverOptions) []*Local {
 			break
 		}
 		qctx, cancel := context.WithTimeout(ctx, timeout)
-		_, err := l.Version(qctx)
+		v, err := l.Version(qctx)
 		cancel()
 		if err != nil {
 			continue
 		}
+		l.PHPVersion = v // l is not shared yet
 		result = append(result, l)
 	}
 	return result
