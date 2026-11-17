@@ -321,6 +321,10 @@ func (c *Controller) Save(file string) {
 // Navigation is a back/forward history of locations.
 type Navigation struct {
 	back, fwd []Location
+	// places are the recent places (keynav.go), newest first; editCursor
+	// is the position of Last Edit Location among the edit places.
+	places     []Place
+	editCursor int
 }
 
 // maxNav bounds the history.
@@ -329,6 +333,7 @@ const maxNav = 100
 // Push records loc as the location left by a jump; forward history is
 // dropped.
 func (n *Navigation) Push(loc Location) {
+	n.Record(Place{Location: loc, Line: loc.Range.Start.Line})
 	if k := len(n.back); k > 0 && n.back[k-1].File == loc.File && n.back[k-1].Range.Start.Offset == loc.Range.Start.Offset {
 		return
 	}

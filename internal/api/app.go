@@ -187,6 +187,8 @@ func New(opts Options) (*App, error) {
 	a.registerModules()
 	a.registerVersion()
 	a.registerSettings()
+	a.registerKeymap()
+	a.registerEditOps()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)

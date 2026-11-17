@@ -129,6 +129,8 @@ type Controller struct {
 	RecentFiles []string
 	// Nav is the back/forward navigation history.
 	Nav Navigation
+	// Keymap are the keymap settings (keynav.go).
+	Keymap KeymapPrefs
 
 	// Diagnostics per absolute file.
 	diags map[string]*fileDiags
@@ -196,7 +198,7 @@ func New(be Backend) *Controller {
 	c.Debug = newDebug(c)
 	c.Work = newWorkspace(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
-		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*"}, func(e api.Event) {
+		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed"}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
 	})
 	if err != nil {
@@ -572,6 +574,10 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 					t.EOL = st.EOL
 				}
 			}
+		}
+	case "settings.changed":
+		if keymapSettingChanged(payload) {
+			c.LoadKeymap()
 		}
 	case "modules.changed":
 		if c.Project.Open {

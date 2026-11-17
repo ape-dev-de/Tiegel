@@ -8,6 +8,16 @@
 // "A"…"Z", "0"…"9", punctuation such as "/", "[", "-", "=", and the named
 // keys Left, Right, Up, Down, Home, End, PageUp, PageDown, Backspace,
 // Delete, Enter, Tab, Escape, Space, F1…F12.
+//
+// Besides keys, a chord can name a pointer or gesture input (see
+// IsGesture): the mouse side buttons MouseBack and MouseForward, the
+// trackpad swipes SwipeBack and SwipeForward, and DoubleShift (Shift
+// pressed twice). They take no modifiers.
+//
+// The catalog (Defs) declares every bindable action of the IDE with its
+// default chords per preset; a Scheme resolves the catalog with user
+// overrides into one lookup table for the editor and the window, which is
+// also what conflict detection and the keymap.* API work on.
 package keymap
 
 import (
@@ -86,12 +96,34 @@ const (
 	KeyTab       = "Tab"
 	KeyEscape    = "Escape"
 	KeySpace     = "Space"
+
+	// Pointer and gesture inputs (IsGesture).
+	KeyMouseBack    = "MouseBack"
+	KeyMouseForward = "MouseForward"
+	KeySwipeBack    = "SwipeBack"
+	KeySwipeForward = "SwipeForward"
+	KeyDoubleShift  = "DoubleShift"
 )
+
+// gestures are the key names that are not keyboard keys.
+var gestures = []string{KeyMouseBack, KeyMouseForward, KeySwipeBack, KeySwipeForward, KeyDoubleShift}
+
+// IsGesture reports whether c is a pointer or gesture input instead of a
+// keyboard chord. Gesture chords carry no modifiers.
+func IsGesture(c Chord) bool {
+	for _, g := range gestures {
+		if c.Key == g {
+			return true
+		}
+	}
+	return false
+}
 
 var namedKeys = func() map[string]string {
 	m := map[string]string{}
 	for _, k := range []string{KeyLeft, KeyRight, KeyUp, KeyDown, KeyHome, KeyEnd, KeyPageUp,
-		KeyPageDown, KeyBackspace, KeyDelete, KeyEnter, KeyTab, KeyEscape, KeySpace} {
+		KeyPageDown, KeyBackspace, KeyDelete, KeyEnter, KeyTab, KeyEscape, KeySpace,
+		KeyMouseBack, KeyMouseForward, KeySwipeBack, KeySwipeForward, KeyDoubleShift} {
 		m[strings.ToLower(k)] = k
 	}
 	for i := 1; i <= 12; i++ {
@@ -133,6 +165,9 @@ func ParseChord(s string) (Chord, error) {
 		return Chord{}, fmt.Errorf("%w: %q: %v", ErrBadChord, s, err)
 	}
 	c.Key = k
+	if IsGesture(c) && c.Mods != 0 {
+		return Chord{}, fmt.Errorf("%w: %q: %s takes no modifiers", ErrBadChord, s, k)
+	}
 	return c, nil
 }
 

@@ -235,6 +235,7 @@ func TestZoom(t *testing.T) {
 	if e.v.th.Text.Code != 16 || e.v.th.Text.CodeLineHeight != 1.8 {
 		t.Fatalf("prefs: %v %v", e.v.th.Text.Code, e.v.th.Text.CodeLineHeight)
 	}
+	e.settle() // the preference writes finish before the config dir goes
 }
 
 // Welcome: the folder browser (no native dialog) opens a project; with

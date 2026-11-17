@@ -19,6 +19,7 @@ import (
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
+	"github.com/ape-dev-de/tiegel/internal/app/gui/native"
 )
 
 // processStart approximates the process start (package initialisation).
@@ -43,6 +44,8 @@ func Run(ctx context.Context, a *api.App, projectPath string, newApp func() (*ap
 		fmt.Fprintf(os.Stderr, "tiegel: backend ready after %v\n", time.Since(processStart).Round(time.Millisecond))
 	}
 	m := &windows{ctx: ctx, newApp: newApp, wins: map[*window]bool{}}
+	// Mouse side buttons and swipes (macOS) go to the focused window.
+	native.SetGestureHandler(func(g string) { m.route(gesturePrefix + g) })
 	m.open(a, projectPath)
 	app.Main()
 	return nil

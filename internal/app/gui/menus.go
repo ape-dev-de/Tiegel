@@ -312,6 +312,10 @@ func (v *View) runMenuID(id string) {
 			v.Quit()
 		}
 	default:
+		if g, ok := strings.CutPrefix(id, gesturePrefix); ok {
+			v.Gesture(g)
+			return
+		}
 		v.runAction(keymap.Action(id))
 	}
 }

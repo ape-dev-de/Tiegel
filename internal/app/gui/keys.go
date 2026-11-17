@@ -1,6 +1,8 @@
 package gui
 
 import (
+	"runtime"
+
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
@@ -121,6 +123,86 @@ type shortcuts struct {
 	filters []event.Filter
 }
 
+// ---- keymap scheme (M13) -------------------------------------------------------
+
+// Scheme returns the resolved keymap (catalog, preset, user overrides);
+// before SetScheme it is the OS default.
+func (r *Registry) Scheme() *keymap.Scheme {
+	if r.scheme == nil {
+		r.scheme = keymap.NewScheme(keymap.PresetFor(r.goos()), nil)
+		r.editorKeys = r.scheme.EditorKeymap()
+	}
+	return r.scheme
+}
+
+// SetScheme replaces the keymap (live, e.g. after keymap.set): window
+// shortcuts, editor keys and the shortcuts shown in menus follow.
+func (r *Registry) SetScheme(s *keymap.Scheme) {
+	r.scheme, r.editorKeys = s, s.EditorKeymap()
+	for _, id := range r.order {
+		r.mirror(r.actions[id])
+	}
+	r.version++
+}
+
+// EditorKeymap returns the bindings of the editor widget.
+func (r *Registry) EditorKeymap() *keymap.Keymap {
+	r.Scheme()
+	return r.editorKeys
+}
+
+func (r *Registry) goos() string {
+	if r.modelGOOS != "" {
+		return r.modelGOOS
+	}
+	return runtime.GOOS
+}
+
+// schemeFor returns the window's scheme for its own OS and the default
+// scheme of another OS's preset (shortcut texts for other platforms).
+func (r *Registry) schemeFor(goos string) *keymap.Scheme {
+	if goos == r.goos() {
+		return r.Scheme()
+	}
+	return keymap.NewScheme(keymap.PresetFor(goos), nil)
+}
+
+// chordsOf returns the chords bound to a: the scheme's for catalog
+// actions, otherwise the action's own Mac or PC chord (by preset).
+func (r *Registry) chordsOf(a Action) []keymap.Chord {
+	s := r.Scheme()
+	if s.Has(a.ID) {
+		return s.Chords(a.ID)
+	}
+	chord := a.PC
+	if s.Preset() == keymap.PresetMac {
+		chord = a.Mac
+	}
+	if c, err := keymap.ParseChord(chord); err == nil {
+		return []keymap.Chord{c}
+	}
+	return nil
+}
+
+// Gesture runs the action bound to a pointer or gesture input
+// (keymap.KeyMouseBack, KeySwipeForward, KeyDoubleShift, ...) in the
+// focus context; it reports whether one ran.
+func (v *View) Gesture(name string) bool {
+	ctx := keymap.CtxGlobal
+	if s := v.activeSession(); s != nil && s.ed.Focused() {
+		ctx = keymap.CtxEditor
+	}
+	id, ok := v.Registry.Scheme().Lookup(ctx, keymap.Chord{Key: name})
+	if !ok {
+		return false
+	}
+	if _, registered := v.Registry.Action(id); !registered {
+		return false
+	}
+	v.RunAction(id)
+	return true
+}
+
 // gioKey translates a keymap key name into a Gio key name.
 func gioKey(k string) key.Name {
 	switch k {
@@ -173,8 +255,8 @@ func gioMods(m keymap.Mods) key.Modifiers {
 	return g
 }
 
-// build rebuilds the keymap and filters of one scope.
-func (s *shortcuts) build(r *Registry, goos string, scope ActionScope, focus event.Tag) {
+// build rebuilds the keymap and filters of one scope from the scheme.
+func (s *shortcuts) build(r *Registry, scope ActionScope, focus event.Tag) {
 	if s.keys != nil && s.version == r.version && s.focus == focus {
 		return
 	}
@@ -185,19 +267,16 @@ func (s *shortcuts) build(r *Registry, goos string, scope ActionScope, focus eve
 		if a.Scope != scope {
 			continue
 		}
-		chord := a.PC
-		if goos == "darwin" {
-			chord = a.Mac
+		for _, c := range r.chordsOf(a) {
+			if keymap.IsGesture(c) {
+				continue // pointer and gestures: View.Gesture
+			}
+			if _, taken := s.keys.Lookup(c); taken {
+				continue
+			}
+			s.keys.Bind(c, a.ID)
+			s.filters = append(s.filters, key.Filter{Focus: focus, Name: gioKey(c.Key), Required: gioMods(c.Mods)})
 		}
-		if chord == "" {
-			continue
-		}
-		c, err := keymap.ParseChord(chord)
-		if err != nil {
-			continue
-		}
-		s.keys.Bind(c, a.ID)
-		s.filters = append(s.filters, key.Filter{Focus: focus, Name: gioKey(c.Key), Required: gioMods(c.Mods)})
 	}
 }
 
@@ -222,11 +301,15 @@ func (s *shortcuts) process(gtx layout.Context, v *View) {
 	}
 }
 
-// ChordText returns the shortcut of an action for the OS, for tooltips.
+// ChordText returns the shortcut of an action for the OS, for tooltips
+// (the first keyboard chord of the scheme for catalog actions).
 func (r *Registry) ChordText(id keymap.Action, goos string) string {
 	a, ok := r.actions[id]
 	if !ok {
 		return ""
+	}
+	if s := r.schemeFor(goos); s.Has(id) {
+		return s.ChordText(id)
 	}
 	chord := a.PC
 	if goos == "darwin" {
@@ -235,12 +318,5 @@ func (r *Registry) ChordText(id keymap.Action, goos string) string {
 	if chord != "" {
 		return chord
 	}
-	if a.KeyHint != "" {
-		return a.KeyHint
-	}
-	// Edit menu entries show the editor keymap's chord.
-	if cs := keymap.ForOS(goos).ChordsFor(id); len(cs) > 0 {
-		return cs[0].String()
-	}
-	return ""
+	return a.KeyHint
 }

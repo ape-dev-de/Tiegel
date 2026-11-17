@@ -38,6 +38,7 @@ var modifying = map[keymap.Action]bool{
 	keymap.Indent: true, keymap.Outdent: true, keymap.DuplicateLines: true,
 	keymap.MoveLinesUp: true, keymap.MoveLinesDown: true, keymap.ToggleComment: true,
 	keymap.Undo: true, keymap.Redo: true, keymap.Cut: true, keymap.Paste: true,
+	keymap.JoinLines: true, keymap.ToggleCase: true,
 }
 
 // Do executes action a as if its shortcut was pressed (for menus and the
@@ -105,6 +106,10 @@ func (e *Editor) Do(gtx layout.Context, a keymap.Action) bool {
 		e.cur.MoveLines(1)
 	case keymap.ToggleComment:
 		ok = e.cur.ToggleComment(e.LineComment)
+	case keymap.JoinLines:
+		ok = e.cur.JoinLines()
+	case keymap.ToggleCase:
+		ok = e.cur.ToggleCase()
 	case keymap.Undo:
 		ok = e.cur.Undo()
 	case keymap.Redo:
@@ -165,6 +170,9 @@ func (e *Editor) copy(gtx layout.Context, cut bool) {
 	e.lineClip = ""
 	if lines {
 		e.lineClip = text
+	}
+	if e.OnCopy != nil {
+		e.OnCopy(text)
 	}
 	gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(text))})
 	if !cut {

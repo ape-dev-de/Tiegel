@@ -10,6 +10,7 @@ package native
 
 int tiegel_choose_folder(const char *title, const char *dir, char **out);
 void tiegel_set_menus(void *buf, size_t len);
+void tiegel_install_gestures(void);
 */
 import "C"
 
@@ -21,6 +22,9 @@ import (
 )
 
 var (
+	gestureMu sync.Mutex
+	onGesture func(string)
+
 	menuMu     sync.Mutex
 	menuAction func(id string)
 	menuIDs    []string
@@ -91,5 +95,32 @@ func tiegelMenuAction(tag C.longlong) {
 	menuMu.Unlock()
 	if id != "" && fn != nil {
 		fn(id)
+	}
+}
+
+// GesturesSupported reports whether SetGestureHandler delivers mouse side
+// buttons and swipes (Gio does not report them on macOS).
+func GesturesSupported() bool { return true }
+
+// SetGestureHandler installs (once) a Cocoa event monitor for the mouse
+// side buttons (buttons 4 and 5) and trackpad swipes (with "swipe between
+// pages" set to three fingers) and reports them as Gesture* names. fn
+// runs on the main thread and must return quickly; nil stops reporting.
+func SetGestureHandler(fn func(gesture string)) {
+	gestureMu.Lock()
+	onGesture = fn
+	gestureMu.Unlock()
+	if fn != nil {
+		C.tiegel_install_gestures()
+	}
+}
+
+//export tiegelGesture
+func tiegelGesture(code C.int) {
+	gestureMu.Lock()
+	fn := onGesture
+	gestureMu.Unlock()
+	if g := gestureName(int(code)); g != "" && fn != nil {
+		fn(g)
 	}
 }

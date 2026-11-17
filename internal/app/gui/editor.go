@@ -89,7 +89,8 @@ func (v *View) session(g *controller.EditorGroup, t *controller.Tab) *editorSess
 	ed := editorview.New(buf)
 	// The editor follows the view's platform (its window chords and menus
 	// do), not the build's: one keymap per window.
-	ed.Keymap = keymap.ForOS(v.goos)
+	ed.Keymap = v.Registry.EditorKeymap()
+	ed.OnCopy = clipHistory.Push
 	if lc, ok := editorview.LineComments[t.Language]; ok {
 		ed.LineComment = lc
 	}
@@ -174,7 +175,7 @@ func (s *editorSession) location() controller.Location {
 func (v *View) layoutEditor(gtx layout.Context, s *editorSession, active bool) layout.Dimensions {
 	c := v.ctl
 	if active {
-		v.editorKeys.build(v.Registry, v.goos, ScopeEditor, s.ed)
+		v.editorKeys.build(v.Registry, ScopeEditor, s.ed)
 	}
 	s.doc.Lock()
 	defer s.doc.Unlock()
@@ -197,6 +198,7 @@ func (v *View) layoutEditor(gtx layout.Context, s *editorSession, active bool) l
 		s.ed.SetDiagnostics(toEditorDiags(c.Diagnostics(s.file), buf.Len()))
 	}
 	s.ed.TabWidth = c.Prefs.TabWidth
+	s.ed.Keymap = v.Registry.EditorKeymap() // follows keymap changes
 	s.ed.SetGutterMarkers(v.Registry.markers(s.file))
 	s.ed.SetGutterColumn(v.Registry.gutterColumn(s.file))
 
@@ -339,6 +341,9 @@ func (v *View) editorEvents(gtx layout.Context, s *editorSession, active bool) {
 	if cp.Open && cp.File == s.file && (caret < cp.Start || buf.OffsetToPos(caret).Line != buf.OffsetToPos(cp.Start).Line) {
 		c.CloseCompletion()
 	}
+	if changed && !ignore {
+		v.recordEdit(s)
+	}
 	if !changed || ignore || !s.ed.Focused() {
 		return
 	}
@@ -377,6 +382,8 @@ func (v *View) editorAction(s *editorSession, a keymap.Action) {
 		v.openGotoLine()
 	case keymap.Save:
 		v.ctl.Save(s.file)
+	case keymap.PasteFromHistory:
+		v.openPasteHistory(s)
 	}
 }
 

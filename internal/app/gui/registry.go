@@ -237,6 +237,10 @@ type Registry struct {
 	model     *actions.Registry
 	modelGOOS string
 	mainSeen  uint64
+	// scheme resolves the chords of catalog actions (keymap.Defs) with
+	// the user overrides; editorKeys is its editor widget keymap (keys.go).
+	scheme     *keymap.Scheme
+	editorKeys *keymap.Keymap
 }
 
 // EditorBannerProvider returns a banner shown above the editor of a file
