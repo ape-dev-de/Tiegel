@@ -3,12 +3,13 @@ package lsp
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"sync"
+
+	"github.com/ape-dev-de/tiegel/internal/core/proctree"
 )
 
 // process is a language server child process. It implements
@@ -18,8 +19,9 @@ import (
 // may continue concurrently with cmd.Wait.
 type process struct {
 	cmd    *exec.Cmd
-	stdout *os.File // read end of server stdout
-	stdin  *os.File // write end of server stdin
+	tree   *proctree.Tree // the server and what it started (wrappers)
+	stdout *os.File       // read end of server stdout
+	stdin  *os.File       // write end of server stdin
 
 	exited  chan struct{}
 	mu      sync.Mutex
@@ -52,14 +54,18 @@ func startProcess(command string, args []string, dir string, env []string, log *
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = errW
+	// Servers are often started through wrappers (intelephense.cmd,
+	// phpactor.bat, scripts): kill must end the whole tree.
+	tree := proctree.New(cmd)
 	if err := cmd.Start(); err != nil {
 		closeAll(inR, inW, outR, outW, errR, errW)
 		return nil, fmt.Errorf("lsp: starting %s: %w", command, err)
 	}
+	tree.Attach()
 	// The child holds its own copies now.
 	closeAll(inR, outW, errW)
 
-	p := &process{cmd: cmd, stdout: outR, stdin: inW, exited: make(chan struct{})}
+	p := &process{cmd: cmd, tree: tree, stdout: outR, stdin: inW, exited: make(chan struct{})}
 	go func() {
 		sc := bufio.NewScanner(errR)
 		sc.Buffer(make([]byte, 64<<10), 1<<20)
@@ -73,6 +79,9 @@ func startProcess(command string, args []string, dir string, env []string, log *
 	}()
 	go func() {
 		err := cmd.Wait()
+		// Leftover descendants of an exited server end with it (Windows:
+		// closing the job kills them).
+		tree.Release()
 		p.mu.Lock()
 		p.waitErr = err
 		p.mu.Unlock()
@@ -132,7 +141,7 @@ func (p *process) kill() {
 		return
 	default:
 	}
-	if err := p.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := p.tree.Kill(); err != nil {
 		return
 	}
 	<-p.exited

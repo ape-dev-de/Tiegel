@@ -126,10 +126,13 @@ func (m *Module) resolve(ctx context.Context, p StartParams) (resolution, error)
 	dirs := m.searchDirs()
 	sel := p.Server
 	if p.Command == "" && sel == "" {
-		if c, a := m.customCommand(); c != "" {
-			p.Command, p.Args = c, a
-		} else {
-			sel, _ = m.selection()
+		// "none" wins over a custom command: switching off must stop
+		// whatever would otherwise run.
+		sel, _ = m.selection()
+		if sel != SelectNone {
+			if c, a := m.customCommand(); c != "" {
+				p.Command, p.Args, sel = c, a, ""
+			}
 		}
 	}
 	php := m.phpShort(ctx)
@@ -161,11 +164,11 @@ func (m *Module) resolve(ctx context.Context, p StartParams) (resolution, error)
 		}
 		for _, d := range cands {
 			if path, err := locate(d, dirs); err == nil {
-				return resolution{target: m.target(d, d.ID, path, d.Args, dirs, php), php: php, note: d.Note}, nil
+				return resolution{target: m.target(d, d.ID, path, d.EffectiveArgs(), dirs, php), php: php, note: d.Note}, nil
 			}
 		}
 		first := cands[0]
-		return resolution{notFound: true, target: m.target(first, first.ID, "", first.Args, dirs, php),
+		return resolution{notFound: true, target: m.target(first, first.ID, "", first.EffectiveArgs(), dirs, php),
 			reason: fmt.Sprintf("no PHP language server found (enabled: %s); install one or choose its path", strings.Join(names, ", "))}, nil
 	}
 	d, ok := byID[sel]
@@ -178,9 +181,9 @@ func (m *Module) resolve(ctx context.Context, p StartParams) (resolution, error)
 	}
 	path, err := locate(d, dirs)
 	if err != nil {
-		return resolution{notFound: true, target: m.target(d, d.ID, "", d.Args, dirs, php), reason: err.Error(), note: d.Note}, nil
+		return resolution{notFound: true, target: m.target(d, d.ID, "", d.EffectiveArgs(), dirs, php), reason: err.Error(), note: d.Note}, nil
 	}
-	return resolution{target: m.target(d, d.ID, path, d.Args, dirs, php), php: php, note: d.Note}, nil
+	return resolution{target: m.target(d, d.ID, path, d.EffectiveArgs(), dirs, php), php: php, note: d.Note}, nil
 }
 
 // phpShort resolves the project's PHP version ("8.3"; "" unknown).
@@ -195,7 +198,7 @@ func (m *Module) phpShort(ctx context.Context) string {
 // target builds the supervisor target of a server.
 func (m *Module) target(d api.LSPServerDecl, id, command string, args []string, dirs []string, php string) supervisor.Target {
 	if args == nil {
-		args = d.Args
+		args = d.EffectiveArgs()
 	}
 	initOpts, cfgSettings := d.Options(php)
 	maps.Copy(initOpts, d.InitOptions)
@@ -232,6 +235,21 @@ const (
 func (m *Module) apply(ctx context.Context, p StartParams, mode applyMode) (Status, error) {
 	m.applyMu.Lock()
 	defer m.applyMu.Unlock()
+	// stopSup cancels ctx instead of waiting for a start that hangs in
+	// initialize.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	m.mu.Lock()
+	m.applyCancel = cancel
+	if m.stopping > 0 {
+		cancel() // a stop waits for applyMu and wins anyway
+	}
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.applyCancel = nil
+		m.mu.Unlock()
+	}()
 	if mode != applyExplicit && !m.isActive() {
 		return m.currentStatus(), nil // stopped meanwhile (lsp.stop, project closed)
 	}
@@ -405,10 +423,7 @@ func (m *Module) serverInfos(ctx context.Context, detect bool) []LSPServerInfo {
 	out := []LSPServerInfo{}
 	autoPicked := false
 	for _, d := range m.decls(ctx) {
-		args := d.Args
-		if args == nil {
-			args = d.Definition.Args
-		}
+		args := d.EffectiveArgs()
 		info := LSPServerInfo{ID: d.ID, Name: d.Name, Plugin: d.Plugin, Args: append([]string{}, args...), License: d.License,
 			Proprietary: d.Proprietary, Note: d.Note, AutoSelect: d.AutoSelect, Path: d.Path}
 		if detect {

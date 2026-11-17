@@ -114,6 +114,9 @@ type Client struct {
 	// initialize (the timeout does not apply to the handshake).
 	timeouts atomic.Int32
 	ready    atomic.Bool
+	// reqTimeout is the current request limit (starts as
+	// cfg.RequestTimeout; SetRequestTimeout changes it).
+	reqTimeout atomic.Int64
 }
 
 // Start launches cfg.Command as child process speaking LSP over stdio and
@@ -165,6 +168,7 @@ func newClient(rwc io.ReadWriteCloser, cfg Config, log *slog.Logger) *Client {
 		conn: jsonrpc2.NewConn(rwc),
 		docs: make(map[protocol.DocumentURI]*document),
 	}
+	c.reqTimeout.Store(int64(max(cfg.RequestTimeout, 0)))
 	if cfg.Trace != nil {
 		c.conn.SetTrace(cfg.Trace)
 	}
@@ -172,6 +176,12 @@ func newClient(rwc io.ReadWriteCloser, cfg Config, log *slog.Logger) *Client {
 	c.conn.Start()
 	return c
 }
+
+// SetRequestTimeout changes the limit of later requests (d <= 0: none).
+func (c *Client) SetRequestTimeout(d time.Duration) { c.reqTimeout.Store(int64(max(d, 0))) }
+
+// RequestTimeout returns the current request limit (0: none).
+func (c *Client) RequestTimeout() time.Duration { return time.Duration(c.reqTimeout.Load()) }
 
 func (c *Client) registerHandlers() {
 	null := func(context.Context, *jsonrpc2.Request) (any, error) { return nil, nil }
@@ -423,7 +433,7 @@ func (c *Client) Notify(ctx context.Context, method string, params any) error {
 }
 
 func (c *Client) call(ctx context.Context, method string, params, result any) error {
-	d := c.cfg.RequestTimeout
+	d := c.RequestTimeout()
 	if d <= 0 || !c.ready.Load() || method == protocol.MethodShutdown {
 		return c.wrapExit(c.conn.Call(ctx, method, params, result))
 	}

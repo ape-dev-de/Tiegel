@@ -33,6 +33,9 @@ type InstallRunParams struct {
 	Scope  string `json:"scope,omitempty"`
 	// Confirm must be true: the user has seen the plan and agreed.
 	Confirm bool `json:"confirm"`
+	// PlanID is the id of the plan the user confirmed (install.plan); the
+	// run is refused when the plan computed now differs.
+	PlanID string `json:"planId"`
 }
 
 // InstallRunResult is the result of "install.run".
@@ -104,6 +107,7 @@ func (a *App) makePlan(ctx context.Context, plugin, scope string) (install.Plan,
 		if err != nil {
 			return install.Plan{}, Errorf(CodeFailed, "%w", err)
 		}
+		p.ID = p.Fingerprint()
 		return p, nil
 	}
 	return install.Plan{}, Errorf(CodeNotFound, "no installation recipe for %q (plugin disabled or without recipe; recipes: %s)", plugin, strings.Join(names, ", "))
@@ -120,6 +124,13 @@ func (a *App) installRun(ctx context.Context, p InstallRunParams) (InstallRunRes
 	}
 	if !p.Confirm {
 		return InstallRunResult{Plan: plan}, Errorf(CodeInvalidParams, "install.run needs confirm: true after showing the plan (%s)", plan.Display)
+	}
+	// What runs must be exactly what was confirmed (D241).
+	if p.PlanID == "" {
+		return InstallRunResult{Plan: plan}, Errorf(CodeInvalidParams, "install.run needs the planId of the confirmed install.plan")
+	}
+	if p.PlanID != plan.ID {
+		return InstallRunResult{Plan: plan}, Errorf(CodeConflict, "the installation plan changed since it was shown (now: %s); review and confirm it again", plan.Display)
 	}
 	if !plan.Available {
 		return InstallRunResult{Plan: plan}, Errorf(CodeUnavailable, "cannot install %s: %s", plan.Tool, plan.Hint)

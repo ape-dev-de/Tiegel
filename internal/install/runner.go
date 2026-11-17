@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/ape-dev-de/tiegel/internal/core/proctree"
 )
 
 // Run states.
@@ -119,29 +121,36 @@ func (rn *Runner) Start(ctx context.Context, plan Plan) (string, error) {
 	// Composer must not wait for answers nobody can give.
 	cmd.Env = append(cmd.Env, "COMPOSER_NO_INTERACTION=1")
 	cmd.Stdin = nil
+	// Wrappers (npm.cmd, composer.bat, scripts) run the real work in a
+	// grandchild: cancelling kills the whole tree, not only the child.
+	tree := proctree.New(cmd)
+	cmd.Cancel = tree.Kill
+	// cmd.Wait owns the output copying (writers, not StdoutPipe), so
+	// WaitDelay bounds the wait for pipes a leftover process keeps open.
 	cmd.WaitDelay = 2 * time.Second
-	stdout, err := cmd.StdoutPipe()
-	if err == nil {
-		var stderr io.ReadCloser
-		if stderr, err = cmd.StderrPipe(); err == nil {
-			if err = cmd.Start(); err == nil {
-				go rn.wait(rctx, r, cmd, stdout, stderr)
-				return id, nil
-			}
-		}
+	outR, outW := io.Pipe()
+	errR, errW := io.Pipe()
+	cmd.Stdout, cmd.Stderr = outW, errW
+	if err := cmd.Start(); err != nil {
+		cancel()
+		rn.finish(r, StateFailed, -1, fmt.Errorf("install: starting %s: %w", plan.Display, err))
+		return id, nil
 	}
-	cancel()
-	rn.finish(r, StateFailed, -1, fmt.Errorf("install: starting %s: %w", plan.Display, err))
+	tree.Attach()
+	go rn.wait(rctx, r, cmd, tree, outR, errR, outW, errW)
 	return id, nil
 }
 
-func (rn *Runner) wait(ctx context.Context, r *run, cmd *exec.Cmd, stdout, stderr io.Reader) {
+func (rn *Runner) wait(ctx context.Context, r *run, cmd *exec.Cmd, tree *proctree.Tree, stdout, stderr io.Reader, outW, errW io.Closer) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go rn.pump(r, "stdout", stdout, &wg)
 	go rn.pump(r, "stderr", stderr, &wg)
-	wg.Wait()
 	err := cmd.Wait()
+	tree.Release()
+	_ = outW.Close()
+	_ = errW.Close()
+	wg.Wait()
 	code := 0
 	if cmd.ProcessState != nil {
 		code = cmd.ProcessState.ExitCode()

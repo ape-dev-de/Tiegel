@@ -26,6 +26,9 @@ type Runner func(ctx context.Context, name string, args ...string) ([]byte, erro
 func execRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdin = nil
+	// A background job started by an rc file may keep stdout open after
+	// the shell exited; do not wait for it longer than this.
+	cmd.WaitDelay = 500 * time.Millisecond
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
@@ -82,10 +85,13 @@ func (r *Resolver) LoginPath(ctx context.Context) (string, error) {
 		return "", nil
 	}
 	r.once.Do(func() {
-		ctx, cancel := context.WithTimeout(ctx, r.timeout)
+		// The result is cached for every caller, so the first caller's
+		// cancellation must not end (and poison) the query: only the
+		// timeout bounds it.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.timeout)
 		defer cancel()
 		// Markers guard against noise printed by shell startup files.
-		out, err := r.run(ctx, r.shell, "-l", "-i", "-c", "printf '"+marker+"%s"+marker+"' \"$PATH\"")
+		out, err := r.run(ctx, r.shell, "-l", "-i", "-c", printPathCommand(r.shell))
 		if err != nil {
 			r.err = fmt.Errorf("shellenv: login shell %s: %w", r.shell, err)
 			return
@@ -100,6 +106,15 @@ func (r *Resolver) LoginPath(ctx context.Context) (string, error) {
 		r.path = s[i+len(marker) : j]
 	})
 	return r.path, r.err
+}
+
+// printPathCommand returns the shell command printing PATH between
+// markers. In fish $PATH is a list, so it is joined with ':' explicitly.
+func printPathCommand(shell string) string {
+	if filepath.Base(shell) == "fish" {
+		return "printf '" + marker + "%s" + marker + "' (string join : $PATH)"
+	}
+	return "printf '" + marker + "%s" + marker + "' \"$PATH\""
 }
 
 // Path returns the process PATH followed by login-shell entries that are

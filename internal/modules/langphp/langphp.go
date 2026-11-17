@@ -117,6 +117,14 @@ type Module struct {
 	// pinned holds explicit lsp.start parameters (server or command);
 	// restarts reuse them until lsp.stop or lsp.select.
 	pinned StartParams
+	// applyCancel cancels the running apply (a start that may hang in
+	// initialize); stopping counts stopSup calls waiting for applyMu, so an
+	// apply that begins meanwhile cancels itself.
+	applyCancel context.CancelFunc
+	stopping    int
+	// projGen counts project closes; an automatic start for an older
+	// project does nothing.
+	projGen int
 
 	// diagMu guards diags; it is separate from mu because diagnostics
 	// arrive on the client's goroutine.
@@ -225,15 +233,9 @@ func (m *Module) Start(ctx module.Context) error {
 	ctx.OnStop(b.Subscribe(api.TopicModuleChanged, reapply))
 	ctx.OnStop(b.Subscribe(api.TopicInstallDone, reapply))
 	ctx.OnStop(b.Subscribe(settings.Changed.Name(), m.onSettings))
-	ctx.OnStop(b.Subscribe(api.TopicProjectOpened, func(bus.Event) {
-		if m.opts.AutoStart {
-			go m.autoStart()
-		}
-	}))
-	ctx.OnStop(b.Subscribe(api.TopicProjectClosed, func(bus.Event) {
-		m.setActive(false)
-		go m.stopSup("project closed")
-	}))
+	// One subscription keeps project.closed and project.opened in publish
+	// order (a project switch publishes both).
+	ctx.OnStop(b.Subscribe("project.*", m.onProject))
 	api.HookNavLSP.On(ctx.Hooks(), 0, m.navLSP, hooks.WithOwner(ID), hooks.WithTimeout(navTimeout))
 	return nil
 }
@@ -251,6 +253,28 @@ func (m *Module) Stop() error {
 	m.mu.Unlock()
 	m.clearDiags()
 	return nil
+}
+
+// onProject handles project.closed and project.opened in order. The stop
+// runs synchronously, so an automatic start for the next project begins
+// only after it; a start for an older project is skipped (projGen).
+func (m *Module) onProject(e bus.Event) {
+	switch e.Topic {
+	case api.TopicProjectClosed:
+		m.mu.Lock()
+		m.projGen++
+		m.active = false
+		m.pinned = StartParams{}
+		m.mu.Unlock()
+		m.stopSup("project closed")
+	case api.TopicProjectOpened:
+		if m.opts.AutoStart {
+			m.mu.Lock()
+			gen := m.projGen
+			m.mu.Unlock()
+			go m.autoStartGen(gen)
+		}
+	}
 }
 
 func (m *Module) current() *server {
@@ -368,9 +392,9 @@ func (m *Module) lspStatus(context.Context, struct{}) (Status, error) {
 
 // supervisorOptions wires the supervisor to the module.
 func (m *Module) supervisorOptions() supervisor.Options {
-	timeout := time.Duration(-1) // off
-	if secs := m.lookupInt(SettingRequestTimeout, 30); secs > 0 {
-		timeout = secondsDuration(secs)
+	timeout := m.requestTimeout()
+	if timeout <= 0 {
+		timeout = -1 // off
 	}
 	app := m.app
 	o := supervisor.Options{
@@ -386,6 +410,11 @@ func (m *Module) supervisorOptions() supervisor.Options {
 		m.opts.Supervisor(&o)
 	}
 	return o
+}
+
+// requestTimeout returns lang-php.requestTimeout (0: no limit).
+func (m *Module) requestTimeout() time.Duration {
+	return secondsDuration(max(m.lookupInt(SettingRequestTimeout, 30), 0))
 }
 
 // onState follows the supervisor: a server that is not running any more
@@ -454,8 +483,22 @@ func (m *Module) lspStop(context.Context, struct{}) (Status, error) {
 }
 
 // stopSup switches the server off; serialised with apply so that a
-// pending re-selection cannot start it again.
+// pending re-selection cannot start it again. A start in progress is
+// cancelled first instead of being waited for (it may hang in initialize
+// up to the init timeout).
 func (m *Module) stopSup(reason string) {
+	m.mu.Lock()
+	m.stopping++
+	cancel := m.applyCancel
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	defer func() {
+		m.mu.Lock()
+		m.stopping--
+		m.mu.Unlock()
+	}()
 	m.applyMu.Lock()
 	defer m.applyMu.Unlock()
 	m.sup.Stop(supervisor.StateOff, reason, nil)
@@ -495,7 +538,16 @@ func (m *Module) reapply() {
 // autoStart starts the server once (project opened, first PHP file).
 func (m *Module) autoStart() {
 	m.mu.Lock()
-	if m.active {
+	gen := m.projGen
+	m.mu.Unlock()
+	m.autoStartGen(gen)
+}
+
+// autoStartGen is autoStart for the project of generation gen; it does
+// nothing once that project was closed.
+func (m *Module) autoStartGen(gen int) {
+	m.mu.Lock()
+	if m.active || m.projGen != gen {
 		m.mu.Unlock()
 		return
 	}
@@ -509,6 +561,10 @@ func (m *Module) autoStart() {
 func (m *Module) onSettings(e bus.Event) {
 	ch, ok := e.Payload.(settings.Change)
 	if !ok {
+		return
+	}
+	if ch.Key == SettingRequestTimeout {
+		m.sup.SetRequestTimeout(m.requestTimeout()) // live, no restart
 		return
 	}
 	if strings.HasPrefix(ch.Key, ID+".") || strings.HasPrefix(ch.Key, "lsp-") || strings.HasPrefix(ch.Key, "lsp.") {
