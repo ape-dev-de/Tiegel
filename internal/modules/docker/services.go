@@ -214,9 +214,18 @@ type servicesState struct {
 	cacheErr error
 
 	seq    int
-	logs   map[string]context.CancelFunc
+	logs   map[string]logStream
 	leases map[string]bool // watch ID → wants standalone containers
 	watch  *watcher
+}
+
+// logStream is a followed log stream. key is the engine and project it
+// reads (logsKey at its start): a project or context change ends only the
+// streams of another key, so a change event delivered late (the bus is
+// asynchronous) does not end a stream started after the change.
+type logStream struct {
+	cancel context.CancelFunc
+	key    string
 }
 
 type watcher struct {
@@ -226,7 +235,7 @@ type watcher struct {
 }
 
 func newServicesState() *servicesState {
-	return &servicesState{logs: map[string]context.CancelFunc{}, leases: map[string]bool{}}
+	return &servicesState{logs: map[string]logStream{}, leases: map[string]bool{}}
 }
 
 func (m *Module) registerServices(p *api.Provider) {
@@ -537,6 +546,7 @@ func (m *Module) logs(ctx context.Context, p LogsParams) (LogsResult, error) {
 		return res, nil
 	}
 
+	key := m.logsKey()
 	sv := m.sv
 	sv.mu.Lock()
 	sv.seq++
@@ -544,7 +554,7 @@ func (m *Module) logs(ctx context.Context, p LogsParams) (LogsResult, error) {
 	// The stream outlives the request; only docker.logsStop (or a
 	// project/context change) ends it.
 	lctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	sv.logs[id] = cancel
+	sv.logs[id] = logStream{cancel: cancel, key: key}
 	sv.mu.Unlock()
 
 	cmd := c.Command(lctx, args...)
@@ -621,21 +631,48 @@ func (m *Module) publish(topic string, payload any) {
 
 func (m *Module) logsStop(_ context.Context, p IDParams) (StoppedResult, error) {
 	m.sv.mu.Lock()
-	cancel, ok := m.sv.logs[p.ID]
+	ls, ok := m.sv.logs[p.ID]
 	delete(m.sv.logs, p.ID)
 	m.sv.mu.Unlock()
 	if ok {
-		cancel()
+		ls.cancel()
 	}
 	return StoppedResult{Stopped: ok}, nil
 }
 
 // stopLogs ends all followed streams.
-func (m *Module) stopLogs() {
+func (m *Module) stopLogs() { m.stopLogsWhere(func(logStream) bool { return true }) }
+
+// stopStaleLogs ends the followed streams of another engine or project
+// than the current one.
+func (m *Module) stopStaleLogs() {
+	key := m.logsKey()
+	m.stopLogsWhere(func(ls logStream) bool { return ls.key != key })
+}
+
+// logsKey identifies the engine (docker binary setting, context) and the
+// project a followed stream started now reads.
+func (m *Module) logsKey() string {
+	if m.app == nil {
+		return ""
+	}
+	ctxName, _ := m.selectedContext()
+	configured := ""
+	if g := m.globalStore(); g != nil {
+		configured = settings.Get(g, SettingPath, "")
+	}
+	return m.app.ProjectRoot() + "\x00" + ctxName + "\x00" + configured
+}
+
+// stopLogsWhere ends the followed streams that stop selects.
+func (m *Module) stopLogsWhere(stop func(logStream) bool) {
 	m.sv.mu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(m.sv.logs))
-	for id, c := range m.sv.logs {
-		cancels = append(cancels, c)
+	for id, ls := range m.sv.logs {
+		if !stop(ls) {
+			continue
+		}
+		cancels = append(cancels, ls.cancel)
 		delete(m.sv.logs, id)
 	}
 	m.sv.mu.Unlock()

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 )
@@ -101,10 +100,6 @@ func Setting[T any](a *App, key string, def T) T {
 	return v
 }
 
-// warnedSettings remembers the invalid stored values already logged
-// (key, scope and raw value), so each is logged once.
-var warnedSettings sync.Map
-
 // warnInvalidSetting logs stored values of spec that fail its check.
 func (a *App) warnInvalidSetting(spec settings.Spec, project *settings.Store) {
 	for _, sc := range []struct {
@@ -119,7 +114,7 @@ func (a *App) warnInvalidSetting(spec settings.Spec, project *settings.Store) {
 			continue
 		}
 		if err := checkRaw(spec, raw); err != nil {
-			if _, seen := warnedSettings.LoadOrStore(spec.Key+"\x00"+sc.name+"\x00"+string(raw), true); !seen {
+			if _, seen := a.warnedSettings.LoadOrStore(spec.Key+"\x00"+sc.name+"\x00"+string(raw), true); !seen {
 				a.log.Warn("stored setting ignored", "key", spec.Key, "scope", sc.name, "value", string(raw), "err", err)
 			}
 		}

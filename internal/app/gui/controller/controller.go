@@ -249,11 +249,21 @@ func New(be Backend) *Controller {
 	return c
 }
 
-// Close stops background work and event delivery.
+// closeWait bounds how long Close waits for running background work.
+const closeWait = 5 * time.Second
+
+// Close stops background work and event delivery. It cancels the running
+// jobs and waits (at most closeWait) until they returned: a job may still
+// be inside the backend (e.g. an autosave writing files after the window
+// lost its focus), and the backend is closed right after the controller.
+// The jobs' UI results are discarded.
 func (c *Controller) Close() {
 	c.Services.shutdown()
 	c.unsub()
 	c.cancel()
+	for deadline := time.Now().Add(closeWait); c.jobs.Load() > 0 && time.Now().Before(deadline); {
+		time.Sleep(2 * time.Millisecond)
+	}
 }
 
 // Context is cancelled by Close.

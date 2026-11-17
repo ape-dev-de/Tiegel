@@ -138,7 +138,13 @@ func TestRunService(t *testing.T) {
 	if done.State != run.StateExited || done.ExitCode != 4 {
 		t.Fatalf("done %+v", done)
 	}
-	if out := outputText(t, a, info.ID); !strings.Contains(out, "one\ntwo\n") || !strings.Contains(out, "failing") || !strings.Contains(out, "exit code 4") {
+	// stdout and stderr are separate pipes read concurrently: their lines
+	// interleave in any order. Only the order within stdout and the final
+	// exit line are guaranteed.
+	out := outputText(t, a, info.ID)
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	one, two := slices.Index(lines, "one"), slices.Index(lines, "two")
+	if one < 0 || two < one || !slices.Contains(lines, "failing") || !strings.Contains(lines[len(lines)-1], "exit code 4") {
 		t.Fatalf("output %q", out)
 	}
 	var list []run.Info
@@ -165,9 +171,19 @@ func TestRunService(t *testing.T) {
 	wantCode(t, a, "run.configs.list", nil, CodeNoProject)
 	// A specific interpreter without php-runtime is unavailable.
 	wantCode(t, a, "run.start", RunStartParams{Spec: &run.Spec{PHP: true, Interpreter: "local:/x"}}, CodeUnavailable)
-	for _, topic := range []string{TopicRunStarted, TopicRunOutput, TopicRunExited, TopicRunRemoved} {
+	// The bus delivers asynchronously (and run.exited is published after
+	// run.wait returned): wait until the events arrived.
+	topics := []string{TopicRunStarted, TopicRunOutput, TopicRunExited, TopicRunRemoved}
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if !slices.ContainsFunc(topics, func(s string) bool { return !ev.has(s) }) {
+			break
+		}
+	}
+	for _, topic := range topics {
 		if !ev.has(topic) {
+			ev.mu.Lock()
 			t.Errorf("no %s event (%v)", topic, ev.list)
+			ev.mu.Unlock()
 		}
 	}
 }

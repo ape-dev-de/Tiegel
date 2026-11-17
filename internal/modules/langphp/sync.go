@@ -245,9 +245,21 @@ func (m *Module) onDiagnostics(s *server, p protocol.PublishDiagnosticsParams) {
 		ev.Diagnostics = append(ev.Diagnostics, dd)
 	}
 	m.diagMu.Lock()
+	defer m.diagMu.Unlock()
+	// A versioned report refers to an open document. One that crossed our
+	// didClose (the server diagnosed a didOpen/didChange before it saw the
+	// close) is stale: storing it would resurrect the diagnostics the close
+	// just dropped. The check runs under diagMu, and the close handler
+	// deletes after DidClose, so either it sees the document closed or its
+	// entry is deleted afterwards. Unversioned reports (workspace
+	// diagnostics of files that were never opened) are kept.
+	if p.Version != nil {
+		if _, _, open := s.client.Document(p.URI); !open {
+			return
+		}
+	}
 	m.diags[abs] = ev
 	m.app.Bus().Publish(api.TopicLSPDiagnostics, ev)
-	m.diagMu.Unlock()
 }
 
 func (m *Module) clearDiags() {

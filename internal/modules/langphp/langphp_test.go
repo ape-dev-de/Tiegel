@@ -384,3 +384,35 @@ func TestDetectedServerAndGapResync(t *testing.T) {
 	m.syncMu.Unlock()
 	waitSynced(t, a, f, dir, "a.php")
 }
+
+// A versioned report that crosses didClose (the server diagnosed an
+// earlier didOpen/didChange) does not resurrect the dropped diagnostics;
+// unversioned reports of unopened files are kept.
+func TestStaleDiagnosticsAfterClose(t *testing.T) {
+	a, m, f, dir := setup(t)
+	modtest.Call(t, a, "doc.open", api.DocOpenParams{Path: "a.php"}, nil)
+	modtest.Call(t, a, "lsp.start", StartParams{Command: "fake"}, nil)
+	waitSynced(t, a, f, dir, "a.php")
+	modtest.Eventually(t, "diagnostics", func() bool {
+		var l []Diagnostics
+		modtest.Call(t, a, "lsp.diagnostics", nil, &l)
+		return len(l) == 1
+	})
+	modtest.Call(t, a, "doc.close", api.PathParams{Path: "a.php"}, nil)
+	uri := protocol.URIFromPath(filepath.Join(dir, "a.php"))
+	modtest.Eventually(t, "didClose", func() bool { return len(f.last().Snapshot().Closed) == 1 })
+	s := m.current()
+	v := 3
+	m.onDiagnostics(s, protocol.PublishDiagnosticsParams{URI: uri, Version: &v, Diagnostics: []protocol.Diagnostic{{Message: "stale"}}})
+	var l []Diagnostics
+	modtest.Call(t, a, "lsp.diagnostics", nil, &l)
+	if len(l) != 0 {
+		t.Fatalf("stale diagnostics kept: %+v", l)
+	}
+	other := protocol.URIFromPath(filepath.Join(dir, "other.php"))
+	m.onDiagnostics(s, protocol.PublishDiagnosticsParams{URI: other, Diagnostics: []protocol.Diagnostic{{Message: "workspace"}}})
+	modtest.Call(t, a, "lsp.diagnostics", nil, &l)
+	if len(l) != 1 || l[0].Path != "other.php" {
+		t.Fatalf("workspace diagnostics %+v", l)
+	}
+}

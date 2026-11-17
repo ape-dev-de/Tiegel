@@ -589,3 +589,28 @@ func TestInProcessBackend(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+// Close waits for running jobs: the backend is closed right after the
+// controller, and a job (e.g. an autosave) must not still be writing.
+func TestCloseWaitsForJobs(t *testing.T) {
+	c := New(newFake())
+	var mu sync.Mutex
+	finished := false
+	started := make(chan struct{})
+	c.Go(func(ctx context.Context) func() {
+		close(started)
+		<-ctx.Done()
+		time.Sleep(50 * time.Millisecond) // work that ignores the cancel for a moment
+		mu.Lock()
+		finished = true
+		mu.Unlock()
+		return func() {}
+	})
+	<-started
+	c.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	if !finished {
+		t.Fatal("Close returned while a job was running")
+	}
+}

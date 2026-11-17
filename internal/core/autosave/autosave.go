@@ -181,6 +181,7 @@ type Manager struct {
 	gen     uint64
 	closed  bool
 	lastAct time.Time
+	idle    sync.WaitGroup // running idle saves (Close waits for them)
 }
 
 // ErrEmptyFilterResult is reported (Config.OnError) when the
@@ -383,7 +384,9 @@ func (m *Manager) idleFired(gen uint64) {
 		return // superseded by newer activity
 	}
 	m.timer = nil
+	m.idle.Add(1) // under mu with closed checked: never after Close's Wait
 	m.mu.Unlock()
+	defer m.idle.Done()
 
 	ctx, cancel := context.WithTimeout(context.Background(), m.cfg.BackgroundTimeout)
 	defer cancel()
@@ -392,12 +395,15 @@ func (m *Manager) idleFired(gen uint64) {
 	}
 }
 
-// Close stops the idle timer. Saves already running finish normally.
+// Close stops the idle timer and waits for a running idle save, so that no
+// file is written after Close returns. Saves started by callers (SaveAll,
+// FocusLost, …) are theirs to wait for.
 func (m *Manager) Close() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.closed = true
 	m.armLocked()
+	m.mu.Unlock()
+	m.idle.Wait()
 }
 
 // AttachPriority is the priority SaveBeforeGuard and SaveOnAction use, so
