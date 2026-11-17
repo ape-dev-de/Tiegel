@@ -177,6 +177,7 @@ type Model struct {
 	width, tab int
 	valid      bool
 	version    uint64
+	snap       uint64 // buffer version the rows were last brought up to
 
 	rows  []int32 // rows per document line (≥ 1)
 	blk   []int32 // rows per block of 64 lines
@@ -214,6 +215,7 @@ func (m *Model) Reset(s buffer.Snapshot, width, tabWidth int) {
 	}
 	m.width, m.tab, m.valid = width, tabWidth, true
 	m.version++
+	m.snap = s.Version()
 	n := s.LineCount()
 	m.rows = slices.Grow(m.rows[:0], n)[:n]
 	line, length, tabs := 0, 0, false
@@ -251,6 +253,18 @@ func (m *Model) Reset(s buffer.Snapshot, width, tabWidth int) {
 	m.rebuildBlocks(0)
 }
 
+// Sync re-wraps the whole document at the current width if the model,
+// once computed with Reset, is invalid or out of date with s (an edit it
+// was not told about), so that callers never map through stale rows. It
+// reports whether it re-wrapped; up-to-date models cost two comparisons.
+func (m *Model) Sync(s buffer.Snapshot) bool {
+	if m.width == 0 || (m.valid && m.snap == s.Version() && len(m.rows) == s.LineCount()) {
+		return false
+	}
+	m.Reset(s, m.width, m.tab)
+	return true
+}
+
 // measure returns the exact row count of document line l.
 func (m *Model) measure(s buffer.Snapshot, l int) int {
 	m.line = s.AppendLine(m.line[:0], l)
@@ -278,15 +292,18 @@ func (m *Model) rebuildBlocks(from int) {
 // ApplyEdit updates the row counts after a buffer edit; s is the snapshot
 // after the edit. Only the edited lines are measured again.
 func (m *Model) ApplyEdit(s buffer.Snapshot, e buffer.Edit) {
-	if !m.valid {
-		return
+	if !m.valid || m.snap == s.Version() {
+		return // nothing to update, or already re-wrapped by Sync
 	}
 	start, oldEnd, newEnd := e.StartPoint.Row, e.OldEndPoint.Row, e.NewEndPoint.Row
-	if start < 0 || oldEnd >= len(m.rows) || len(m.rows)-(oldEnd-start)+(newEnd-start) != s.LineCount() {
-		m.valid = false // out of sync (missed edit); recomputed by the next Reset
+	// Every buffer edit bumps the version once: a gap means a missed edit.
+	if start < 0 || oldEnd >= len(m.rows) || len(m.rows)-(oldEnd-start)+(newEnd-start) != s.LineCount() ||
+		m.snap+1 != s.Version() {
+		m.valid = false // out of sync (missed edit); recomputed by the next Reset or Sync
 		return
 	}
 	m.version++
+	m.snap = s.Version()
 	if oldEnd == newEnd {
 		for l := start; l <= newEnd; l++ {
 			r := int32(m.measure(s, l))

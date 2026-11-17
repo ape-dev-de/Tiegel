@@ -113,22 +113,55 @@ func segment(starts []int, n, col int) (i, start, end int) {
 	return i, starts[i], end
 }
 
+// Caret affinity: an offset at a soft break (the start of a continuation
+// row) is both the end of the row before and the start of the next one.
+// Without further information it belongs to the next row; with rowEnd
+// set it is the end of the row before. Carets keep this flag so that End
+// can put the caret after the last cluster of a row (D295).
+
+// rowAt returns the row index and bounds of line-relative column col of a
+// line with row starts starts and length n, with caret affinity rowEnd.
+func rowAt(starts []int, n, col int, rowEnd bool) (i, start, end int) {
+	i, start, end = segment(starts, n, col)
+	if rowEnd && i > 0 && col == start {
+		i, start, end = i-1, starts[i-1], start
+	}
+	return i, start, end
+}
+
 // RowOf returns the visual row of document offset off and its visual
-// column within that row.
+// column within that row; an offset at a soft break belongs to the
+// following row (see CaretRow).
 func (v *View) RowOf(s buffer.Snapshot, off int) (row, col int) {
+	return v.CaretRow(s, off, false)
+}
+
+// CaretRow returns the visual row and column of a caret at off. With
+// rowEnd, a caret at a soft break is at the end of the row before it.
+func (v *View) CaretRow(s buffer.Snapshot, off int, rowEnd bool) (row, col int) {
+	v.Wrap.Sync(s)
 	pos := s.OffsetToPos(off)
 	if v.Folds != nil && v.Folds.IsHidden(pos.Line) {
 		return v.LineRow(pos.Line), 0
 	}
 	starts, line := v.Segments(s, pos.Line)
-	i, a, _ := segment(starts, len(line), pos.Col)
+	i, a, _ := rowAt(starts, len(line), pos.Col, rowEnd)
 	return v.LineRow(pos.Line) + i, buffer.VisualCol(line[a:], pos.Col-a, v.Wrap.TabWidth())
 }
 
 // OffsetAt returns the document offset at visual column col of visual
-// row row. Columns past the end of a continued row stop before its last
-// cluster, so the caret stays on that row.
+// row row. Past the end of a continued row it is the soft break, which
+// RowOf maps to the next row; CaretAt also reports that case.
 func (v *View) OffsetAt(s buffer.Snapshot, row, col int) int {
+	off, _ := v.CaretAt(s, row, col)
+	return off
+}
+
+// CaretAt returns the caret at visual column col of visual row row: its
+// offset and whether it is at the end of a continued row (rowEnd; the
+// offset is then the soft break).
+func (v *View) CaretAt(s buffer.Snapshot, row, col int) (off int, rowEnd bool) {
+	v.Wrap.Sync(s)
 	l, sub := v.LineAt(row)
 	starts, line := v.Segments(s, l)
 	sub = min(sub, len(starts)-1)
@@ -138,20 +171,22 @@ func (v *View) OffsetAt(s buffer.Snapshot, row, col int) int {
 		b = starts[sub+1]
 	}
 	c := buffer.ByteColFromVisual(line[a:b], col, v.Wrap.TabWidth())
-	ls := s.LineStart(l)
-	if !last && a+c == b && b > a {
-		return max(ls+a, s.PrevGrapheme(ls+b))
-	}
-	return ls + a + c
+	return s.LineStart(l) + a + c, !last && a+c == b && b > a
 }
 
 // RowBounds returns the document offsets [start, end) of the visual row
 // containing off and whether it is the last row of its line (end is then
-// the line end).
+// the line end); an offset at a soft break belongs to the following row.
 func (v *View) RowBounds(s buffer.Snapshot, off int) (start, end int, last bool) {
+	return v.CaretRowBounds(s, off, false)
+}
+
+// CaretRowBounds is RowBounds for a caret at off with affinity rowEnd.
+func (v *View) CaretRowBounds(s buffer.Snapshot, off int, rowEnd bool) (start, end int, last bool) {
+	v.Wrap.Sync(s)
 	pos := s.OffsetToPos(off)
 	starts, line := v.Segments(s, pos.Line)
-	i, a, b := segment(starts, len(line), pos.Col)
+	i, a, b := rowAt(starts, len(line), pos.Col, rowEnd)
 	ls := s.LineStart(pos.Line)
 	return ls + a, ls + b, i+1 >= len(starts)
 }

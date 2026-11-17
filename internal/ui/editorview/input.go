@@ -312,7 +312,9 @@ func (e *Editor) press(gtx layout.Context, pe pointer.Event) {
 		e.gutterPress(pe, pt)
 		return
 	}
-	off := e.offsetAt(pt)
+	off, rowEnd := e.caretAt(pt)
+	caret := cursor.Caret(off)
+	caret.RowEnd = rowEnd
 	s := e.buf.Snapshot()
 	m := pe.Modifiers
 	e.expand = e.expand[:0]
@@ -321,13 +323,13 @@ func (e *Editor) press(gtx layout.Context, pe pointer.Event) {
 		e.ptr.before = e.cur.State()
 		e.ptr.blockLine, e.ptr.blockCol = e.lineColAt(pt)
 		if e.ptr.clicks == 1 {
-			e.cur.AddCursor(off)
+			e.cur.AddSelection(caret)
 		}
 		e.ptr.mode = dragBlockPending
 	case m.Contain(key.ModShift):
 		sels := e.cur.Selections()
 		pi := e.cur.PrimaryIndex()
-		sels[pi].Head = off
+		sels[pi] = cursor.Selection{Anchor: sels[pi].Anchor, Head: off, RowEnd: rowEnd}
 		e.cur.SetSelections(sels, pi)
 		e.ptr.anchor = cursor.Caret(sels[pi].Anchor)
 		e.ptr.mode = dragChars
@@ -342,7 +344,7 @@ func (e *Editor) press(gtx layout.Context, pe pointer.Event) {
 		e.ptr.anchor = cursor.Range(start, end)
 		e.ptr.mode = dragLines
 	default:
-		e.cur.SetCaret(off)
+		e.cur.SetSelections([]cursor.Selection{caret}, 0)
 		e.ptr.anchor = cursor.Caret(off)
 		e.ptr.mode = dragChars
 	}
@@ -428,14 +430,14 @@ func (e *Editor) drag(gtx layout.Context, pe pointer.Event) {
 	}
 	e.clampScroll()
 	pt.Y = min(max(pt.Y, 0), g.size.Y-1)
-	off := e.offsetAt(pt)
+	off, rowEnd := e.caretAt(pt)
 	s := e.buf.Snapshot()
 	a := e.ptr.anchor
 	switch e.ptr.mode {
 	case dragChars:
 		sels := e.cur.Selections()
 		pi := e.cur.PrimaryIndex()
-		sels[pi] = cursor.Range(a.Anchor, off)
+		sels[pi] = cursor.Selection{Anchor: a.Anchor, Head: off, RowEnd: rowEnd}
 		e.cur.SetSelections(sels, pi)
 	case dragWords:
 		start, end := cursor.WordAt(s, off)
@@ -540,11 +542,26 @@ func (e *Editor) rowColAt(pt image.Point) (row, col int) {
 	return row, col
 }
 
-// lineColAt maps a point to a document line and visual column (within
-// the row of a wrapped line).
+// lineColAt maps a point to a document line and a visual column of the
+// whole line (as blockSelect expects): on a continuation row of a wrapped
+// line the row-local column is converted to the line column of the same
+// position; columns past the row end keep their distance from it.
 func (e *Editor) lineColAt(pt image.Point) (line, col int) {
 	row, col := e.rowColAt(pt)
-	return e.rowLine(row), col
+	if !e.wrapped {
+		return e.rowLine(row), col
+	}
+	line, sub := e.view.LineAt(row)
+	starts, text := e.view.Segments(e.buf.Snapshot(), line)
+	sub = min(sub, len(starts)-1)
+	a, b := starts[sub], len(text)
+	if sub+1 < len(starts) {
+		b = starts[sub+1]
+	}
+	tw := e.tabWidth()
+	c := buffer.ByteColFromVisual(text[a:b], col, tw)
+	past := max(0, col-buffer.VisualCol(text[a:b], c, tw))
+	return line, buffer.VisualCol(text, a+c, tw) + past
 }
 
 // offsetAt maps a point in editor coordinates to the nearest document
@@ -742,7 +759,7 @@ func (e *Editor) updateIME(gtx layout.Context) {
 	p := e.cur.Primary()
 	sel := key.Range{Start: e.runeOfByte(p.Head), End: e.runeOfByte(p.Anchor)}
 	var caret key.Caret
-	if r, ok := e.AnchorRect(p.Head); ok {
+	if r, ok := e.caretRect(p); ok {
 		caret = key.Caret{
 			Pos:     f32.Pt(float32(r.Min.X), float32(r.Min.Y+e.met.base)),
 			Ascent:  float32(e.met.ascent.Ceil()),

@@ -293,9 +293,15 @@ func TestViewOffsets(t *testing.T) {
 			t.Errorf("RowOf(%d) = %d,%d want %d,%d", c.off, r, col, c.row, c.col)
 		}
 	}
-	// Past the end of a continued row stops before its last cluster.
-	if got := v.OffsetAt(s, 1, 50); got != l1+9 {
-		t.Errorf("OffsetAt continued row = %d, want %d", got, l1+9)
+	// Past the end of a continued row is its break, at the row end.
+	if got, end := v.CaretAt(s, 1, 50); got != l1+10 || !end || v.OffsetAt(s, 1, 50) != got {
+		t.Errorf("CaretAt continued row = %d %v, want %d at the row end", got, end, l1+10)
+	}
+	if r, c := v.CaretRow(s, l1+10, true); r != 1 || c != 10 {
+		t.Errorf("CaretRow at row end = %d,%d, want 1,10", r, c)
+	}
+	if st, en, last := v.CaretRowBounds(s, l1+10, true); st != l1 || en != l1+10 || last {
+		t.Errorf("CaretRowBounds at row end = %d %d %v", st, en, last)
 	}
 	if got := v.OffsetAt(s, 2, 50); got != l1+19 {
 		t.Errorf("OffsetAt last row = %d, want %d", got, l1+19)

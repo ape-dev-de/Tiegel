@@ -137,15 +137,34 @@ func (e *Editor) rowCol(s buffer.Snapshot, off int) (row, col int) {
 	return e.folds.DocToVisible(pos.Line), buffer.VisualCol(s.Line(pos.Line), pos.Col, e.tabWidth())
 }
 
+// caretRowCol is rowCol for the head of sel with its row-end affinity.
+func (e *Editor) caretRowCol(s buffer.Snapshot, sel cursor.Selection) (row, col int) {
+	if e.wrapped {
+		return e.view.CaretRow(s, sel.Head, sel.RowEnd)
+	}
+	return e.rowCol(s, sel.Head)
+}
+
+// caretAt maps a point to a caret: its offset and whether it is at the
+// end of a continued row (soft wrap, see cursor.Selection.RowEnd).
+func (e *Editor) caretAt(pt image.Point) (off int, rowEnd bool) {
+	if e.wrapped {
+		row, col := e.rowColAt(pt)
+		return e.view.CaretAt(e.buf.Snapshot(), row, col)
+	}
+	return e.offsetAt(pt), false
+}
+
 // visIndex returns the index of the visible row showing the caret at
-// off, or -1. An offset at a soft break belongs to the following row.
-func visIndex(vis []visLine, off int) int {
+// off, or -1. An offset at a soft break belongs to the following row
+// unless rowEnd is set (then it is the end of the row before).
+func visIndex(vis []visLine, off int, rowEnd bool) int {
 	i := sort.Search(len(vis), func(i int) bool { return vis[i].end >= off })
-	if i < len(vis) && !vis[i].last && vis[i].end == off && vis[i].end > vis[i].start {
+	if i < len(vis) && !vis[i].last && vis[i].end == off && vis[i].end > vis[i].start && !rowEnd {
 		i++
 	}
-	if i >= len(vis) || vis[i].start > off {
-		return -1
+	if i >= len(vis) || vis[i].start > off || (rowEnd && vis[i].sub > 0 && vis[i].start == off) {
+		return -1 // not visible (rowEnd: the row before is above the view)
 	}
 	return i
 }

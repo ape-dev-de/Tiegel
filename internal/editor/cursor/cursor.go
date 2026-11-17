@@ -24,6 +24,11 @@ type Selection struct {
 	// meaningful if HasGoal is set. Horizontal movement clears it.
 	Goal    int
 	HasGoal bool
+	// RowEnd is the caret affinity with soft wrap: a Head at a soft
+	// break is at the end of the row before the break instead of the
+	// start of the next one (set by End, vertical movement and clicks
+	// right of a row; any other change clears it).
+	RowEnd bool
 }
 
 // Caret returns an empty selection at off.
@@ -64,13 +69,16 @@ type LineMapper interface {
 type RowMapper interface {
 	// RowCount returns the number of visual rows.
 	RowCount() int
-	// RowOf returns the visual row of off and its visual column in it.
-	RowOf(s buffer.Snapshot, off int) (row, col int)
-	// OffsetAt returns the offset at visual column col of row row.
-	OffsetAt(s buffer.Snapshot, row, col int) int
-	// RowBounds returns the offsets [start, end) of the row containing
-	// off and whether it is the last row of its line.
-	RowBounds(s buffer.Snapshot, off int) (start, end int, last bool)
+	// CaretRow returns the visual row of a caret at off with affinity
+	// rowEnd (see Selection.RowEnd) and its visual column in it.
+	CaretRow(s buffer.Snapshot, off int, rowEnd bool) (row, col int)
+	// CaretAt returns the caret at visual column col of row row and
+	// whether it is at the end of a continued row.
+	CaretAt(s buffer.Snapshot, row, col int) (off int, rowEnd bool)
+	// CaretRowBounds returns the offsets [start, end) of the row of a
+	// caret at off with affinity rowEnd and whether it is the last row
+	// of its line.
+	CaretRowBounds(s buffer.Snapshot, off int, rowEnd bool) (start, end int, last bool)
 }
 
 // Model holds the cursors of one buffer and implements editing commands.

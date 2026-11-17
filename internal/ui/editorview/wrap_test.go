@@ -83,16 +83,24 @@ func TestSoftWrapCaretMovement(t *testing.T) {
 	if got := r.e.Cursor().Primary().Head; got != 3 {
 		t.Fatalf("Up came back to %d", got)
 	}
-	// End on the first row stops before its break, the second End goes
-	// to the line end; Home goes back to the row start.
+	// End on the second row goes to its break (after its last cluster,
+	// drawn at the row end), the second End goes to the line end; Home
+	// goes back to the row start.
 	r.press("Down")
 	start, end, last := r.e.view.RowBounds(s, r.e.Cursor().Primary().Head)
 	if last {
 		t.Fatal("second row is the last")
 	}
 	r.press("Cmd+Right") // End on mac
-	if got := r.e.Cursor().Primary().Head; got != end-1 {
-		t.Fatalf("End = %d, want %d", got, end-1)
+	if got := r.e.Cursor().Primary(); got.Head != end || !got.RowEnd {
+		t.Fatalf("End = %+v, want %d at the row end", got, end)
+	}
+	r.frame()
+	if row, _ := r.e.caretRowCol(s, r.e.Cursor().Primary()); row != 1 {
+		t.Fatalf("caret at the row end drawn on row %d", row)
+	}
+	if i := visIndex(r.e.vis, end, true); i < 0 || r.e.vis[i].row != 1 {
+		t.Fatalf("caret at the row end painted in visible row %d", i)
 	}
 	r.press("Cmd+Right")
 	if got := r.e.Cursor().Primary().Head; got != s.LineEnd(0) {
@@ -136,11 +144,11 @@ func TestSoftWrapClick(t *testing.T) {
 	if got := r.e.Cursor().Primary().Head; got != target {
 		t.Fatalf("click on row 2 put the caret at %d, want %d", got, target)
 	}
-	// A click right of a continued row stops before its break.
+	// A click right of a continued row puts the caret at its end.
 	p := r.pointAt(start)
 	r.click(f32.Pt(float32(r.e.geo.size.X-20), p.Y-float32(r.e.LineHeight())), 0)
-	if got := r.e.Cursor().Primary().Head; got != start-1 {
-		t.Fatalf("click past row 1 = %d, want %d", got, start-1)
+	if got := r.e.Cursor().Primary(); got.Head != start || !got.RowEnd {
+		t.Fatalf("click past row 1 = %+v, want %d at the row end", got, start)
 	}
 	// Gutter clicks report the document line of any of its rows.
 	r.takeEvents()
