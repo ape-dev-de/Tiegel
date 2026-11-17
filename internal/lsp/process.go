@@ -21,7 +21,7 @@ type process struct {
 	cmd    *exec.Cmd
 	tree   *proctree.Tree // the server and what it started (wrappers)
 	stdout *os.File       // read end of server stdout
-	stdin  *os.File // write end of server stdin
+	stdin  *os.File       // write end of server stdin
 
 	exited  chan struct{}
 	mu      sync.Mutex
