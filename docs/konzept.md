@@ -25,7 +25,7 @@ Tiegel ist ein Selbstentwicklungs-Projekt, offen auf GitHub, ohne Marke und ohne
 Tiegel ist EU-souverän und Privacy first: Kein Byte verlässt den Rechner, ohne dass der Nutzer es auslöst.
 
 - **Keine Datenabflüsse:** keine Telemetrie, keine Konten, keine Cloud-Dienste, keine Absturzberichte nach außen. Logs bleiben lokal.
-- **Keine stillen Downloads:** Language Server und Tools werden mitgeliefert oder vom System genutzt, nie automatisch nachgeladen.
+- **Keine stillen Downloads:** Language Server und Tools werden vom System genutzt oder auf ausdrückliche Nutzeraktion über den Paketmanager installiert (D194), nie automatisch nachgeladen.
 - **Updates nur auf Wunsch:** Prüfung abschaltbar, Bezug aus einer selbst hostbaren Quelle (z.B. GitHub-Releases).
 - **Möglichst nativ:** Oberfläche mit Gio in reinem Go – keine WebView, kein JavaScript, keine npm-Lieferkette. Ein natives Binary pro Plattform.
 - **Nur Open Source mit aktiver Pflege:** jede Abhängigkeit mit OSI-Lizenz; proprietäre Tools (z.B. Intelephense) nicht im Standard.

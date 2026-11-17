@@ -1,6 +1,6 @@
 # Status
 
-Letzte Aktualisierung: 2026-11-16
+Letzte Aktualisierung: 2026-11-17
 
 Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 
@@ -25,6 +25,7 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 | M8 | Mac-Paketierung | ⚠️ | Skripte, Universal-App, DMG, release.yml, opt-in Update-Check fertig; echte Signatur/Notarisierung braucht Apple-Zertifikate + Secrets (docs/release.md) |
 | M10 | Parität & Fenster-Management | 🟡 | ✅ Fenster-Management, Projekte, Menüleiste, Systemschriften, Tree-sitter-Navigation (Cmd+B/Cmd+Alt+B/Cmd+U, Gutter ↑↓, Go to Class/Symbol, Search Everywhere), Kontextmenüs (Editor/Baum/Tabs/Gutter), Datei-Operationen, Dateiwatcher + Konflikt-Banner, Diff-Tabs, Annotate, Historie, Local History, Find in Files, Usages/Alt+Enter/Reformat/Rename (LSP), Fetch/Pull/Stash; CI-Fix (Linux/Windows) in Arbeit; offen: P1-Rest aus vergleich.md (Terminal, Run-Konfigurationen, Sitzung speichern, Debug-Ergänzungen, Log-Graph, Qualitäts-Tools) |
 | M9 | Linux/WSL | 🟡 | Backend ✅: Socket-Transport mit Token, `api.Caller` (in-process/remote), Client, docsync, WSL-Interpreter + Pfade, `syntax.*`-API, CI Windows/Cross; GUI-Umschaltung, Pakete/Installer offen |
+| M11–M17 | Nutzer-Feedback 2026-11-17: LSP-Plugins + Supervisor, Kern/Plugin-Einstellungen, Keymap, Docker/OrbStack, Run/PHPUnit/Terminal, IDE-Import, QA-Plugins | ⬜ | geplant, Abgleich in docs/einstellungen-abgleich.md, D190–D194 |
 
 ## Log
 - 2026-11-16: Konzept nach `docs/konzept.md` verschoben, Roadmap, Entscheidungen, Agenten-Konventionen angelegt.
@@ -49,3 +50,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - Golden-Screenshot-Tests als Abnahme M2 (Screenshots werden erzeugt, aber nicht verglichen).
 - 2026-11-16: CI-Fixes gemergt (Windows-Pfade/EOL, Build-Tag `headless`, D84/D85). CI auf main komplett grün (macOS, Linux, Windows, Cross).
 - 2026-11-16: CI-Fixes M10 gemergt (D180–D183): git ≥ 2.48 Fetch, Windows-Watcher mit einem Handle, Groß/Klein-Umbenennung, Headless-Tests 75 s → 16 s.
+- 2026-11-17: Einstellungs-Abgleich mit Referenz-IDE (docs/einstellungen-abgleich.md), Meilensteine M11–M17 geplant (D190–D194).

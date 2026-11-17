@@ -8,7 +8,7 @@ Schnelle, native PHP-IDE in Go mit Gio. Konzept: `docs/konzept.md`, Plan: `docs/
 - **Headless first (D41):** Logik gehört ins Backend und ist über `internal/api` erreichbar; jede Funktion bekommt einen Befehl in `tiegel --headless …` (und in `serve`). Die GUI ist nur ein Client. Außerhalb von reiner UI-Arbeit headless entwickeln und testen.
 - Module kommunizieren nur über Event-Bus/Hooks (`internal/core`), nie direkt miteinander.
 - Plugins/Module bauen UI nur aus `internal/ui/{atoms,molecules,organisms}`; Farben/Abstände nur aus `internal/ui/tokens`.
-- **Privacy:** kein Netzwerkzugriff außer vom Nutzer ausgelöst (DBGp-Listener lokal, `git push`, Update-Prüfung opt-in). Keine Telemetrie, keine Downloads.
+- **Privacy:** kein Netzwerkzugriff außer vom Nutzer ausgelöst (DBGp-Listener lokal, `git push`, Update-Prüfung opt-in). Keine Telemetrie. Downloads nur auf ausdrückliche Nutzeraktion (Knopf „Installieren“ mit angezeigtem Befehl, D194) – nie automatisch, nie im Hintergrund.
 - **Clean-Room:** kein Code, keine Icons, keine Assets von JetBrains; den Namen „PhpStorm“ nicht im Code/UI verwenden.
 - Abhängigkeiten nur mit OSI-Lizenz und aktiver Pflege. Neue Abhängigkeit → in `docs/DECISIONS.md` begründen.
 - Code, Bezeichner, Kommentare auf Englisch; Doku in `docs/` auf Deutsch.
