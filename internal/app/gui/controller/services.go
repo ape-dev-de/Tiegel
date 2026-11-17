@@ -131,6 +131,7 @@ type Services struct {
 	visible bool
 	watchID string
 	watchOp uint64 // invalidates late watchStart answers
+	logOp   uint64 // invalidates late docker.logs answers (D306)
 
 	// Version changes with the snapshot, contexts, busy state;
 	// LogVersion with the log lines.
@@ -339,6 +340,7 @@ func (s *Services) ShowLogs(service, container string) {
 	s.Logs.Lines, s.Logs.Err, s.Logs.Loading, s.Logs.Open = nil, "", true, true
 	s.LogVersion++
 	follow := s.Logs.Follow
+	op := s.logOp // StopLogs above started a new operation
 	s.c.Go(func(ctx context.Context) func() {
 		var res struct {
 			ID    string          `json:"id"`
@@ -346,8 +348,10 @@ func (s *Services) ShowLogs(service, container string) {
 		}
 		err := s.c.call(ctx, "docker.logs", map[string]any{"service": service, "container": container, "follow": follow}, &res)
 		return func() {
-			if s.Logs.Service != service || s.Logs.Container != container {
-				if err == nil && res.ID != "" {
+			if op != s.logOp {
+				// A newer request, StopLogs or hiding came in between
+				// (also for the same target): end the late stream.
+				if err == nil {
 					s.stopLogID(res.ID)
 				}
 				return
@@ -356,7 +360,12 @@ func (s *Services) ShowLogs(service, container string) {
 			if err != nil {
 				s.Logs.Err = err.Error()
 			} else {
-				s.Logs.ID = res.ID
+				if s.visible {
+					s.Logs.ID = res.ID
+				} else {
+					// Never follow while the window is hidden (D270).
+					s.stopLogID(res.ID)
+				}
 				s.appendLogs(res.Lines)
 			}
 			s.LogVersion++
@@ -402,8 +411,14 @@ func (s *Services) ClearLogs() {
 	s.LogVersion++
 }
 
-// StopLogs ends a followed stream.
+// StopLogs ends a followed stream and invalidates a pending docker.logs
+// request: its stream is stopped as soon as it is answered.
 func (s *Services) StopLogs() {
+	s.logOp++
+	if s.Logs.Loading {
+		s.Logs.Loading = false
+		s.LogVersion++
+	}
 	id := s.Logs.ID
 	s.Logs.ID = ""
 	s.stopLogID(id)

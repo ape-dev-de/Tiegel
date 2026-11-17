@@ -246,13 +246,22 @@ func TestTerminalCommand(t *testing.T) {
 	if _, err := docker.TerminalCommand(docker.TerminalOptions{GOOS: "linux", Getenv: env(nil), LookPath: none}, argv); !errors.Is(err, docker.ErrNoTerminal) {
 		t.Fatalf("none %v", err)
 	}
-	got, _ = docker.TerminalCommand(docker.TerminalOptions{GOOS: "windows", LookPath: only("wt")}, argv)
-	if got[0] != "wt" || got[1] != argv[0] {
-		t.Fatalf("wt %v", got)
+	// Windows: cmd.exe only, with one pre-quoted line (D307).
+	for _, lp := range []func(string) (string, error){only("wt"), none} {
+		got, err = docker.TerminalCommand(docker.TerminalOptions{GOOS: "windows", LookPath: lp}, argv)
+		if err != nil || !docker.WindowsRawCmd(got) || got[len(got)-1] != `""/usr/bin/docker" --context ^"orb stack^" compose exec app sh"` {
+			t.Fatalf("cmd %q %v", got, err)
+		}
 	}
-	got, _ = docker.TerminalCommand(docker.TerminalOptions{GOOS: "windows", LookPath: none}, argv)
-	if !reflect.DeepEqual(got[:6], []string{"cmd", "/c", "start", "", "cmd", "/k"}) {
-		t.Fatalf("cmd %v", got)
+	if docker.WindowsRawCmd(argv) || docker.WindowsRawCmd([]string{"cmd", "/d", "/v:on", "/s", "/k", "x"}) {
+		t.Fatal("raw cmd misdetected")
+	}
+	if _, err := docker.TerminalCommand(docker.TerminalOptions{GOOS: "windows"}, []string{`C:\100%\docker.exe`}); err == nil {
+		t.Fatal("program with % accepted")
+	}
+	got, _ = docker.TerminalCommand(docker.TerminalOptions{GOOS: "windows", Terminal: `C:\Apps\WT.exe`}, []string{"docker", "exec", "a;b"})
+	if !reflect.DeepEqual(got, []string{`C:\Apps\WT.exe`, "docker", "exec", `a\;b`}) {
+		t.Fatalf("wt setting %q", got)
 	}
 	got, _ = docker.TerminalCommand(docker.TerminalOptions{GOOS: "windows", Terminal: "alacritty -e"}, argv)
 	if got[0] != "alacritty" {

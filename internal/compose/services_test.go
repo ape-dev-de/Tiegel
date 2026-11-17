@@ -77,6 +77,23 @@ func TestStackArgs(t *testing.T) {
 	if _, err := s.ShellArgs("-x", ""); err == nil {
 		t.Fatal("bad shell service")
 	}
+	// Names reach a terminal command line: only a safe charset (D308).
+	for _, bad := range []string{"a&b", "a|b", "%PATH%", "a;b", `a"b`, "a b", "a^b", ".x", "_x", "a\nb"} {
+		if _, err := s.ShellArgs(bad, ""); err == nil {
+			t.Errorf("service %q accepted", bad)
+		}
+		if _, err := s.ShellArgs("app", bad); err == nil {
+			t.Errorf("shell %q accepted", bad)
+		}
+	}
+	for _, sh := range []string{"bash", "/bin/sh", "/usr/local/bin/zsh-5.9"} {
+		if _, err := s.ShellArgs("my_app.v2-x", sh); err != nil {
+			t.Errorf("shell %q: %v", sh, err)
+		}
+	}
+	if _, err := s.ShellArgs("app", "//x"); err == nil {
+		t.Error("shell //x accepted")
+	}
 	// The interpreter shares the base arguments.
 	ip := &Interpreter{Project: "shop", Dir: "/p", Files: []string{"/p/compose.yaml"}, Profiles: []string{"dev"}}
 	if !reflect.DeepEqual(ip.BaseArgs(), base) {

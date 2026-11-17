@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -229,5 +230,90 @@ func TestServicesLogs(t *testing.T) {
 	s.shutdown()
 	if s.watchID != "" || s.Logs.ID != "" {
 		t.Fatal("shutdown")
+	}
+}
+
+// stoppedLogIDs returns the ids passed to docker.logsStop.
+func stoppedLogIDs(f *fakeBackend) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var ids []string
+	for _, raw := range f.params["docker.logsStop"] {
+		var p struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(raw, &p)
+		ids = append(ids, p.ID)
+	}
+	return ids
+}
+
+// A followed stream answered after the window was hidden is stopped at
+// once and never becomes the panel's stream (D306).
+func TestServicesLogsHiddenWhileLoading(t *testing.T) {
+	f := servicesFake()
+	release := make(chan struct{})
+	f.on("docker.logs", func(json.RawMessage) (any, error) {
+		<-release
+		return map[string]any{"id": "logs-A", "lines": []DockerLogLine{{Text: "late"}}}, nil
+	})
+	c := New(f)
+	defer c.Close()
+	s := c.Services
+	s.SetVisible(true)
+	c.Settle(time.Second)
+	s.ShowLogs("web", "")
+	s.SetVisible(false) // hidden while docker.logs is in flight
+	close(release)
+	c.Settle(2 * time.Second)
+	if s.Logs.ID != "" {
+		t.Fatalf("hidden window kept stream %q", s.Logs.ID)
+	}
+	if ids := stoppedLogIDs(f); len(ids) != 1 || ids[0] != "logs-A" {
+		t.Fatalf("late stream not stopped: %v", ids)
+	}
+	if s.Logs.Loading {
+		t.Fatal("still loading after hide")
+	}
+}
+
+// Two requests for the same target: the older answer (arriving last) is
+// stopped, the newer stream stays (D306).
+func TestServicesLogsSameTargetTwice(t *testing.T) {
+	f := servicesFake()
+	var mu sync.Mutex
+	n := 0
+	entered, first := make(chan struct{}), make(chan struct{})
+	f.on("docker.logs", func(json.RawMessage) (any, error) {
+		mu.Lock()
+		n++
+		k := n
+		mu.Unlock()
+		if k == 1 {
+			close(entered)
+			<-first // the first answer arrives after the second
+			return map[string]any{"id": "logs-1"}, nil
+		}
+		return map[string]any{"id": "logs-2"}, nil
+	})
+	c := New(f)
+	defer c.Close()
+	s := c.Services
+	s.SetVisible(true)
+	c.Settle(time.Second)
+	s.ShowLogs("web", "")
+	<-entered
+	s.ShowLogs("web", "") // same service clicked twice
+	c.Settle(300 * time.Millisecond)
+	if s.Logs.ID != "logs-2" {
+		t.Fatalf("second stream %q", s.Logs.ID)
+	}
+	close(first)
+	c.Settle(2 * time.Second)
+	if s.Logs.ID != "logs-2" {
+		t.Fatalf("stream %q, want logs-2", s.Logs.ID)
+	}
+	if ids := stoppedLogIDs(f); len(ids) != 1 || ids[0] != "logs-1" {
+		t.Fatalf("stopped %v, want [logs-1]", ids)
 	}
 }

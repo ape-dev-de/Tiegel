@@ -213,10 +213,16 @@ type servicesState struct {
 	cacheVal *compose.Project
 	cacheErr error
 
-	seq    int
-	logs   map[string]logStream
-	leases map[string]bool // watch ID → wants standalone containers
-	watch  *watcher
+	seq  int
+	logs map[string]logStream
+	// follows counts running follow goroutines. Module.Stop sets closing
+	// (no new stream starts), waits for them and sets stopped (no
+	// docker.log is published afterwards, D309).
+	follows sync.WaitGroup
+	closing bool
+	stopped bool
+	leases  map[string]bool // watch ID → wants standalone containers
+	watch   *watcher
 }
 
 // logStream is a followed log stream. key is the engine and project it
@@ -256,7 +262,7 @@ func serviceSpecs() []settings.Spec {
 			Help: "Polling interval of the Services window when docker events are not available; only while the window is visible.",
 			Min:  settings.IntPtr(1), Max: settings.IntPtr(3600)},
 		{Key: SettingTerminal, Kind: settings.KindString, Default: "", Scope: settings.ScopeGlobal, Label: "Terminal for container shells",
-			Help: "macOS: application for `open -a` (default Terminal, e.g. iTerm). Linux/Windows: command the docker command is appended to (e.g. \"kitty\", \"alacritty -e\", \"wt\"); empty uses $TERMINAL, x-terminal-emulator, … or wt/cmd. The embedded terminal (M15.5) will replace this."},
+			Help: "macOS: application for `open -a` (default Terminal, e.g. iTerm). Linux/Windows: command the docker command is appended to (e.g. \"kitty\", \"alacritty -e\", \"wt\"); empty uses $TERMINAL, x-terminal-emulator, … or (Windows) a new cmd console. The embedded terminal (M15.5) will replace this."},
 	}
 }
 
@@ -405,8 +411,10 @@ func (m *Module) services(ctx context.Context, p ServicesParams) (ServicesResult
 	return m.snapshot(ctx, p.Standalone), nil
 }
 
+// checkContainer accepts container names and IDs of the safe charset
+// (compose.ValidName, D308).
 func checkContainer(name string) error {
-	if strings.TrimSpace(name) == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, " \t\n") {
+	if !compose.ValidName(name) {
 		return api.Errorf(api.CodeInvalidParams, "invalid container %q", name)
 	}
 	return nil
@@ -549,6 +557,11 @@ func (m *Module) logs(ctx context.Context, p LogsParams) (LogsResult, error) {
 	key := m.logsKey()
 	sv := m.sv
 	sv.mu.Lock()
+	if sv.closing {
+		sv.mu.Unlock()
+		return LogsResult{}, api.Errorf(api.CodeUnavailable, "docker module stopped")
+	}
+	sv.follows.Add(1)
 	sv.seq++
 	id := fmt.Sprintf("logs-%d", sv.seq)
 	// The stream outlives the request; only docker.logsStop (or a
@@ -565,6 +578,7 @@ func (m *Module) logs(ctx context.Context, p LogsParams) (LogsResult, error) {
 
 // follow pumps a followed log stream into batched docker.log events.
 func (m *Module) follow(ctx context.Context, cancel context.CancelFunc, id string, cmd *exec.Cmd, isCompose bool, filter string) {
+	defer m.sv.follows.Done()
 	defer cancel()
 	var (
 		mu      sync.Mutex
@@ -576,7 +590,7 @@ func (m *Module) follow(ctx context.Context, cancel context.CancelFunc, id strin
 		pending = nil
 		mu.Unlock()
 		if len(lines) > 0 {
-			m.publish(TopicLog, LogEvent{ID: id, Lines: lines})
+			m.publishLog(LogEvent{ID: id, Lines: lines})
 		}
 	}
 	stop := make(chan struct{})
@@ -617,7 +631,17 @@ func (m *Module) follow(ctx context.Context, cancel context.CancelFunc, id strin
 	if err != nil && ctx.Err() == nil {
 		ev.Error = err.Error()
 	}
-	m.publish(TopicLog, ev)
+	m.publishLog(ev)
+}
+
+// publishLog publishes a docker.log event unless the module stopped.
+// Publish only enqueues, so holding the lock is cheap.
+func (m *Module) publishLog(ev LogEvent) {
+	m.sv.mu.Lock()
+	defer m.sv.mu.Unlock()
+	if !m.sv.stopped {
+		m.publish(TopicLog, ev)
+	}
 }
 
 func (m *Module) publish(topic string, payload any) {
@@ -642,6 +666,32 @@ func (m *Module) logsStop(_ context.Context, p IDParams) (StoppedResult, error) 
 
 // stopLogs ends all followed streams.
 func (m *Module) stopLogs() { m.stopLogsWhere(func(logStream) bool { return true }) }
+
+// followStopWait bounds how long Module.Stop waits for follow goroutines
+// (dk.Stream kills the process tree and gives up on pipes after 2 s).
+const followStopWait = 5 * time.Second
+
+// shutdownLogs ends all followed streams for Module.Stop and waits (at
+// most followStopWait) until their goroutines are done; later streams
+// are refused and late events dropped.
+func (m *Module) shutdownLogs() {
+	m.sv.mu.Lock()
+	m.sv.closing = true
+	m.sv.mu.Unlock()
+	m.stopLogs()
+	done := make(chan struct{})
+	go func() {
+		m.sv.follows.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(followStopWait):
+	}
+	m.sv.mu.Lock()
+	m.sv.stopped = true
+	m.sv.mu.Unlock()
+}
 
 // stopStaleLogs ends the followed streams of another engine or project
 // than the current one.
@@ -857,6 +907,9 @@ func (m *Module) shell(ctx context.Context, p ShellParams) (LaunchResult, error)
 		if sh == "" {
 			sh = "sh"
 		}
+		if err := compose.CheckShell(sh); err != nil {
+			return LaunchResult{}, api.Errorf(api.CodeInvalidParams, "%w", err)
+		}
 		argv = append([]string{c.Bin()}, c.Args("exec", "-it", p.Container, sh)...)
 	case p.Service != "":
 		st, err := m.stack(ctx)
@@ -909,6 +962,7 @@ func startDetached(argv, env []string) error {
 	if len(env) > 0 {
 		cmd.Env = dk.MergeEnv(os.Environ(), env)
 	}
+	prepareDetached(cmd, argv)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
