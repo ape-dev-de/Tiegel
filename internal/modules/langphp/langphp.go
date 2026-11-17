@@ -195,6 +195,7 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "lsp.stop", "Stop the language server", m.lspStop)
 	api.Add(p, "lsp.status", "Language server supervisor state", m.lspStatus)
 	api.Add(p, "lsp.select", "Choose the language server (auto, none or a server ID) for the project or globally and apply it", m.lspSelect)
+	api.Add(p, "lsp.setPath", "Set the executable of a server (setting <plugin>.path), select and start it", m.lspSetPath)
 	api.Add(p, "lsp.disable", "Switch the language server off (lang-php.server = none)", m.lspDisable)
 	api.Add(p, "lsp.restart", "Restart the language server (also after a crash loop or an installation)", m.lspRestart)
 	api.Add(p, "lsp.doctor", "Why the language server runs or not: selection, searched locations, per-server findings", m.lspDoctor)

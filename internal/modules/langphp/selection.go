@@ -330,6 +330,46 @@ func (m *Module) lspSelect(ctx context.Context, p SelectParams) (Status, error) 
 	return status, err
 }
 
+// SetPathParams are the params of "lsp.setPath".
+type SetPathParams struct {
+	// Server is the server ID; Path its executable ("" clears it).
+	Server string `json:"server"`
+	Path   string `json:"path"`
+	Scope  string `json:"scope,omitempty"`
+}
+
+// lspSetPath stores the executable of a server in its plugin's setting
+// "<plugin>.path" (the plugin reads it, D190), selects the server and
+// starts it.
+func (m *Module) lspSetPath(ctx context.Context, p SetPathParams) (Status, error) {
+	var plugin string
+	for _, d := range m.decls(ctx) {
+		if d.ID == p.Server {
+			plugin = d.Plugin
+		}
+	}
+	if plugin == "" {
+		return Status{}, api.Errorf(api.CodeInvalidParams, "no enabled plugin provides language server %q", p.Server)
+	}
+	st, err := m.settingsScope(p.Scope)
+	if err != nil {
+		return Status{}, err
+	}
+	key := plugin + ".path"
+	if p.Path == "" {
+		err = st.Delete(key)
+	} else {
+		if _, cerr := servers.CheckExecutable(p.Path, nil); cerr != nil {
+			return Status{}, api.Errorf(api.CodeInvalidParams, "%w", cerr)
+		}
+		err = settings.Set(st, key, p.Path)
+	}
+	if err != nil {
+		return Status{}, api.Errorf(api.CodeFailed, "%w", err)
+	}
+	return m.lspSelect(ctx, SelectParams{Server: p.Server, Scope: p.Scope})
+}
+
 func (m *Module) lspDisable(ctx context.Context, p ScopeParams) (Status, error) {
 	return m.lspSelect(ctx, SelectParams{Server: SelectNone, Scope: p.Scope})
 }

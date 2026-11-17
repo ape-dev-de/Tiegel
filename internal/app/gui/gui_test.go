@@ -194,7 +194,7 @@ func TestWorkbenchSmokeBothThemes(t *testing.T) {
 // Problems list.
 func TestEditTypeAutosaveDiagnostics(t *testing.T) {
 	e := newEnv(t, true)
-	if e.ctl.Status.LSP != "No language server" {
+	if e.ctl.Status.LSPRunning || !strings.Contains(e.ctl.Status.LSPHint, "never downloads") {
 		t.Fatalf("LSP status %q (%q)", e.ctl.Status.LSP, e.ctl.Status.LSPHint)
 	}
 	if e.ctl.Tree == nil || !e.ctl.Tree.Root.Loaded {
@@ -342,9 +342,9 @@ func TestShortcutsAndRegistry(t *testing.T) {
 	e.h.Router.Queue(key.Event{Name: "F9", State: key.Press})
 	e.frame()
 	e.frame()
-	// Problems, the test window and Debug (the project is no repository,
-	// so the git windows are not installed).
-	if !opened || !ran || len(e.v.bench.Stripes[templates.SideBottom]) != 3 {
+	// Problems, the test window, Debug and Language Server (the project is
+	// no repository, so the git windows are not installed).
+	if !opened || !ran || len(e.v.bench.Stripes[templates.SideBottom]) != 4 {
 		t.Fatalf("registry: opened %v ran %v tabs %+v", opened, ran, e.v.bench.Stripes)
 	}
 	r.AddStatusProvider(func() []statusbar.Item { return []statusbar.Item{{ID: "debug", Text: "Listening"}} })

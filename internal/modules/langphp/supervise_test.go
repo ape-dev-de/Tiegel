@@ -233,6 +233,29 @@ func TestCrashLoopRestartLogTraceAndAutoStart(t *testing.T) {
 	}
 }
 
+func TestSetPath(t *testing.T) {
+	a, _, f, _, _ := pluginApp(t, Options{})
+	other := t.TempDir()
+	exe := filepath.Join(other, "my-phpactor")
+	modtest.WriteFile(t, exe, "#!/bin/sh\n")
+	_ = osChmod(exe)
+	var st Status
+	modtest.Call(t, a, "lsp.setPath", SetPathParams{Server: "phpactor", Path: exe}, &st)
+	if !st.Running || lastCommand(f) != exe || st.Selected != "phpactor" {
+		t.Fatalf("set path %+v", st)
+	}
+	if v, _, _ := settings.Lookup[string](a.ProjectSettings(), "lsp-phpactor.path"); v != exe {
+		t.Fatalf("stored %q", v)
+	}
+	modtest.WantCode(t, a, "lsp.setPath", SetPathParams{Server: "phpactor", Path: filepath.Join(other, "nope")}, api.CodeInvalidParams)
+	modtest.WantCode(t, a, "lsp.setPath", SetPathParams{Server: "emacs", Path: exe}, api.CodeInvalidParams)
+	modtest.WantCode(t, a, "lsp.setPath", SetPathParams{Server: "phpactor", Path: exe, Scope: "moon"}, api.CodeInvalidParams)
+	modtest.Call(t, a, "lsp.setPath", SetPathParams{Server: "phpactor"}, &st)
+	if st.State != supervisor.StateNotFound {
+		t.Fatalf("cleared path %+v", st)
+	}
+}
+
 func TestSettingSpecs(t *testing.T) {
 	m := New(Options{})
 	for _, s := range m.SettingSpecs() {
