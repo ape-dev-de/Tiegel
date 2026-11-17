@@ -235,6 +235,21 @@ const (
 func (m *Module) apply(ctx context.Context, p StartParams, mode applyMode) (Status, error) {
 	m.applyMu.Lock()
 	defer m.applyMu.Unlock()
+	// stopSup cancels ctx instead of waiting for a start that hangs in
+	// initialize.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	m.mu.Lock()
+	m.applyCancel = cancel
+	if m.stopping > 0 {
+		cancel() // a stop waits for applyMu and wins anyway
+	}
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.applyCancel = nil
+		m.mu.Unlock()
+	}()
 	if mode != applyExplicit && !m.isActive() {
 		return m.currentStatus(), nil // stopped meanwhile (lsp.stop, project closed)
 	}
