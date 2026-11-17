@@ -15,7 +15,7 @@ func (c *Controller) LoadSettingsData() {
 		var maps Mappings
 		var diag Diagnosis
 		if c.Project.Open {
-			_ = c.call(ctx, "interp.list", nil, &interps)
+			_ = c.call(ctx, "interp.list", map[string]bool{"status": true}, &interps)
 			_ = c.call(ctx, "runtime.mappings.get", nil, &maps)
 			_ = c.call(ctx, "runtime.diagnose", nil, &diag)
 		}
@@ -25,6 +25,7 @@ func (c *Controller) LoadSettingsData() {
 				c.Modules = mods
 			}
 			c.Interpreters, c.Mappings, c.Diagnosis = interps, maps, diag
+			c.loadProbe()
 		}
 	})
 }

@@ -7,6 +7,7 @@
 //	debug-xdebug  Xdebug debugger (→ php-runtime)
 //	syntax        highlighting, folds, outline over the API (D80)
 //	php-index     Tree-sitter symbol index, navigation (nav.*, index.*; D111)
+//	docker        Docker binary, contexts, engine status (docker.*; D230)
 //
 // The modules never import each other; they share data through the bus and
 // the hook points declared in internal/api/contract.go. None of them imports
@@ -17,6 +18,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/modules/debugxdebug"
+	"github.com/ape-dev-de/tiegel/internal/modules/docker"
 	"github.com/ape-dev-de/tiegel/internal/modules/git"
 	"github.com/ape-dev-de/tiegel/internal/modules/langphp"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpfeatures"
@@ -33,6 +35,7 @@ type Options struct {
 	Git      git.Options
 	Debug    debugxdebug.Options
 	Index    phpindex.Options
+	Docker   docker.Options
 }
 
 // All returns new instances of all compiled-in modules in dependency order.
@@ -45,6 +48,7 @@ func All(opts Options) []module.Module {
 		debugxdebug.New(opts.Debug),
 		syntaxmod.New(),
 		phpindex.New(opts.Index),
+		docker.New(opts.Docker),
 	}
 }
 

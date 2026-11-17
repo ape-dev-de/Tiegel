@@ -1,5 +1,5 @@
 // Package interp abstracts PHP interpreters: a local binary, a service in a
-// Docker Compose project or a PHP inside a WSL distribution. All of them are driven
+// Docker Compose project, a Docker image or a PHP inside a WSL distribution. All of them are driven
 // through the same Interpreter interface, so callers such as the version
 // detection or the debugger do not care where PHP actually runs.
 package interp
@@ -23,6 +23,8 @@ const (
 	KindLocal   Kind = "local"
 	KindCompose Kind = "compose"
 	KindWSL     Kind = "wsl"
+	// KindDocker is a one-off container of an image (docker run --rm).
+	KindDocker Kind = "docker"
 )
 
 // ErrNotImplemented is returned by interpreter operations that are not

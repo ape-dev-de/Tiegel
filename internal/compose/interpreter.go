@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/ape-dev-de/tiegel/internal/docker"
 	"github.com/ape-dev-de/tiegel/internal/interp"
 )
 
@@ -45,6 +46,12 @@ type Interpreter struct {
 	RunDeps bool
 	// Docker is the docker binary; empty means "docker" from PATH.
 	Docker string
+	// Context is the Docker context (passed as --context before
+	// "compose"); empty means docker's current context.
+	Context string
+	// Env holds extra environment entries for docker (e.g. the PATH that
+	// contains the compose plugin and credential helpers).
+	Env []string
 	// PHP is the php binary inside the container; empty means "php".
 	PHP string
 	// Mappings translate between host and container paths. Initialised
@@ -82,6 +89,7 @@ func (c *Interpreter) ExecOnly() *Interpreter {
 	cp.Mode = ExecAlways
 	cp.Files = append([]string(nil), c.Files...)
 	cp.Profiles = append([]string(nil), c.Profiles...)
+	cp.Env = append([]string(nil), c.Env...)
 	return &cp
 }
 
@@ -119,11 +127,15 @@ func (c *Interpreter) Ini(ctx context.Context) (interp.IniValues, error) {
 	return interp.QueryIni(ctx, c)
 }
 
-func (c *Interpreter) docker() string {
-	if c.Docker != "" {
-		return c.Docker
-	}
-	return "docker"
+// Client returns the docker CLI of c (binary, context, environment).
+func (c *Interpreter) Client() docker.Client {
+	return docker.Client{Binary: c.Docker, Context: c.Context, Env: c.Env}
+}
+
+// DockerArgs returns the complete docker arguments for php with args:
+// the global options (--context) followed by ExecArgs.
+func (c *Interpreter) DockerArgs(useExec bool, args ...string) []string {
+	return c.Client().Args(c.ExecArgs(useExec, args...)...)
 }
 
 // BaseArgs returns the `docker` arguments that select the project:
@@ -179,7 +191,7 @@ func (c *Interpreter) Command(ctx context.Context, args ...string) (*exec.Cmd, e
 		}
 		useExec = running
 	}
-	cmd := exec.CommandContext(ctx, c.docker(), c.ExecArgs(useExec, args...)...)
+	cmd := c.Client().Command(ctx, c.ExecArgs(useExec, args...)...)
 	cmd.Dir = c.Dir
 	return cmd, nil
 }
@@ -196,7 +208,7 @@ type ContainerState struct {
 // Status lists the containers of the project (all services).
 func (c *Interpreter) Status(ctx context.Context) ([]ContainerState, error) {
 	args := append(c.BaseArgs(), "ps", "--all", "--format", "json")
-	cmd := exec.CommandContext(ctx, c.docker(), args...)
+	cmd := c.Client().Command(ctx, args...)
 	cmd.Dir = c.Dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -219,6 +231,38 @@ func (c *Interpreter) Running(ctx context.Context) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// Service states reported by ServiceState.
+const (
+	StateRunning = "running" // a container of the service runs
+	StateStopped = "stopped" // containers exist, none runs
+	StateMissing = "missing" // no container was created yet
+)
+
+// ServiceState returns the state of the interpreter's service
+// (StateRunning, StateStopped or StateMissing) and its containers.
+// It asks the engine (`docker compose ps`), so call it only for a user
+// action or an execution.
+func (c *Interpreter) ServiceState(ctx context.Context) (string, []ContainerState, error) {
+	states, err := c.Status(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	var mine []ContainerState
+	state := StateMissing
+	for _, s := range states {
+		if s.Service != c.Service {
+			continue
+		}
+		mine = append(mine, s)
+		if strings.EqualFold(s.State, "running") {
+			state = StateRunning
+		} else if state != StateRunning {
+			state = StateStopped
+		}
+	}
+	return state, mine, nil
 }
 
 // ParsePS parses `docker compose ps --format json`. Compose v2.21+ prints

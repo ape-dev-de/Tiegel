@@ -23,7 +23,7 @@ Flags dürfen vor oder nach dem Befehl stehen (`--name wert` oder `--name=wert`)
 | Flag | Bedeutung |
 |---|---|
 | `--json` | maschinenlesbare Ausgabe (eingerücktes JSON auf stdout) |
-| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`) nehmen ohne Angabe das Arbeitsverzeichnis. |
+| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `interp-*`, `docker`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`) nehmen ohne Angabe das Arbeitsverzeichnis. |
 | `--config-dir DIR` | Einstellungsverzeichnis statt `<UserConfigDir>/Tiegel`; alternativ Umgebungsvariable `TIEGEL_CONFIG_DIR` (Tests, CI, portable Nutzung) |
 | `--help`, `-h` | Hilfe |
 | `--version` | Version (auch `tiegel --version` ohne `--headless`) |
@@ -58,10 +58,17 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `search FILE PATTERN [--regex] [--case] [--word] [--limit N]` | Treffer als `datei:zeile:spalte: zeile` | `search.inDoc` |
 | `find PATTERN [--regex] [--case] [--word] [--mask GLOBS] [--dir DIR \| --open] [--libraries] [--ignored] [--limit N] [--max-size BYTES]` | Find in Files im Projekt: Treffer als `pfad:zeile:spalte: zeile`; `--mask "*.php,!*Test.php"`, `--dir` Verzeichnis, `--open` nur offene Dokumente; `vendor/`, `node_modules/` und `.gitignore`-Dateien nur mit `--libraries`/`--ignored`; Exit 1 ohne Treffer | `search.inProject` |
 | `replace PATTERN ERSETZUNG [--preview] [find-Flags] [DATEI...]` | Replace in Path: ohne `--preview` werden die Dateien geschrieben (Local History „before replace in path“/„replace in path“), mit DATEIEN nur diese; Regex-Ersetzung mit `$1`/`${name}`; Exit 1 ohne Treffer oder bei Fehlern | `search.replaceInProject` |
-| `interpreters` | lokale PHP-Binaries und Compose-Dienste; `*` = gewählt | `interp.list` |
+| `interpreters` | lokale PHP-Binaries, Compose-Dienste (mit Docker-Kontext) und Docker-Image-Interpreter; `*` = gewählt | `interp.list` |
 | `interpreters select ID` | Interpreter fürs Projekt wählen (ohne Projekt: global) | `interp.select` |
 | `interpreters version [ID] [--modules] [--ini]` | Version, Erweiterungen, Xdebug-INI-Werte | `interp.version` |
 | `compose [DIR] [--profile P]` | PHP-Kandidaten mit Score, Begründungen, Pfad-Mappings, Xdebug-Hinweisen | `compose.detect` |
+| `interp-probe [ID] [--refresh] [--start]` | Interpreter-Info: PHP-Version, SAPI, OS, Erweiterungen, Xdebug-Version, `php.ini` und zusätzliche ini-Dateien – **ein** `php -r`-Lauf, Ergebnis pro Interpreter gecacht (`(cached …)`); `--refresh` liest neu, `--start` erlaubt `docker compose run` bzw. das Ziehen eines Images (sonst nur `exec`/`--pull never`) | `interp.probe` |
+| `interp-status [ID]` | Docker-Kontext und Zustand eines Compose-Dienstes (`running`/`stopped`/`missing`, Container) bzw. ob das Image eines Image-Interpreters lokal vorhanden ist (fragt die Engine) | `interp.status` |
+| `interp-image [add IMAGE [REMOTE] \| remove IMAGE]` | Docker-Image-Interpreter anzeigen/anlegen/entfernen: `docker run --rm -v <projekt>:REMOTE` (Standard `/app`), ID `docker:IMAGE`; danach mit `interpreters select docker:IMAGE` wählen | `interp.addImage`, `interp.removeImage`, `interp.list` |
+| `docker [contexts]` | Docker-Binary (mit Fundort: `setting`, `path`, `login-shell`, `common`) und Kontexte mit Engine (OrbStack, Docker Desktop, Colima, …) und Endpoint; `*` = wirksamer Kontext; liest nur die lokale CLI-Konfiguration | `docker.contexts` |
+| `docker status [KONTEXT]` | prüft, ob die Engine des (gewählten) Kontexts antwortet (`docker version`, Timeout `docker.timeoutSeconds`); Exit 1, wenn nicht erreichbar | `docker.status` |
+| `docker use NAME [--global]` / `docker use --clear [--global]` | Kontext fürs Projekt (bzw. global) wählen oder zurücksetzen; Compose- und Image-Interpreter verwenden ihn (`--context`) | `docker.setContext` |
+| `docker path [PFAD \| --clear]` | Docker-Binary anzeigen bzw. fest einstellen (`docker.path`) | `docker.setPath`, `docker.contexts` |
 | `lsp-servers [--all]` | installierte Language Server (`--all` inkl. proprietärer) | `lsp.servers` |
 | `modules [enable ID \| disable ID]` | Module anzeigen/schalten | `modules.*` |
 | `history FILE [--show ID \| --restore ID]` | Local History: Liste, Inhalt einer Revision, Wiederherstellen | `history.*` |

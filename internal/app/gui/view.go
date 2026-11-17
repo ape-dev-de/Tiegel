@@ -652,11 +652,13 @@ func (v *View) handleSettings(gtx layout.Context) {
 	p.Interpreter.Items = p.Interpreter.Items[:0]
 	p.Interpreter.Selected = ""
 	for _, i := range c.Interpreters {
-		p.Interpreter.Items = append(p.Interpreter.Items, rtui.Interpreter{ID: i.ID, Label: i.Label, Kind: rtui.Kind(i.Kind), Version: i.Version, Detail: orDefault(i.Path, i.Service), Score: i.Score})
+		p.Interpreter.Items = append(p.Interpreter.Items, rtui.Interpreter{ID: i.ID, Label: i.Label, Kind: rtui.Kind(i.Kind), Version: i.Version,
+			Detail: orDefault(i.Path, orDefault(i.Service, i.Image)), Score: i.Score, Context: i.Context, State: i.State})
 		if i.Selected {
 			p.Interpreter.Selected = i.ID
 		}
 	}
+	setProbePanel(&p.Interpreter.Info, c.Probe)
 	if v.mappings == nil {
 		v.mappings = append([]controller.Mapping{}, c.Mappings.Mappings...)
 	}
@@ -721,6 +723,8 @@ func (v *View) handleRuntimeEvent(e rtui.Event) {
 	case rtui.SelectInterpreterEvent:
 		v.ctl.SelectInterpreter(e.ID)
 		v.mappings = nil
+	case rtui.ProbeRefreshEvent:
+		v.ctl.RefreshProbe(e.ID)
 	case rtui.MappingAddEvent:
 		v.mappings = append(v.mappings, controller.Mapping{})
 	case rtui.MappingChangeEvent:

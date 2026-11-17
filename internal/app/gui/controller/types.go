@@ -127,6 +127,10 @@ type Interpreter struct {
 	Service  string `json:"service"`
 	Score    int    `json:"score"`
 	Selected bool   `json:"selected"`
+	Image    string `json:"image"`
+	Remote   string `json:"remote"`
+	Context  string `json:"context"`
+	State    string `json:"state"`
 }
 
 // Mapping is a host/container path mapping.
