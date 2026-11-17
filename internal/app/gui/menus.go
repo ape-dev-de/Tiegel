@@ -309,7 +309,7 @@ func (v *View) runMenuID(id string) {
 			Buttons: []*PopupButton{{Text: "OK", Kind: atoms.Primary}}})
 	case "app.quit":
 		if v.Quit != nil {
-			v.Quit()
+			v.rund.confirmClose(v.Quit)
 		}
 	default:
 		if g, ok := strings.CutPrefix(id, gesturePrefix); ok {

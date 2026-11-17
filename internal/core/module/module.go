@@ -162,6 +162,18 @@ type Registry struct {
 	order   []string // registration order
 	active  bool     // Start called, Stop not yet
 	started []string // start order of running modules
+
+	// specMu guards specIndex (key -> declaring module), kept apart from
+	// mu so that settings lookups from module goroutines never wait for a
+	// lifecycle operation (Stop waits for those goroutines while holding
+	// mu).
+	specMu    sync.RWMutex
+	specIndex map[string]specRef
+}
+
+type specRef struct {
+	spec     settings.Spec
+	moduleID string
 }
 
 // NewRegistry creates a registry handing env to modules.
@@ -211,6 +223,16 @@ func (r *Registry) Register(m Module, opts ...RegisterOption) error {
 	}
 	r.mods[id] = e
 	r.order = append(r.order, id)
+	r.specMu.Lock()
+	if r.specIndex == nil {
+		r.specIndex = map[string]specRef{}
+	}
+	for _, sp := range e.specs {
+		if _, dup := r.specIndex[sp.Key]; !dup {
+			r.specIndex[sp.Key] = specRef{spec: sp, moduleID: id}
+		}
+	}
+	r.specMu.Unlock()
 	if r.active && e.enabled {
 		return r.startOneLocked(id)
 	}
@@ -270,17 +292,24 @@ func (r *Registry) SettingSpecs(id string) []settings.Spec {
 }
 
 // SettingSpec returns the module spec declaring key and its module ID.
+// It does not wait for lifecycle operations (see specMu).
 func (r *Registry) SettingSpec(key string) (spec settings.Spec, moduleID string, ok bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, id := range r.order {
-		for _, s := range r.mods[id].specs {
-			if s.Key == key {
-				return s, id, true
-			}
-		}
+	r.specMu.RLock()
+	defer r.specMu.RUnlock()
+	ref, ok := r.specIndex[key]
+	if !ok {
+		return settings.Spec{}, "", false
 	}
-	return settings.Spec{}, "", false
+	return cloneSpec(ref.spec), ref.moduleID, true
+}
+
+// cloneSpec copies the slices of s.
+func cloneSpec(s settings.Spec) settings.Spec {
+	s.Options = append([]string(nil), s.Options...)
+	if l, ok := s.Default.([]string); ok {
+		s.Default = append([]string(nil), l...)
+	}
+	return s
 }
 
 // SpecErrors returns the rejected setting declarations of all modules.

@@ -19,13 +19,26 @@ func TestSplitAndQuoteWords(t *testing.T) {
 		`""`:                     {""},
 		`x"y z"w`:                {"xy zw"},
 	} {
-		got, err := SplitWords(in)
+		got, err := splitWords(in, false)
 		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Errorf("SplitWords(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
+	// Windows: backslashes are path separators.
+	for in, want := range map[string][]string{
+		`C:\php\php.exe -v`:           {`C:\php\php.exe`, "-v"},
+		`"C:\Program Files\x" "a\"b"`: {`C:\Program Files\x`, `a"b`},
+	} {
+		got, err := splitWords(in, true)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("windows SplitWords(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if got, err := SplitWords("a 'b c'"); err != nil || !reflect.DeepEqual(got, []string{"a", "b c"}) {
+		t.Errorf("SplitWords %q %v", got, err)
+	}
 	for _, bad := range []string{`'open`, `"open`, `a "b`} {
-		if _, err := SplitWords(bad); err == nil {
+		if _, err := splitWords(bad, false); err == nil {
 			t.Errorf("SplitWords(%q) accepted", bad)
 		}
 	}

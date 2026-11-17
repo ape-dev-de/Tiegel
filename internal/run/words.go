@@ -2,6 +2,7 @@ package run
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 )
 
@@ -11,9 +12,12 @@ var ErrUnterminatedQuote = errors.New("run: unterminated quote")
 // SplitWords splits a command line into words like a POSIX shell does,
 // without expansion: whitespace separates words, single quotes keep
 // everything literally, double quotes keep whitespace and allow \" and \\,
-// a backslash outside quotes escapes the next character. Empty input
-// yields no words.
-func SplitWords(s string) ([]string, error) {
+// a backslash outside quotes escapes the next character. On Windows a
+// backslash is literal (paths), except for \" inside double quotes.
+// Empty input yields no words.
+func SplitWords(s string) ([]string, error) { return splitWords(s, runtime.GOOS == "windows") }
+
+func splitWords(s string, literalBackslash bool) ([]string, error) {
 	var (
 		words []string
 		cur   strings.Builder
@@ -48,7 +52,7 @@ func SplitWords(s string) ([]string, error) {
 					closed = true
 					break
 				}
-				if s[i] == '\\' && i+1 < len(s) && (s[i+1] == '"' || s[i+1] == '\\') {
+				if s[i] == '\\' && i+1 < len(s) && (s[i+1] == '"' || s[i+1] == '\\' && !literalBackslash) {
 					i++
 				}
 				cur.WriteByte(s[i])
@@ -56,7 +60,7 @@ func SplitWords(s string) ([]string, error) {
 			if !closed {
 				return nil, ErrUnterminatedQuote
 			}
-		case c == '\\' && i+1 < len(s):
+		case c == '\\' && i+1 < len(s) && !literalBackslash:
 			inTok = true
 			i++
 			cur.WriteByte(s[i])

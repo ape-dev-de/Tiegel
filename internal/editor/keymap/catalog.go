@@ -157,6 +157,12 @@ var appDefs = []Def{
 	{ID: "debug.stepOut", Title: "Step Out", Context: CtxGlobal, Mac: []string{"Shift+F8"}, PC: []string{"Shift+F8"}},
 	{ID: "debug.stop", Title: "Stop", Context: CtxGlobal, Mac: []string{"Cmd+F2"}, PC: []string{"Ctrl+F2"}},
 	{ID: "debug.toggleBreakpoint", Title: "Toggle Breakpoint", Context: CtxGlobal, Mac: []string{"Cmd+F8"}, PC: []string{"Ctrl+F8"}},
+	// Run (AP15.1). Rerun shares Cmd+R with Replace: it is bound in the
+	// Run tool window, the editor replaces.
+	{ID: "run.run", Title: "Run", Context: CtxGlobal, Mac: []string{"Ctrl+R"}, PC: []string{"Shift+F10"}},
+	{ID: "run.runFile", Title: "Run Current File", Context: CtxGlobal, Mac: []string{"Ctrl+Shift+R"}, PC: []string{"Ctrl+Shift+F10"}},
+	{ID: "run.rerun", Title: "Rerun", Context: CtxToolWindow, Mac: []string{"Cmd+R"}, PC: []string{"Ctrl+F5"}},
+	{ID: "view.run", Title: "Run Tool Window", Context: CtxGlobal, Mac: []string{"Cmd+4"}, PC: []string{"Alt+4"}},
 }
 
 // editorTitles are the titles of the editor widget actions.

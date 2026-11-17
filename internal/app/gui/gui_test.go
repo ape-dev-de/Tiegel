@@ -348,9 +348,9 @@ func TestShortcutsAndRegistry(t *testing.T) {
 	e.h.Router.Queue(key.Event{Name: "F9", State: key.Press})
 	e.frame()
 	e.frame()
-	// Problems, the test window, Debug and Language Server (the project is
-	// no repository, so the git windows are not installed).
-	if !opened || !ran || len(e.v.bench.Stripes[templates.SideBottom]) != 4 {
+	// Problems, Run, the test window, Debug and Language Server (the
+	// project is no repository, so the git windows are not installed).
+	if !opened || !ran || len(e.v.bench.Stripes[templates.SideBottom]) != 5 {
 		t.Fatalf("registry: opened %v ran %v tabs %+v", opened, ran, e.v.bench.Stripes)
 	}
 	r.AddStatusProvider(func() []statusbar.Item { return []statusbar.Item{{ID: "debug", Text: "Listening"}} })
