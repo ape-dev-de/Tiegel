@@ -123,6 +123,11 @@ func TestInstallService(t *testing.T) {
 	// Cancel a slow one.
 	slowID := planID(t, a, "lsp-slow", "")
 	call(t, a, "install.run", InstallRunParams{Plugin: "lsp-slow", Confirm: true, PlanID: slowID}, &run)
+	var first install.Result
+	call(t, a, "install.status", InstallRunIDParams{RunID: run.RunID}, &first)
+	if first.State != install.StateRunning {
+		t.Fatalf("slow run not running: %+v", first)
+	}
 	wantCode(t, a, "install.run", InstallRunParams{Plugin: "lsp-slow", Confirm: true, PlanID: slowID}, CodeConflict)
 	call(t, a, "install.cancel", InstallRunIDParams{RunID: run.RunID}, nil)
 	call(t, a, "install.wait", InstallWaitParams{RunID: run.RunID}, &res)

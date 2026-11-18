@@ -247,6 +247,9 @@ func TestPreAuthLimits(t *testing.T) {
 		t.Fatal("oversized unauthenticated message did not close the connection")
 	}
 
+	// The server releases the slot of the closed connection first.
+	waitConns(t, s, 0)
+
 	// The connection cap: two idle unauthenticated connections are
 	// allowed, the third is closed at once.
 	var idle []net.Conn
@@ -258,7 +261,7 @@ func TestPreAuthLimits(t *testing.T) {
 		defer c.Close()
 		idle = append(idle, c)
 	}
-	time.Sleep(100 * time.Millisecond) // let the server accept them
+	waitConns(t, s, 2) // the server accepted them
 	third, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
@@ -305,5 +308,17 @@ func TestTokenFileOfOtherServerIsKept(t *testing.T) {
 	_ = s2.Close()
 	if _, err := os.Stat(tok); !os.IsNotExist(err) {
 		t.Fatal("own token file not removed")
+	}
+}
+
+// waitConns waits until the server tracks n connections.
+func waitConns(t *testing.T, s *server.Server, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for s.OpenConns() != n {
+		if time.Now().After(deadline) {
+			t.Fatalf("server has %d connections, want %d", s.OpenConns(), n)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
