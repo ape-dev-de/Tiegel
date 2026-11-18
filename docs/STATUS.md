@@ -54,3 +54,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-17: Welle 5 gemergt (M11–M14 Teil 1, D200–D250), Review-Fixes gemergt; CI-Fixes (gitcli-403-Klassifizierung, Windows-Pfade/Kill).
 - 2026-11-17: Welle 6 gemergt (D260–D289); Review von Welle 6 steht aus.
 - 2026-11-18: Review-Fixes Welle 6 gemergt (D290–D309): Soft-Wrap-Caret, Flaky-Tests, Services-Logströme/Windows-Terminal, Run-Stop in Debian-Containern, Schließen-Bestätigung, WSL-Stop.
+- 2026-11-18: CI-Fixes: Ctrl+R nach Start aus Konfiguration (Auswahl persistiert), Client-Close blockiert nicht an Windows-Pipes, Install-OnDone vor Wait. CI komplett grün (macOS, Linux, Windows, Cross). Welle 7 läuft (M15.2–15.5, M17.1).
