@@ -8,9 +8,10 @@
 // Go to Test / Create Test use the PSR-4 maps of composer.json.
 //
 // API (namespace test.*, see api.TestRun and friends): test.status,
-// test.discover, test.run, test.rerunFailed, test.results, test.runs,
-// test.lastStatus, test.goto, test.create.
-// Events: test.started, test.updated, test.finished.
+// test.discover, test.run, test.rerunFailed, test.results, test.node,
+// test.runs, test.lastStatus, test.goto, test.create.
+// Events: test.started, test.updated, test.finished (light trees without
+// output and details; test.node and test.results return them).
 // Hooks provided: run.configTypes (type "phpunit"), install.recipes
 // (composer require --dev phpunit/phpunit in the project interpreter;
 // only on user action, D194).
@@ -136,6 +137,7 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "test.run", "Run tests (suite, path, class, method, data set, filter or a configuration) with streamed results; debug: under the debugger", m.runTests)
 	api.Add(p, "test.rerunFailed", "Run the failed tests of a test run again (default: the latest)", m.rerunFailed)
 	api.Add(p, "test.results", "Result tree of a test run (default: the latest)", m.results)
+	api.Add(p, "test.node", "One node of a test run's result tree in full: message, details, expected/actual, output (default run: the latest)", m.node)
 	api.Add(p, "test.runs", "Test runs of this session with counts (newest last)", m.runs)
 	api.Add(p, "test.lastStatus", "Last result per test ID (class, method, data set)", m.lastStatus)
 	api.Add(p, "test.configFor", "An unsaved run configuration of the test type for a scope (to edit and save with run.configs.save)", m.configFor)

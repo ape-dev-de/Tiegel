@@ -10,7 +10,7 @@ import (
 // Test runner contract (AP15.2–15.4). The kernel knows no test framework:
 // a test plugin registers the methods of the "test" namespace
 // (test.status, test.discover, test.run, test.rerunFailed, test.results,
-// test.lastStatus, test.goto, test.create) and runs tests through the
+// test.node, test.lastStatus, test.goto, test.create) and runs tests through the
 // run infrastructure (run.start with a spec of its configuration type).
 // The types below are what clients (GUI, headless, serve) program
 // against; results come from TeamCity service messages (internal/teamcity).
@@ -20,9 +20,9 @@ const (
 	// TopicTestStarted: a test run started (TestRun without tree).
 	TopicTestStarted = "test.started"
 	// TopicTestUpdated: results of a running test run changed (TestRun
-	// with tree; throttled).
+	// with a light tree, see TestRun.Light; throttled).
 	TopicTestUpdated = "test.updated"
-	// TopicTestFinished: a test run ended (TestRun with tree).
+	// TopicTestFinished: a test run ended (TestRun with a light tree).
 	TopicTestFinished = "test.finished"
 )
 
@@ -60,6 +60,14 @@ type TestRunParams struct {
 	Config string `json:"config,omitempty"`
 }
 
+// TestNodeParams are the params of "test.node".
+type TestNodeParams struct {
+	// RunID is the test run ("" = the latest).
+	RunID string `json:"runId,omitempty"`
+	// ID is the node ID of the result tree.
+	ID string `json:"id"`
+}
+
 // TestRunIDParams address a test run ("" = the latest).
 type TestRunIDParams struct {
 	RunID string `json:"runId,omitempty"`
@@ -83,8 +91,16 @@ type TestRun struct {
 	Counts     teamcity.Counts `json:"counts"`
 	Scope      TestScope       `json:"scope"`
 	Debug      bool            `json:"debug,omitempty"`
+	// Project is the project root the run belongs to.
+	Project string `json:"project,omitempty"`
 	// Tree are the results (omitted in test.started).
 	Tree []teamcity.Node `json:"tree,omitempty"`
+	// Light marks a tree without the bulky per-test fields (details,
+	// expected, actual, output; message shortened), as sent in the
+	// test.updated and test.finished events so their size does not grow
+	// with the test output. test.node returns one node in full,
+	// test.results the whole tree.
+	Light bool `json:"light,omitempty"`
 	// Error explains a run that ended without results (e.g. the
 	// executable failed to start).
 	Error string `json:"error,omitempty"`

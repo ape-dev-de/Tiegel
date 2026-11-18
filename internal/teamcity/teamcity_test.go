@@ -1,9 +1,11 @@
 package teamcity
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestParse(t *testing.T) {
@@ -225,10 +227,10 @@ func TestSuitesFlowsAndTermination(t *testing.T) {
 	if unit.ID != "/app/phpunit.xml/unit" || unit.Kind != KindSuite || unit.Status != StatusTerminated || unit.DurationMs != 5 {
 		t.Fatalf("unit %+v", unit)
 	}
-	if n := tr.Find(`A\XTest::testC`); n.Output != "some output of testC\nmore" {
+	if n, _ := tr.SnapshotNode(`A\XTest::testC`); n.Output != "some output of testC\nmore" {
 		t.Fatalf("output %q", n.Output)
 	}
-	if n := tr.Find(`A\YTest::testB`); n.Output != "printed" || n.DurationMs != 7 {
+	if n, _ := tr.SnapshotNode(`A\YTest::testB`); n.Output != "printed" || n.DurationMs != 7 {
 		t.Fatalf("stdout %+v", n)
 	}
 }
@@ -282,5 +284,75 @@ func TestAggregateAndRepeat(t *testing.T) {
 	}
 	if !KindDataSet.IsTest() || KindMethod.IsTest() {
 		t.Fatal("kinds")
+	}
+}
+
+func TestOutputLimits(t *testing.T) {
+	tr := NewTree()
+	tr.MaxOutput, tr.MaxRunOutput = 1000, 2500
+	start := func(name string) {
+		tr.Feed(Format("testStarted", "name", name, "locationHint", `php_qn:///t.php::\T::`+name, "flowId", "1"))
+	}
+	finish := func(name string) { tr.Feed(Format("testFinished", "name", name, "flowId", "1")) }
+	// testA prints 100 000 lines: only the tail of 1000 bytes stays.
+	start("testA")
+	for i := 0; i < 100000; i++ {
+		tr.Feed(fmt.Sprintf("line %06d", i))
+	}
+	finish("testA")
+	a, _ := tr.SnapshotNode(`T::testA`)
+	if !strings.HasSuffix(a.Output, "line 099999") || a.OutputTruncated == 0 ||
+		!strings.HasPrefix(a.Output, "[… ") || len(a.Output) > 1100 {
+		t.Fatalf("testA output (%d bytes, %d dropped): %.80q", len(a.Output), a.OutputTruncated, a.Output)
+	}
+	// Two more tests with 1000 bytes each (testStdOut, multi-byte runes):
+	// the run limit drops the oldest output first.
+	for _, n := range []string{"testB", "testC"} {
+		start(n)
+		tr.Feed(Format("testStdOut", "name", n, "out", strings.Repeat("ä", 500), "flowId", "1"))
+		finish(n)
+	}
+	a, _ = tr.SnapshotNode(`T::testA`)
+	b, _ := tr.SnapshotNode(`T::testB`)
+	c, _ := tr.SnapshotNode(`T::testC`)
+	if c.OutputTruncated != 0 || c.Output != strings.Repeat("ä", 500) || b.OutputTruncated != 0 {
+		t.Fatalf("newest output cut: b %d c %d", b.OutputTruncated, c.OutputTruncated)
+	}
+	if kept := len(a.Output) - strings.Index(a.Output, "\n") - 1; kept != 500 || !utf8.ValidString(a.Output) {
+		t.Fatalf("oldest keeps %d bytes", kept)
+	}
+	if tr.outTotal != 2500 {
+		t.Fatalf("total %d", tr.outTotal)
+	}
+	// A repeated test starts with empty output.
+	start("testB")
+	if b, _ = tr.SnapshotNode(`T::testB`); b.Output != "" || tr.outTotal != 1500 {
+		t.Fatalf("restart %q %d", b.Output, tr.outTotal)
+	}
+	if _, ok := tr.SnapshotNode("nope"); ok {
+		t.Fatal("unknown node")
+	}
+}
+
+func TestSnapshotLight(t *testing.T) {
+	tr := NewTree()
+	tr.Feed(Format("testSuiteStarted", "name", "T", "locationHint", `php_qn:///t.php::\T`, "flowId", "1"))
+	tr.Feed(Format("testStarted", "name", "testA", "locationHint", `php_qn:///t.php::\T::testA`, "flowId", "1"))
+	tr.Feed(strings.Repeat("x", 100000))
+	tr.Feed(Format("testFailed", "name", "testA", "message", strings.Repeat("m", 5000), "details", "/t.php:3\n",
+		"expected", strings.Repeat("e", 5000), "actual", "a", "flowId", "1"))
+	tr.Feed(Format("testFinished", "name", "testA", "flowId", "1"))
+	light := tr.SnapshotLight()
+	n := light[0].Children[0]
+	if n.Output != "" || n.Details != "" || n.Expected != "" || n.Actual != "" || !n.Comparison ||
+		n.FailLine != 3 || len(n.Message) > LightMessageMax+len("…") || n.Status != StatusFailed || light[0].Status != StatusFailed {
+		t.Fatalf("light %+v", n)
+	}
+	full := tr.Snapshot()[0].Children[0]
+	if len(full.Output) != 100000 || len(full.Expected) != 5000 || len(full.Message) != 5000 {
+		t.Fatal("full snapshot lost details")
+	}
+	if shorten("äö", 1) != "…" || shorten("ab", 5) != "ab" {
+		t.Fatal("shorten")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Status is the state of a test or suite.
@@ -74,14 +75,37 @@ type Node struct {
 	// first frame in the test file, else the first frame), mapped.
 	FailFile string `json:"failFile,omitempty"`
 	FailLine int    `json:"failLine,omitempty"`
-	// Output is what the test printed.
-	Output   string  `json:"output,omitempty"`
-	Children []*Node `json:"children,omitempty"`
+	// Output is what the test printed: the tail within the tree's
+	// limits, preceded by a truncation note when OutputTruncated > 0.
+	Output string `json:"output,omitempty"`
+	// OutputTruncated is the number of bytes of earlier output that were
+	// dropped (limits per test and per run).
+	OutputTruncated int64   `json:"outputTruncated,omitempty"`
+	Children        []*Node `json:"children,omitempty"`
 
 	flow       string
 	parent     *Node
 	reportFile string // File before mapping
+	out        outBuf
 }
+
+// outBuf is the bounded output of a test: the kept tail and the number
+// of bytes dropped before it.
+type outBuf struct {
+	b       []byte
+	dropped int64
+	queued  bool // in Tree.withOutput
+}
+
+// Output limits (D380).
+const (
+	// DefaultMaxOutput bounds the output kept per test.
+	DefaultMaxOutput = 256 << 10
+	// DefaultMaxRunOutput bounds the output kept per tree (run).
+	DefaultMaxRunOutput = 2 << 20
+	// LightMessageMax bounds Message in light snapshots.
+	LightMessageMax = 1 << 10
+)
 
 // Counts summarise the tests of a tree.
 type Counts struct {
@@ -101,6 +125,10 @@ type Tree struct {
 	// MapPath maps a reported path (e.g. inside a container) to a host
 	// path; nil keeps paths as reported.
 	MapPath func(string) string
+	// MaxOutput bounds the output kept per test (0 = DefaultMaxOutput),
+	// MaxRunOutput the output of all tests (0 = DefaultMaxRunOutput).
+	// Only the tail is kept; earlier output is dropped and counted.
+	MaxOutput, MaxRunOutput int
 
 	roots    []*Node
 	expected int
@@ -108,6 +136,12 @@ type Tree struct {
 	running  map[string]*Node   // open tests per flow
 	byID     map[string]*Node
 	lastOpen *Node
+
+	// withOutput are the tests with kept output, in the order they first
+	// printed (the oldest lose their output first); outTotal is the sum
+	// of their kept bytes.
+	withOutput []*Node
+	outTotal   int
 }
 
 // NewTree returns an empty tree.
@@ -130,10 +164,10 @@ func (t *Tree) Feed(line string) bool {
 	changed := false
 	if before != "" && t.lastOpen != nil {
 		n := t.lastOpen
-		if n.Output != "" && len(msgs) == 0 {
-			n.Output += "\n"
+		if (len(n.out.b) > 0 || n.out.dropped > 0) && len(msgs) == 0 {
+			t.appendOutput(n, "\n")
 		}
-		n.Output += before
+		t.appendOutput(n, before)
 		changed = true
 	}
 	for _, m := range msgs {
@@ -174,7 +208,8 @@ func (t *Tree) Apply(m Message) bool {
 		parent := t.top(flow)
 		n := t.node(parent, m.Attr("name"), m.Attr("locationHint"), true, flow)
 		n.Status, n.Message, n.Details, n.Expected, n.Actual, n.Comparison = StatusRunning, "", "", "", "", false
-		n.FailFile, n.FailLine, n.Output, n.DurationMs = "", 0, "", 0
+		n.FailFile, n.FailLine, n.DurationMs = "", 0, 0
+		t.resetOutput(n)
 		t.running[flow] = n
 		t.lastOpen = n
 		return true
@@ -193,7 +228,7 @@ func (t *Tree) Apply(m Message) bool {
 			}
 			t.failure(n, m)
 		case "testStdOut", "testStdErr":
-			n.Output += m.Attr("out")
+			t.appendOutput(n, m.Attr("out"))
 		case "testFinished":
 			if n.Status == StatusRunning {
 				n.Status = StatusPassed
@@ -212,6 +247,73 @@ func (t *Tree) Apply(m Message) bool {
 		return true
 	}
 	return false
+}
+
+func (t *Tree) maxOutput() int {
+	if t.MaxOutput > 0 {
+		return t.MaxOutput
+	}
+	return DefaultMaxOutput
+}
+
+func (t *Tree) maxRunOutput() int {
+	if t.MaxRunOutput > 0 {
+		return t.MaxRunOutput
+	}
+	return DefaultMaxRunOutput
+}
+
+// appendOutput adds s to the output of n and enforces the limits per
+// test and per run, keeping the tail. Appending is amortised O(len(s)).
+func (t *Tree) appendOutput(n *Node, s string) {
+	if s == "" {
+		return
+	}
+	if !n.out.queued {
+		n.out.queued = true
+		t.withOutput = append(t.withOutput, n)
+	}
+	n.out.b = append(n.out.b, s...)
+	t.outTotal += len(s)
+	if over := len(n.out.b) - t.maxOutput(); over > 0 {
+		t.dropFront(n, over)
+	}
+	for t.outTotal > t.maxRunOutput() && len(t.withOutput) > 0 {
+		o := t.withOutput[0]
+		t.dropFront(o, min(len(o.out.b), t.outTotal-t.maxRunOutput()))
+		if len(o.out.b) > 0 {
+			break
+		}
+		o.out.queued, o.out.b = false, nil
+		t.withOutput[0] = nil
+		t.withOutput = t.withOutput[1:]
+	}
+}
+
+// dropFront drops at least k bytes from the start of the output of n
+// (up to the next rune start).
+func (t *Tree) dropFront(n *Node, k int) {
+	b := n.out.b
+	for k < len(b) && !utf8.RuneStart(b[k]) {
+		k++
+	}
+	n.out.b = b[k:]
+	n.out.dropped += int64(k)
+	t.outTotal -= k
+}
+
+// resetOutput forgets the output of n (a test started again).
+func (t *Tree) resetOutput(n *Node) {
+	t.outTotal -= len(n.out.b)
+	n.out.b, n.out.dropped = nil, 0
+}
+
+// output returns the kept output of n with a truncation note.
+func (n *Node) output() string {
+	if n.out.dropped == 0 {
+		return string(n.out.b)
+	}
+	return "[… " + strconv.FormatInt(n.out.dropped, 10) + " bytes of earlier output truncated]\n" + string(n.out.b)
 }
 
 // failure records message, details and the comparison of a failed or
@@ -332,22 +434,55 @@ func (t *Tree) Finish() {
 	t.lastOpen = nil
 }
 
-// Find returns the node with id (nil if none).
+// Find returns the node with id (nil if none). The node belongs to the
+// tree; its Output is filled in copies only (Snapshot, SnapshotNode).
 func (t *Tree) Find(id string) *Node { return t.byID[id] }
 
 // Snapshot returns a deep copy of the tree with suite statuses and
-// durations aggregated from their children.
+// durations aggregated from their children, with all details and the
+// kept output.
 func (t *Tree) Snapshot() []Node {
 	out := make([]Node, 0, len(t.roots))
 	for _, r := range t.roots {
-		out = append(out, *copyNode(r))
+		out = append(out, *copyNode(r, false))
 	}
 	return out
 }
 
-func copyNode(n *Node) *Node {
+// SnapshotLight is Snapshot without the bulky per-test fields (Details,
+// Expected, Actual, Output; Message shortened to LightMessageMax bytes):
+// its size depends on the number of tests, not on what they printed.
+// Clients fetch one node in full with SnapshotNode.
+func (t *Tree) SnapshotLight() []Node {
+	out := make([]Node, 0, len(t.roots))
+	for _, r := range t.roots {
+		out = append(out, *copyNode(r, true))
+	}
+	return out
+}
+
+// SnapshotNode returns a full copy of the node with id without its
+// children (a suite's status and duration aggregated).
+func (t *Tree) SnapshotNode(id string) (Node, bool) {
+	n := t.byID[id]
+	if n == nil {
+		return Node{}, false
+	}
+	c := copyNode(n, false)
+	c.Children = nil
+	return *c, true
+}
+
+func copyNode(n *Node, light bool) *Node {
 	c := *n
-	c.parent = nil
+	c.parent, c.out = nil, outBuf{}
+	c.OutputTruncated = n.out.dropped
+	if light {
+		c.Details, c.Expected, c.Actual, c.Output = "", "", "", ""
+		c.Message = shorten(c.Message, LightMessageMax)
+	} else {
+		c.Output = n.output()
+	}
 	if len(n.Children) == 0 {
 		c.Children = nil
 		return &c
@@ -355,7 +490,7 @@ func copyNode(n *Node) *Node {
 	c.Children = make([]*Node, len(n.Children))
 	var sum int64
 	for i, ch := range n.Children {
-		c.Children[i] = copyNode(ch)
+		c.Children[i] = copyNode(ch, light)
 		sum += c.Children[i].DurationMs
 	}
 	if !n.Kind.IsTest() {
@@ -363,6 +498,19 @@ func copyNode(n *Node) *Node {
 		c.Status = aggregate(c.Children)
 	}
 	return &c
+}
+
+// shorten cuts s to at most limit bytes (at a rune start) and marks the
+// cut with "…".
+func shorten(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	k := limit
+	for k > 0 && !utf8.RuneStart(s[k]) {
+		k--
+	}
+	return s[:k] + "…"
 }
 
 // aggregate derives a suite status: running before failed/terminated

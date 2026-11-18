@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"sort"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
@@ -43,14 +44,27 @@ type Tests struct {
 	// Last are the last results per test ID (class, method, data set).
 	Last map[string]teamcity.Status
 	// Version changes with status, run and results; FilesVersion with
-	// the discovered tests of files.
-	Version, FilesVersion uint64
+	// the discovered tests of files; DetailVersion with Detail.
+	Version, FilesVersion, DetailVersion uint64
 	// Started is set when a test run started from this window (the view
 	// shows the tool window); the view clears it.
 	Started bool
 
 	files   map[string]*fileTests
 	project string
+	detail  testDetail
+}
+
+// testDetail is the full result of the selected node, fetched with
+// test.node (events carry light trees without output and details, D380).
+type testDetail struct {
+	runID, id string
+	// ver is Version when node was fetched; a newer Version (the run
+	// changed) fetches again.
+	ver     uint64
+	fetched bool
+	loading bool
+	node    *teamcity.Node
 }
 
 func newTests(c *Controller) *Tests {
@@ -67,6 +81,7 @@ func (t *Tests) ProjectChanged() {
 	t.Status, t.Loaded, t.Disabled, t.Run = api.TestStatus{}, false, false, nil
 	t.Last = map[string]teamcity.Status{}
 	t.files = map[string]*fileTests{}
+	t.detail = testDetail{}
 	t.Version++
 	t.FilesVersion++
 }
@@ -231,6 +246,9 @@ func (t *Tests) start(method string, params any) {
 				t.c.Status.Notice = "Tests: " + err.Error()
 				return
 			}
+			if !t.ownRun(r) {
+				return
+			}
 			if t.Run == nil || t.Run.RunID != r.RunID {
 				t.Run = &r
 			}
@@ -266,7 +284,7 @@ func (t *Tests) handleEvent(topic string, payload json.RawMessage) {
 	switch topic {
 	case api.TopicTestStarted, api.TopicTestUpdated, api.TopicTestFinished:
 		var r api.TestRun
-		if json.Unmarshal(payload, &r) != nil {
+		if json.Unmarshal(payload, &r) != nil || !t.ownRun(r) {
 			return
 		}
 		// Runs of configurations (Ctrl+R) show up here too.
@@ -290,6 +308,51 @@ func (t *Tests) handleEvent(topic string, payload json.RawMessage) {
 	case "install.done":
 		t.LoadStatus()
 	}
+}
+
+// ownRun reports whether r belongs to the open project: a run of the
+// previous project may end after a switch (D381).
+func (t *Tests) ownRun(r api.TestRun) bool {
+	root := t.c.Project.Root
+	return r.Project == "" || (root != "" && filepath.Clean(r.Project) == filepath.Clean(root))
+}
+
+// Detail returns node id of the shown run in full (message, details,
+// expected/actual, output), fetching it with test.node when the run
+// changed since; until the first answer it returns nil.
+func (t *Tests) Detail(id string) *teamcity.Node {
+	if t.Run == nil || id == "" {
+		return nil
+	}
+	d := &t.detail
+	if d.runID != t.Run.RunID || d.id != id {
+		*d = testDetail{runID: t.Run.RunID, id: id}
+	}
+	if !d.loading && (!d.fetched || d.ver != t.Version) {
+		t.fetchDetail()
+	}
+	return d.node
+}
+
+func (t *Tests) fetchDetail() {
+	d := &t.detail
+	d.loading = true
+	runID, id, ver := d.runID, d.id, t.Version
+	t.c.Go(func(ctx context.Context) func() {
+		var n teamcity.Node
+		err := t.c.call(ctx, "test.node", api.TestNodeParams{RunID: runID, ID: id}, &n)
+		return func() {
+			d := &t.detail
+			if d.runID != runID || d.id != id {
+				return // selection changed meanwhile
+			}
+			d.loading, d.fetched, d.ver = false, true, ver
+			if err == nil {
+				d.node = &n
+			}
+			t.DetailVersion++
+		}
+	})
 }
 
 // GotoTest opens the test of the class in file, or the class under test
