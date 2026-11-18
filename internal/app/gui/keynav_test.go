@@ -203,7 +203,7 @@ func TestNextErrorAndQuickDoc(t *testing.T) {
 	e.waitFor("diagnostics", func() bool { return len(e.ctl.Diagnostics(file)) == 2 })
 	e.frame()
 	e.key(key.NameF2, 0)
-	if caret := s.ed.Cursor().Primary().Head; caret != 10 || !e.ctl.Hover.Open || e.ctl.Hover.Text != "first problem" {
+	if caret := s.ed.Cursor().Primary().Head; caret != 10 || !e.ctl.Hover.Open || !strings.Contains(e.ctl.Hover.Text, "first problem") {
 		t.Fatalf("F2: caret %d hover %+v", caret, e.ctl.Hover)
 	}
 	e.key(key.NameF2, 0)
@@ -213,7 +213,8 @@ func TestNextErrorAndQuickDoc(t *testing.T) {
 	}
 	e.ctl.CloseHover()
 	e.key(key.NameF1, 0)
-	if !e.ctl.Hover.Open || e.ctl.Hover.Text != "first problem" {
+	// (The PHP version check may add its own diagnostic at the caret.)
+	if !e.ctl.Hover.Open || !strings.Contains(e.ctl.Hover.Text, "first problem") {
 		t.Fatalf("F1: %+v", e.ctl.Hover)
 	}
 	// Parameter Info without a language server does nothing.
