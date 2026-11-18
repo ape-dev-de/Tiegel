@@ -14,7 +14,7 @@
 //   - Linker finds "path:line", "path(line)" and "in path on line N" in
 //     output and maps container paths to host files.
 //   - Config and ConfigType are run configurations: the kernel's core
-//     types (PHP script, command, Composer script) and types contributed
+//     types (PHP script, command, external tool with macros) and types contributed
 //     by plugins through a hook, with fields declared like settings specs.
 //
 // The package imports no Gio and no API code; internal/api wires it to

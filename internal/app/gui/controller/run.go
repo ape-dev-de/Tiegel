@@ -291,7 +291,9 @@ func (r *Runs) start(p api.RunStartParams) {
 				return
 			}
 			r.upsert(info)
-			r.Started = true
+			// Quiet runs (external tools without console) stay in the
+			// background.
+			r.Started = !info.Spec.Quiet
 			if p.Config != "" {
 				// run.start selected it; replace lists loaded before.
 				r.LoadConfigs()
@@ -343,6 +345,23 @@ func (r *Runs) applyChosen() {
 	for i := range r.Configs {
 		r.Configs[i].Selected = r.Configs[i].ID == r.chosen
 	}
+}
+
+// RunTool starts external tool id with the editor context mc (nil:
+// none) for its macros.
+func (r *Runs) RunTool(id string, mc *run.MacroContext) {
+	r.start(api.RunStartParams{Config: id, Context: mc})
+}
+
+// Tools returns the external tools among the configurations.
+func (r *Runs) Tools() []api.RunConfigInfo {
+	var out []api.RunConfigInfo
+	for _, c := range r.Configs {
+		if c.Type == run.TypeExternalTool {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // DebugSelected starts the selected configuration under the debugger

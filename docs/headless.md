@@ -23,7 +23,7 @@ Flags dürfen vor oder nach dem Befehl stehen (`--name wert` oder `--name=wert`)
 | Flag | Bedeutung |
 |---|---|
 | `--json` | maschinenlesbare Ausgabe (eingerücktes JSON auf stdout) |
-| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `lsp-status`, `lsp-restart`, `lsp-doctor`, `lsp-select`, `install`, `qa`, `run`, `run-configs`, `test`, `terminal`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`, `interp-*`, `docker`) nehmen ohne Angabe das Arbeitsverzeichnis. |
+| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `lsp-status`, `lsp-restart`, `lsp-doctor`, `lsp-select`, `install`, `qa`, `run`, `run-configs`, `composer`, `external-tools`, `test`, `terminal`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`, `interp-*`, `docker`) nehmen ohne Angabe das Arbeitsverzeichnis. |
 | `--config-dir DIR` | Einstellungsverzeichnis statt `<UserConfigDir>/Tiegel`; alternativ Umgebungsvariable `TIEGEL_CONFIG_DIR` (Tests, CI, portable Nutzung) |
 | `--help`, `-h` | Hilfe |
 | `--version` | Version (auch `tiegel --version` ohne `--headless`) |
@@ -85,7 +85,9 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `install PLUGIN [--scope global\|project] [--dry-run] [--yes]` | installiert das Werkzeug eines Plugins über seinen Paketmanager (D194): zeigt Befehl, Ziel, ob `composer.json` sich ändert; ausgeführt wird nur mit `--yes` (Ausgabe gestreamt, Strg+C bricht ab); `--dry-run` zeigt nur den Plan; fehlt der Paketmanager oder gibt es nur einen Hinweis (PHPantom): Hinweis, Exit 1 | `install.plan`, `install.run`, `install.wait`, Event `install.output` |
 | `qa [list \| run [PFAD...] \| format DATEI... [--preview] \| diagnostics [PFAD] \| clear [PFAD]] [--tool PLUGIN]` | Qualitäts-Tool-Plugins (AP17.1): `list` zeigt Plugin-ID, Name, Art (format/inspect), Befehl und ob vorhanden (fehlt es: Hinweis `tiegel --headless install PLUGIN`); `run` prüft Pfade (ohne: das Projekt laut Tool-Konfiguration bzw. `<plugin>.paths`) mit allen vorhandenen Analyse-Plugins oder `--tool`, Ausgabe `pfad:zeile:spalte: schwere: meldung [code] (plugin)`, **Exit 1 bei Funden** oder Tool-Fehler; `format` formatiert mit dem ersten Formatter-Plugin für „Reformat Code“ (oder `--tool`) und schreibt die Datei (Local History), `--preview` zeigt nur das Ergebnis; `diagnostics`/`clear` lesen bzw. löschen gespeicherte Funde (nur in `serve` sinnvoll, ein Einzelaufruf hat keine) | `qa.list`, `qa.run`, `qa.format`, `qa.diagnostics`, `qa.clear` |
 | `run KONFIG` / `run --file DATEI [ARGS...]` / `run --cmd -- BEFEHL [ARGS...]` `[--interpreter project\|host\|ID] [--env K=V]... [--dir DIR]` | startet eine Run-Konfiguration (ID oder Name), eine PHP-Datei mit dem Projekt-Interpreter oder einen beliebigen Befehl (`--cmd`, Standard auf dem Host; `--interpreter project` im Interpreter, z.B. per `docker compose exec`). Vorher wird gespeichert (Guard `run.before`). Ausgabe gestreamt (stdout/stderr getrennt), **Exit-Code des Prozesses wird durchgereicht**, Strg+C stoppt den Prozessbaum (auch im Container) und endet mit 130. `--json`: `{run, output}` am Ende | `run.start`, `run.wait`, `run.output`, `run.stop`, Event `run.output` |
-| `run-configs [list \| types \| save JSON\|- \| delete ID \| select ID]` | Run-Konfigurationen des Projekts (`*` = ausgewählt, mit Befehlsvorschau oder Fehler); `types` zeigt die Typen (Kern: `php-script`, `command`, `composer-script`; dazu Plugin-Typen) mit Feldern und Vorschlägen (z.B. Composer-Skripte); `save` nimmt `{id?, name, type, values}` (auch von stdin mit `-`) | `run.configs.*`, `run.configTypes` |
+| `run-configs [list \| types \| save JSON\|- \| delete ID \| select ID]` | Run-Konfigurationen des Projekts (`*` = ausgewählt, mit Befehlsvorschau oder Fehler); `types` zeigt die Typen (Kern: `php-script`, `command`, `external-tool`; dazu Plugin-Typen wie `composer-script` und `phpunit`) mit Feldern und Vorschlägen (z.B. Composer-Skripte); `save` nimmt `{id?, name, type, values}` (auch von stdin mit `-`) | `run.configs.*`, `run.configTypes` |
+| `composer [scripts \| run NAME [-- ARGS...]] [--interpreter project\|host\|ID]` | Plugin `composer` (AP17.2): `scripts` (Standard) listet die Skripte aus `composer.json` mit Beschreibung aus `scripts-descriptions` (sonst den Befehlen); `run` führt `composer run-script NAME [-- ARGS]` über die Run-Infrastruktur aus – standardmäßig im Projekt-Interpreter (`composer.interpreter`), also z.B. per `docker compose exec` im Dienst; Composer aus `composer.path` (leer: `composer.phar` im Projekt mit `php`, sonst `composer` aus PATH), nie heruntergeladen. Ausgabe gestreamt, **Exit-Code wird durchgereicht**, Strg+C stoppt | `composer.scripts`, `composer.run`, `run.wait`, `run.output` |
+| `external-tools [list \| macros \| run NAME] [--file DATEI] [--line N] [--column N] [--selection TEXT]` | External Tools (Run-Konfigurationen vom Kern-Typ `external-tool`, AP17.2): `list` zeigt Name, Keymap-Aktion (`externalTool.<id>`) und Befehl mit Makros; `macros` die Makros mit ihren Werten für den angegebenen Kontext; `run` startet ein Tool (Name oder ID) mit dem Editor-Kontext aus den Flags – das Backend ersetzt die Makros (siehe „Makros der External Tools“). Fehlt eine Datei für ein Datei-Makro: Exit 2 mit Grund. Ausgabe gestreamt, Exit-Code durchgereicht | `run.configs.list`, `run.macros`, `run.start` (`context`) |
 | `test [status]` | Test-Framework des Projekts (Plugin `phpunit`): Skript (`vendor/bin/phpunit` bzw. `phpunit.executable`), ParaTest, Version (aus `vendor/composer/installed.json`), Konfigurationsdatei, Suites, Testverzeichnisse; fehlt PHPUnit: Hinweis und `install phpunit --dry-run` (D194, nichts wird automatisch installiert) | `test.status` |
 | `test discover [PFAD]` | Testklassen und -methoden einer Datei, eines Verzeichnisses oder der Testverzeichnisse (Tree-sitter: Klassen mit `TestCase`-Vorfahr, `test*`, `#[Test]`, `@test`, Datenprovider aus `#[DataProvider]`/`@dataProvider`) mit Zeile | `test.discover` |
 | `test run [PFAD] [--suite S] [--class C] [--method M] [--data-set D] [--filter F] [--config NAME] [--debug] [--interpreter I]` | führt Tests über die Run-Infrastruktur im Projekt-Interpreter aus (`php vendor/bin/phpunit --teamcity …`, lokal/Compose/Image/WSL); jede beendete Testmethode erscheint sofort (`PASSED`/`FAILED`/`IGNORED`), am Ende die Zusammenfassung. `--method` läuft genau diese Methode (Filter `/^(?:Ns\\Cls::m(?: with data set .*)?)$/`), `--data-set 0` bzw. `--data-set name` genau einen Datensatz. `--debug` startet den Xdebug-Listener und setzt `XDEBUG_TRIGGER`/`XDEBUG_SESSION`. Exit 1 bei Fehlschlägen, 130 nach Strg+C; `--json`: Testlauf mit Baum | `test.run`, Events `test.updated`/`test.finished` |
@@ -320,6 +322,7 @@ Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`,
 | `syntax` | – | `syntax.*` | – (folgt `doc.edited`) |
 | `php-index` | – | `index.*`, `nav.*` | ruft Filter `nav.lsp` (Anbieter: lang-php) |
 | `debug-xdebug` | `php-runtime` | `debug.*` | ruft Guard `debug.before` (Kern: Autosave), nutzt `runtime.pathMappings`, stellt `debug.listener` (Filter, für `run.start` mit `debug`) bereit |
+| `composer` | – | `composer.*` | stellt `run.configTypes` (Typ `composer-script`) bereit; Einstellungen `composer.path`, `composer.interpreter` |
 | `phpunit` | – | `test.*` | stellt `run.configTypes` (Typ `phpunit`) und `install.recipes` (`composer require --dev phpunit/phpunit` im Projekt-Interpreter) bereit; nutzt `runtime.pathMappings` und `nav.typeHierarchy` (falls php-index läuft) |
 
 `modules.enable`/`modules.disable` wirken sofort (und dauerhaft): ein abgeschaltetes Modul räumt Hooks und Abos ab, seine Methoden antworten mit `-32006 module disabled`. `app.methods` zeigt zu jeder Methode `module` und `disabled`.
@@ -342,6 +345,7 @@ Einstellungen werden deklariert (D190, D210–D212): der Kern in `internal/core/
 | Plugin `php-features` | `php-features.background` (offene Dateien prüfen, Projekt) |
 | Plugin `syntax` | `syntax.maxFileKB` (größere Dateien als Klartext) |
 | Plugins `qa-*` | `<plugin>.path` (Standard `vendor/bin/<tool>`), `.config`, `.args`, `.useInterpreter` (Standard an), `.timeout` (Sekunden, 60); Formatter: `.reformat` (für „Reformat Code“, an), `.formatOnSave` (aus); `qa-phpcs` zusätzlich `.formatPath` (`vendor/bin/phpcbf`); Analyse: `.inspectOnSave` (aus), `.severity` (`auto`/error/warning/info/hint), `.paths` (alle Projekt) |
+| Plugin `composer` | `composer.path` (leer: `composer.phar` im Projekt, sonst `composer`), `composer.interpreter` (Standard `project`) |
 | Plugin `php-index` | `php-index.libraries`, `php-index.includeIgnored`, `php-index.exclude` (Projekt) |
 
 ## Methoden
@@ -510,10 +514,35 @@ Nach `install.done` sucht lang-php den Server neu und startet ihn ohne Neustart 
 | `run.configs.save` | `{id?, name, type, values}` | gespeicherte Konfiguration (geprüft gegen die Felder des Typs; neuer Name doppelt `-32004`) |
 | `run.configs.delete` / `run.configs.select` | `id` (ID oder Name) | – bzw. Konfiguration |
 | `run.configTypes` | – | `[{id, label, description, plugin?, fields: [{key, kind, label, help?, default?, options?, required?, suggest?}], suggestions?: {feld: [werte]}}]` |
+| `run.macros` | `context?` (`{file?, line?, column?, selectedText?}`) | `[{name, description, needsFile?, value, error?}]` – die Makros der External Tools mit ihrem Wert für den Kontext |
 
 Events: `run.started`, `run.exited` (Lauf), `run.output` (`{runId, lines}`, gebündelt), `run.removed` (`{runId}`), `run.configsChanged` (Liste wie `run.configs.list`). Hooks: Guard `run.before` (`{name, config?, type?, display, rerun?}`), Filter `run.configTypes` (Plugins hängen Typen mit Feldern und `Build` an, z.B. PHPUnit), Filter `run.interpreter` (php-runtime liefert den Interpreter).
 
+`run.start` nimmt außerdem `context?` (`{file?, line?, column?, selectedText?}`, Datei absolut oder relativ zum Projekt): der Editor-Kontext für die Makros einer Konfiguration (External Tools, D413). Läufe mit `spec.quiet` (External Tool ohne „Open console“) bringen in der GUI das Run-Fenster nicht nach vorn; nach Läufen mit `spec.syncFiles` liest der Kern das Projekt neu ein und gleicht offene Dokumente mit der Platte ab (wie `watch.refresh`). Jedes External Tool ist eine Keymap-Aktion `externalTool.<id>` (Filter `keymap.actions`, D414): `keymap.list/set/check` behandeln sie wie Katalog-Aktionen.
+
+**Makros der External Tools** (D413) – ersetzt werden nur diese Namen, unbekannte `$Wort$` bleiben stehen; Argumente werden erst in Wörter zerlegt und dann ersetzt (ein `$SelectedText$` mit Leerzeichen bleibt ein Argument). Im Interpreter werden absolute Projektpfade als ganze Argumente in den Container gemappt.
+
+| Makro | Wert |
+|---|---|
+| `$ProjectFileDir$` | Projektwurzel (absolut) |
+| `$ProjectName$` | Name des Projektordners |
+| `$FilePath$` | aktuelle Datei (absolut) |
+| `$FileDir$` | Ordner der aktuellen Datei (absolut) |
+| `$FileName$` / `$FileNameWithoutExtension$` / `$FileExt$` | Dateiname mit / ohne Endung, Endung ohne Punkt |
+| `$FileRelativePath$` / `$FileDirRelativePath$` | Datei bzw. ihr Ordner relativ zur Projektwurzel (mit `/`; Wurzel = `.`) |
+| `$LineNumber$` / `$ColumnNumber$` | Caret-Zeile/-Spalte, 1-basiert (leer, wenn unbekannt) |
+| `$SelectedText$` | Auswahl im aktuellen Editor (leer ohne Auswahl) |
+
+Die `$File…$`-Makros brauchen eine aktuelle Datei; ohne sie scheitert der Start mit `-32602`.
+
 `run.start` nimmt zusätzlich `debug?`: Der Kern ruft den Filter `debug.listener` (Anbieter: debug-xdebug startet seinen Listener, falls nötig; ohne Anbieter `-32006`), setzt `XDEBUG_TRIGGER=1` und `XDEBUG_SESSION=tiegel` und stellt PHP-Läufen `-dxdebug.mode=debug -dxdebug.start_with_request=trigger -dxdebug.client_port=PORT` voran; `run.rerun` eines solchen Laufs lässt den Debugger erneut lauschen (D311).
+
+**composer** (Plugin `composer`, AP17.2, D410–D411)
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `composer.scripts` | – | `{file, exists, scripts: [{name, commands, description?, line?}], command}` (`line` = Zeile des Schlüssels in `composer.json`, `command` z.B. `composer` oder `php composer.phar`); ohne `composer.json` `exists: false` |
+| `composer.run` | `{script, args?, interpreter?}` | Lauf wie `run.start` (Typ `composer-script`, Name `composer <script>`); Skriptnamen mit `-` am Anfang oder Leerraum `-32602` |
 
 **diff.texts** (Kern, D313) – `{left, right, leftLabel?, rightLabel?, ignoreWhitespace?}` → Änderungsblöcke im Format von `git.fileDiff` (`{left, right, blocks, identical}`); damit zeigt das Diff-Fenster expected/actual eines Tests.
 

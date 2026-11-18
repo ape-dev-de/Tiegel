@@ -186,7 +186,7 @@ func TestFindActionAndMenus(t *testing.T) {
 	for _, m := range menus {
 		titles = append(titles, m.title)
 	}
-	if got := strings.Join(titles, ","); got != "File,Edit,View,Navigate,Code,Refactor,Run,Window,Help" {
+	if got := strings.Join(titles, ","); got != "File,Edit,View,Navigate,Code,Refactor,Run,Tools,Window,Help" {
 		t.Fatalf("menus %s", got)
 	}
 	nm := nativeMenus(e.v.Registry, "darwin", e.v.actionContext(actions.CtxMain))

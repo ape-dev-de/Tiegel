@@ -224,6 +224,8 @@ type Controller struct {
 	QA QAState
 	// Tests is the test state: gutter tests, results (tests.go).
 	Tests *Tests
+	// Composer holds the scripts of composer.json (plugin composer).
+	Composer *Composer
 	// Terminals is the terminal tool window state (terminal.go).
 	Terminals *Terminals
 }
@@ -244,6 +246,7 @@ func New(be Backend) *Controller {
 	c.Services = newServices(c)
 	c.Run = newRuns(c)
 	c.Tests = newTests(c)
+	c.Composer = newComposer(c)
 	c.Terminals = newTerminals(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
 		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*", "qa.*", "test.*", "terminal.*"}, func(e api.Event) {
@@ -650,6 +653,7 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 		}
 		if json.Unmarshal(payload, &ev) == nil && ev.File != "" {
 			c.Tests.FileChanged(ev.File)
+			c.Composer.FileChanged(ev.File)
 		}
 	}
 	if strings.HasPrefix(topic, "qa.") {

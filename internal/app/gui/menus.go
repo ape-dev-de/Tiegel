@@ -24,7 +24,7 @@ import (
 // (Cmd+Shift+A) searches all actions by title.
 
 // MenuOrder is the order of the top-level menus.
-var MenuOrder = []string{"File", "Edit", "View", "Navigate", "Code", "Refactor", "Git", "Run", "Window", "Help"}
+var MenuOrder = []string{"File", "Edit", "View", "Navigate", "Code", "Refactor", "Git", "Run", "Tools", "Window", "Help"}
 
 // menuNode is a menu or submenu built from the registry.
 type menuNode struct {

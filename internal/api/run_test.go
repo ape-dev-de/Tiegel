@@ -199,7 +199,7 @@ func TestRunConfigsAndFiles(t *testing.T) {
 
 	var types []RunConfigTypeInfo
 	call(t, a, "run.configTypes", nil, &types)
-	if len(types) != 3 || types[0].ID != run.TypePHPScript || !slices.Equal(types[2].Suggestions["script"], []string{"test"}) {
+	if len(types) != 3 || types[0].ID != run.TypePHPScript || types[2].ID != run.TypeExternalTool || len(types[2].Suggestions["interpreter"]) != 2 {
 		t.Fatalf("types %+v", types)
 	}
 	// A plugin type with the same ID as a core type loses.

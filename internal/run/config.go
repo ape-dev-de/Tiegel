@@ -4,12 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
@@ -127,10 +124,14 @@ func (c Config) Bool(key string, def bool) bool {
 type BuildEnv struct {
 	// ProjectDir is the open project's root.
 	ProjectDir string
+	// Context is the editor context of the start (current file, caret,
+	// selection) for macros such as $FilePath$; nil when the client sent
+	// none.
+	Context *MacroContext
 }
 
-// ConfigType is a kind of run configuration (PHP script, Composer
-// script, PHPUnit, …). The kernel provides the core types; plugins add
+// ConfigType is a kind of run configuration (PHP script, external tool,
+// Composer script, PHPUnit, …). The kernel provides the core types; plugins add
 // theirs through the filter hook "run.configTypes" (api.HookRunConfigTypes).
 type ConfigType struct {
 	ID          string `json:"id"`
@@ -221,9 +222,9 @@ func NewID() string {
 
 // Core type IDs.
 const (
-	TypePHPScript      = "php-script"
-	TypeCommand        = "command"
-	TypeComposerScript = "composer-script"
+	TypePHPScript    = "php-script"
+	TypeCommand      = "command"
+	TypeExternalTool = "external-tool"
 )
 
 // Common fields of the core types.
@@ -264,20 +265,7 @@ func CoreTypes() []ConfigType {
 			Suggest: suggestInterpreter,
 			Build:   buildCommand,
 		},
-		{
-			ID: TypeComposerScript, Label: "Composer Script", Description: "Run a script of composer.json with Composer in the interpreter.",
-			Fields: []Field{
-				{Key: "script", Kind: settings.KindString, Label: "Script", Required: true, Suggest: true, Help: "Name of a script in composer.json."},
-				fieldArgs, fieldInterpreter(InterpreterProject), fieldEnv,
-			},
-			Suggest: func(ctx context.Context, env BuildEnv, field string) []string {
-				if field == "script" {
-					return ComposerScripts(env.ProjectDir)
-				}
-				return suggestInterpreter(ctx, env, field)
-			},
-			Build: buildComposerScript,
-		},
+		externalToolType(),
 	}
 }
 
@@ -358,48 +346,6 @@ func buildCommand(_ context.Context, cfg Config, env BuildEnv) (Spec, error) {
 	}
 	s.Program, s.Args = words[0], words[1:]
 	return s, nil
-}
-
-func buildComposerScript(_ context.Context, cfg Config, env BuildEnv) (Spec, error) {
-	s, err := common(cfg, env, InterpreterProject)
-	if err != nil {
-		return Spec{}, err
-	}
-	args, err := SplitWords(cfg.String("args", ""))
-	if err != nil {
-		return Spec{}, fmt.Errorf("%w: arguments: %w", ErrInvalidConfig, err)
-	}
-	s.Program = "composer"
-	s.Args = []string{"run-script", cfg.String("script", "")}
-	if len(args) > 0 {
-		s.Args = append(append(s.Args, "--"), args...)
-	}
-	s.Env = append(s.Env, "COMPOSER_NO_INTERACTION=1")
-	return s, nil
-}
-
-// ComposerScripts returns the script names of the project's
-// composer.json, sorted (nil without file or scripts).
-func ComposerScripts(projectDir string) []string {
-	if projectDir == "" {
-		return nil
-	}
-	b, err := os.ReadFile(filepath.Join(projectDir, "composer.json"))
-	if err != nil {
-		return nil
-	}
-	var cj struct {
-		Scripts map[string]json.RawMessage `json:"scripts"`
-	}
-	if json.Unmarshal(b, &cj) != nil {
-		return nil
-	}
-	out := make([]string, 0, len(cj.Scripts))
-	for name := range cj.Scripts {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // FileSpec returns the ad-hoc spec that runs file as PHP script with the

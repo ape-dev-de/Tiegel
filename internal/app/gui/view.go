@@ -146,6 +146,8 @@ type View struct {
 	rund  *runDock
 	termd *termDock
 	tstd  *testDock
+	cmpd  *composerDock
+	extd  *toolsDock
 	// termGlobal are the window shortcuts while the terminal has the
 	// focus (terminal.overrideIdeShortcuts).
 	termGlobal shortcuts
@@ -210,6 +212,8 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v.svcd = installServices(v)
 	v.rund = installRun(v)
 	v.tstd = installTests(v)
+	v.cmpd = installComposer(v)
+	v.extd = installExternalTools(v)
 	v.termd = installTerminal(v)
 	return v
 }

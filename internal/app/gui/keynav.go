@@ -95,7 +95,12 @@ func (v *View) syncKeymap() {
 	if err != nil {
 		v.ctl.Status.Notice = strings.ReplaceAll(err.Error(), "\n", "; ")
 	}
-	v.Registry.SetScheme(keymap.NewScheme(preset, ov))
+	// Dynamic actions (external tools) can be bound like catalog ones.
+	var extra []keymap.Def
+	if v.extd != nil {
+		extra = v.extd.defs()
+	}
+	v.Registry.SetScheme(keymap.NewScheme(preset, ov, extra...))
 }
 
 // ---- pointer and gesture navigation ------------------------------------------------

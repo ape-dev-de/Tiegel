@@ -2,6 +2,7 @@ package gui
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,10 @@ func TestRunDockHelperProcess(t *testing.T) {
 	case "sleep":
 		println("ready")
 		time.Sleep(60 * time.Second)
+	case "args":
+		for _, a := range flag.Args() {
+			fmt.Println(a)
+		}
 	}
 	os.Exit(0)
 }

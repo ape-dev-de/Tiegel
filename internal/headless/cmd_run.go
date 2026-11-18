@@ -75,6 +75,13 @@ func runRun(c *cli) error {
 	if err != nil {
 		return err
 	}
+	return streamRun(c, "run.start", params)
+}
+
+// streamRun starts a run with method (run.start, composer.run, …; the
+// result is a run.Info), streams its output, stops it on Ctrl+C and
+// passes the exit code on.
+func streamRun(c *cli, method string, params any) error {
 	// Output arrives as run.output events, possibly before run.start
 	// returns the ID; lines are printed once, in sequence order.
 	var (
@@ -117,7 +124,7 @@ func runRun(c *cli) error {
 	sess.Subscribe(api.TopicRunOutput)
 
 	var info runsvc.Info
-	if err := c.call("run.start", params, &info); err != nil {
+	if err := c.call(method, params, &info); err != nil {
 		return err
 	}
 	mu.Lock()
