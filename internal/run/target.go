@@ -51,6 +51,12 @@ type Spec struct {
 	// debugger listen before every start and rerun and sets the Xdebug
 	// trigger (DebugEnv, DebugPHPArgs).
 	Debug bool `json:"debug,omitempty"`
+	// Quiet asks clients not to bring the run's console to front (an
+	// external tool without "open console"); the run is listed anyway.
+	Quiet bool `json:"quiet,omitempty"`
+	// SyncFiles makes the kernel rescan the project and reconcile open
+	// documents with the disk when the run ends.
+	SyncFiles bool `json:"syncFiles,omitempty"`
 }
 
 // DebugSession is the value of XDEBUG_SESSION of debugged runs.

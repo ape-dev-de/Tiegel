@@ -84,6 +84,9 @@ func (d *runDock) openEditor(cfg run.Config, t api.RunConfigTypeInfo) {
 		if s := t.Suggestions[f.Key]; len(s) > 0 {
 			it.hint = "Suggestions: " + strings.Join(s, ", ")
 		}
+		if t.ID == run.TypeExternalTool && f.Key == run.ToolFieldArgs {
+			it.hint = "Macros: " + macroNames()
+		}
 		e.items = append(e.items, it)
 	}
 	title := "New " + t.Label + " Configuration"
@@ -212,4 +215,14 @@ func (e *runConfigEditor) layout(gtx layout.Context, th *tokens.Theme) layout.Di
 		rows = append(rows, row(labeled(label, w, hint)))
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+}
+
+// macroNames lists the macros of external tools.
+func macroNames() string {
+	ms := run.Macros()
+	names := make([]string, len(ms))
+	for i, m := range ms {
+		names[i] = m.Name
+	}
+	return strings.Join(names, " ")
 }

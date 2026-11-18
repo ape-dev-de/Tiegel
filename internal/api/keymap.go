@@ -135,7 +135,7 @@ func (a *App) keymapScheme() (*keymap.Scheme, keymap.State) {
 	if err != nil {
 		a.log.Warn("keymap settings", "err", err)
 	}
-	return keymap.NewScheme(st.Preset, st.Overrides), st
+	return keymap.NewScheme(st.Preset, st.Overrides, a.keymapExtras()...), st
 }
 
 func chordStrings(cs []keymap.Chord) []string {
@@ -267,7 +267,7 @@ func (a *App) keymapSetLocked(p KeymapSetParams) (KeymapSetResult, KeymapState, 
 	if err := keymap.SaveState(a.global, ks); err != nil {
 		return KeymapSetResult{}, KeymapState{}, Errorf(CodeFailed, "%w", err)
 	}
-	ns := keymap.NewScheme(ks.Preset, ks.Overrides)
+	ns := keymap.NewScheme(ks.Preset, ks.Overrides, a.keymapExtras()...)
 	res := KeymapSetResult{Preset: string(ks.Preset), Conflicts: []KeymapConflict{}, RemovedFrom: removedFrom}
 	if p.Action != "" {
 		e, _ := ns.Entry(id)

@@ -41,6 +41,10 @@ type RunStartParams struct {
 	// Debug runs under the debugger: the listener is started (hook
 	// debug.listener, D311) and the Xdebug trigger is set.
 	Debug bool `json:"debug,omitempty"`
+	// Context is the editor context (current file, caret, selection)
+	// for the macros of a configuration, e.g. an external tool's
+	// $FilePath$ (D413).
+	Context *run.MacroContext `json:"context,omitempty"`
 }
 
 // RunIDParams address a run.
@@ -126,10 +130,16 @@ var runConfigsMu sync.Mutex
 func (a *App) registerRun() {
 	a.runs.OnStart = func(i run.Info) { a.bus.Publish(TopicRunStarted, i) }
 	a.runs.OnOutput = func(o run.Output) { a.bus.Publish(TopicRunOutput, o) }
-	a.runs.OnExit = func(i run.Info) { a.bus.Publish(TopicRunExited, i) }
+	a.runs.OnExit = func(i run.Info) {
+		a.bus.Publish(TopicRunExited, i)
+		if i.Spec.SyncFiles {
+			go a.syncAfterRun(i)
+		}
+	}
 	HookRunConfigTypes.On(a.hooks, -1000, func(_ context.Context, l []run.ConfigType) ([]run.ConfigType, error) {
 		return append(run.CoreTypes(), l...), nil
 	}, hooks.WithOwner("kernel"))
+	a.registerExternalTools()
 	mustHandle(a, "run.start", "Run a configuration, a PHP file or an ad-hoc command in the interpreter (passes run.before; output as run.output events)", a.runStart)
 	mustHandle(a, "run.stop", "Stop a run (process tree, and the process inside the container)", a.runStop)
 	mustHandle(a, "run.rerun", "Run the same process again (stops it first if active)", a.runRerun)
@@ -291,7 +301,7 @@ func (a *App) specFor(ctx context.Context, p RunStartParams) (run.Spec, error) {
 		if err != nil {
 			return run.Spec{}, err
 		}
-		spec, err := a.buildRunConfig(ctx, cfg)
+		spec, err := a.buildRunConfig(ctx, cfg, p.Context)
 		if err != nil {
 			return run.Spec{}, err
 		}
@@ -554,10 +564,12 @@ func (a *App) configType(ctx context.Context, id string) (run.ConfigType, bool) 
 	return run.ConfigType{}, false
 }
 
-func (a *App) buildEnv() run.BuildEnv { return run.BuildEnv{ProjectDir: a.ProjectRoot()} }
+func (a *App) buildEnv(mc *run.MacroContext) run.BuildEnv {
+	return run.BuildEnv{ProjectDir: a.ProjectRoot(), Context: mc}
+}
 
 func (a *App) runConfigTypes(ctx context.Context, _ struct{}) ([]RunConfigTypeInfo, error) {
-	env := a.buildEnv()
+	env := a.buildEnv(nil)
 	out := []RunConfigTypeInfo{}
 	for _, t := range a.configTypes(ctx) {
 		info := RunConfigTypeInfo{ConfigType: t}
@@ -609,8 +621,9 @@ func (a *App) findRunConfig(idOrName string) (run.Config, error) {
 	return run.Config{}, Errorf(CodeNotFound, "no run configuration %q (see run.configs.list)", idOrName)
 }
 
-// buildRunConfig validates cfg against its type and builds the spec.
-func (a *App) buildRunConfig(ctx context.Context, cfg run.Config) (run.Spec, error) {
+// buildRunConfig validates cfg against its type and builds the spec with
+// the editor context mc (nil: none).
+func (a *App) buildRunConfig(ctx context.Context, cfg run.Config, mc *run.MacroContext) (run.Spec, error) {
 	t, ok := a.configType(ctx, cfg.Type)
 	if !ok {
 		return run.Spec{}, Errorf(CodeModuleDisabled, "run configuration %q has type %q, which no running plugin provides", cfg.Name, cfg.Type)
@@ -619,7 +632,7 @@ func (a *App) buildRunConfig(ctx context.Context, cfg run.Config) (run.Spec, err
 	if err != nil {
 		return run.Spec{}, Errorf(CodeInvalidParams, "%w", err)
 	}
-	spec, err := t.Build(ctx, t.WithDefaults(checked), a.buildEnv())
+	spec, err := t.Build(ctx, t.WithDefaults(checked), a.buildEnv(mc))
 	if err != nil {
 		return run.Spec{}, Errorf(CodeInvalidParams, "%w", err)
 	}
@@ -638,7 +651,10 @@ func (a *App) runConfigsList(ctx context.Context, _ struct{}) ([]RunConfigInfo, 
 		info := RunConfigInfo{Config: c, Selected: c.ID == selected}
 		if t, ok := a.configType(ctx, c.Type); ok {
 			info.TypeLabel, info.Available = t.Label, true
-			if spec, err := a.buildRunConfig(ctx, c); err != nil {
+			if spec, err := a.buildRunConfig(ctx, c, nil); errors.Is(err, run.ErrMacroNeedsFile) {
+				// Fine: the macros are filled in when it runs.
+				info.Display = toolTemplate(c)
+			} else if err != nil {
 				info.Error = err.Error()
 			} else {
 				info.Display = spec.Display()

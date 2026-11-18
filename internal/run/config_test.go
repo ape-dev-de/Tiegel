@@ -3,7 +3,6 @@ package run
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -102,34 +101,8 @@ func TestCoreTypes(t *testing.T) {
 		t.Fatalf("bad command %v", err)
 	}
 
-	comp := coreType(t, TypeComposerScript)
-	spec, err = comp.Build(ctx, comp.WithDefaults(Config{Name: "t", Values: map[string]any{"script": "test", "args": "--filter Foo"}}), env)
-	if err != nil || spec.Program != "composer" || !slices.Equal(spec.Args, []string{"run-script", "test", "--", "--filter", "Foo"}) ||
-		spec.Interpreter != InterpreterProject || !slices.Contains(spec.Env, "COMPOSER_NO_INTERACTION=1") {
-		t.Fatalf("composer %+v %v", spec, err)
-	}
-	if _, err := comp.Build(ctx, Config{Values: map[string]any{"args": "'x"}}, env); err == nil {
-		t.Fatal("bad composer args")
-	}
-	if err := os.WriteFile(filepath.Join(root, "composer.json"), []byte(`{"scripts":{"test":"phpunit","lint":["a","b"]}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := comp.Suggest(ctx, env, "script"); !slices.Equal(got, []string{"lint", "test"}) {
-		t.Fatalf("scripts %v", got)
-	}
-	if got := comp.Suggest(ctx, env, "interpreter"); !slices.Equal(got, []string{InterpreterProject, InterpreterHost}) {
-		t.Fatalf("interpreters %v", got)
-	}
 	if got := php.Suggest(ctx, env, "file"); got != nil {
 		t.Fatalf("file suggestions %v", got)
-	}
-	if ComposerScripts("") != nil || ComposerScripts(t.TempDir()) != nil {
-		t.Fatal("scripts without composer.json")
-	}
-	bad := t.TempDir()
-	_ = os.WriteFile(filepath.Join(bad, "composer.json"), []byte(`{`), 0o644)
-	if ComposerScripts(bad) != nil {
-		t.Fatal("scripts of broken composer.json")
 	}
 }
 

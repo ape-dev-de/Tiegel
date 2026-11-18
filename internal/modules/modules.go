@@ -14,6 +14,7 @@
 //	              quality tool plugins (contribute to the kernel's qa.*
 //	              service via hooks; AP17.1)
 //	phpunit       test discovery, runs and results (test.*; D310)
+//	composer      composer.json scripts as run configurations (composer.*; AP17.2)
 //
 // The modules never import each other; they share data through the bus and
 // the hook points declared in internal/api/contract.go. None of them imports
@@ -23,6 +24,7 @@ package modules
 import (
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
+	"github.com/ape-dev-de/tiegel/internal/modules/composer"
 	"github.com/ape-dev-de/tiegel/internal/modules/debugxdebug"
 	"github.com/ape-dev-de/tiegel/internal/modules/docker"
 	"github.com/ape-dev-de/tiegel/internal/modules/git"
@@ -65,6 +67,7 @@ func All(opts Options) []module.Module {
 		phpindex.New(opts.Index),
 		docker.New(opts.Docker),
 		phpunit.New(opts.PHPUnit),
+		composer.New(),
 	)
 	for _, p := range qa.All() {
 		mods = append(mods, p)

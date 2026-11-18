@@ -61,7 +61,7 @@ var (
 	// aborts it. The kernel saves all dirty documents here (fail closed).
 	HookRunBefore = hooks.NewGuard[RunRequest]("run.before")
 	// HookRunConfigTypes collects the run configuration types: the kernel
-	// contributes the core types (PHP script, command, Composer script),
+	// contributes the core types (PHP script, command, external tool),
 	// plugins append theirs (e.g. phpunit) to a copy of the slice. The
 	// first type with an ID wins.
 	HookRunConfigTypes = hooks.NewFilter[[]run.ConfigType]("run.configTypes")
