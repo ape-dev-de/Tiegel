@@ -72,7 +72,7 @@ Debug	Ctrl+D	run.debug
 Debug Context Configuration	Ctrl+Shift+D	run.debugFile
 Run Context Configuration	Ctrl+Shift+R	run.runFile
 Rerun (Run window)	Cmd+R	run.rerun
-Generate	Cmd+N	later:M17
+Generate	Cmd+N	code.generate
 Surround With	Cmd+Alt+T	code.surroundWith
 Insert Live Template	Cmd+J	code.insertLiveTemplate
 Extract Variable	Cmd+Alt+V	refactor.extractVariable

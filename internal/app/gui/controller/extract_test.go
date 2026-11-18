@@ -107,3 +107,40 @@ func TestPHPClassKindsMatchTemplates(t *testing.T) {
 		t.Fatal(PHPClassKindLabel("test"))
 	}
 }
+
+func TestGenerateController(t *testing.T) {
+	f := projectFake()
+	c, _ := navStarted(t, f)
+	f.answer("generate.list", map[string]any{"class": "A", "actions": []GenerateAction{{Source: "lsp", ID: "7", Title: "Implement"}, {Source: "builtin", Kind: "getters", Title: "Getters", Properties: []string{"a"}}}})
+	var menu GenerateMenu
+	c.LoadGenerate("/p/A.php", 12, func(m GenerateMenu) { menu = m })
+	c.Settle(time.Second)
+	if menu.File != "/p/A.php" || menu.Offset != 12 || len(menu.Actions) != 2 || navParamsOf(f, "generate.list")["noLsp"] != true {
+		t.Fatalf("menu %+v", menu)
+	}
+	f.answer("lsp.applyCodeAction", map[string]any{"applied": true})
+	c.RunGenerate(menu, menu.Actions[0], nil)
+	c.Settle(time.Second)
+	if navParamsOf(f, "lsp.applyCodeAction")["id"] != "7" || c.Status.Notice != "Applied: Implement" {
+		t.Fatalf("lsp %q", c.Status.Notice)
+	}
+	f.answer("generate.apply", map[string]any{"methods": []string{"getA"}, "caret": 40})
+	c.RunGenerate(menu, menu.Actions[1], []string{"a"})
+	c.Settle(time.Second)
+	if c.Status.Notice != "Generated getA" || c.Reveal == nil || c.Reveal.Range.Start.Offset != 40 {
+		t.Fatalf("builtin %q %+v", c.Status.Notice, c.Reveal)
+	}
+	if p := navParamsOf(f, "generate.apply"); p["kind"] != "getters" || len(p["properties"].([]any)) != 1 {
+		t.Fatalf("params %v", p)
+	}
+	c.RunGenerate(menu, GenerateAction{Title: "Constructor", Disabled: "has one"}, nil)
+	if c.Status.Notice != "Constructor: has one" {
+		t.Fatalf("disabled %q", c.Status.Notice)
+	}
+	f.on("generate.list", func(json.RawMessage) (any, error) { return nil, errors.New("no class") })
+	c.LoadGenerate("/p/A.php", 1, func(GenerateMenu) { t.Fatal("menu on error") })
+	c.Settle(time.Second)
+	if c.Status.Notice != "no class" {
+		t.Fatalf("error %q", c.Status.Notice)
+	}
+}

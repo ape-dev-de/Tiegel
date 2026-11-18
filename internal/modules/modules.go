@@ -16,6 +16,7 @@
 //	phpunit       test discovery, runs and results (test.*; D310)
 //	live-templates
 //	              live templates with tab stops (templates.*; AP17.3)
+//	php-generate  Generate: constructor, accessors, server code actions (generate.*; AP17.3)
 //
 // The modules never import each other; they share data through the bus and
 // the hook points declared in internal/api/contract.go. None of them imports
@@ -32,6 +33,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/modules/livetemplates"
 	"github.com/ape-dev-de/tiegel/internal/modules/lspplugins"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpfeatures"
+	"github.com/ape-dev-de/tiegel/internal/modules/phpgenerate"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpindex"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpruntime"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpunit"
@@ -72,7 +74,7 @@ func All(opts Options) []module.Module {
 	for _, p := range qa.All() {
 		mods = append(mods, p)
 	}
-	mods = append(mods, livetemplates.New())
+	mods = append(mods, livetemplates.New(), phpgenerate.New())
 	return mods
 }
 

@@ -53,7 +53,7 @@ Tiegel-Stand (M13 abgeschlossen): ein Katalog aller belegbaren Aktionen (`intern
 | Next/Previous Highlighted Error (F2/Shift+F2) | ✅ | M13 |
 | Go to Test / Create Test (Cmd+Shift+T) | ❌ (Fixture: später) | M15 |
 | Run/Debug (Ctrl+R/Ctrl+D), Run Context Configuration (Ctrl+Shift+R), Rerun (Cmd+R im Run-Fenster) | 🟡 Run, Run Current File, Rerun, Run-Fenster Cmd+4 (D269); Debug fehlt | M15 |
-| Generate (Cmd+N), Surround With (Cmd+Alt+T), Live Templates (Cmd+J) | ✅ Surround With (Cmd+Alt+T/J), Insert Live Template (Cmd+J) (D424); Generate siehe D430 | M17 |
+| Generate (Cmd+N), Surround With (Cmd+Alt+T), Live Templates (Cmd+J) | ✅ Generate (D428, D429), Surround With (Cmd+Alt+T/J), Insert Live Template (Cmd+J) (D424) | M17 |
 | Join Lines (Ctrl+Shift+J), Toggle Case (Cmd+Shift+U), Paste from History (Cmd+Shift+V) | ✅ | M13 |
 | Complete Statement (Cmd+Shift+Enter) | ❌ (Fixture: später) | M17 |
 | Extract Variable/Method (Cmd+Alt+V/M) | ✅ Code-Actions `refactor.extract` des Language Servers (D425) | M17 |

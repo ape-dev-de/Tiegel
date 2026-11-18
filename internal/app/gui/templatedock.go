@@ -53,6 +53,9 @@ func installTemplates(v *View) *templateDock {
 	}
 	r.AddAction(ed(keymap.ExtractVariable, "Extract Variable…", "Refactor", "extract", extract(controller.ExtractVariable)))
 	r.AddAction(ed(keymap.ExtractMethod, "Extract Method…", "Refactor", "extract", extract(controller.ExtractMethod)))
+	r.AddAction(ed(keymap.CodeGenerate, "Generate…", "Code", "generate", func(s *editorSession) {
+		v.ctl.LoadGenerate(s.file, s.ed.Cursor().Primary().Head, d.showGenerate)
+	}))
 	r.AddFrameHandler(d.frame)
 	return d
 }

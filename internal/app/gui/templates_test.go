@@ -106,3 +106,25 @@ func TestLiveTemplateChooser(t *testing.T) {
 	e.chooseLabel("if")
 	e.waitFor("inserted", func() bool { return strings.Contains(docText(s), "<?php\nif (CONDITION) {") && s.snip != nil })
 }
+
+// Generate (Cmd+N) offers the built-in generators; with several
+// properties it asks which.
+func TestGenerateChooser(t *testing.T) {
+	if !syntax.TreeSitter {
+		t.Skip("needs Tree-sitter")
+	}
+	e := newEnvWith(t, true, map[string]string{"src/G.php": "<?php\nclass G\n{\n    private int $a;\n    private string $b;\n}\n"}, nil)
+	s := e.openEditor("src/G.php")
+	e.caretAt(s, "private int", 0)
+	e.v.RunAction("code.generate")
+	e.waitFor("menu", func() bool { return e.v.chooseMode == chooseCustom && strings.HasPrefix(e.v.chooser.Title, "Generate") })
+	e.chooseLabel("Getters and Setters")
+	e.waitFor("properties", func() bool { return e.v.chooseMode == chooseCustom && e.v.chooser.Title == "Getters and Setters" })
+	e.chooseLabel("$b")
+	e.waitFor("generated", func() bool {
+		return strings.Contains(docText(s), "public function getB(): string") && strings.Contains(docText(s), "public function setB(string $b): void")
+	})
+	if strings.Contains(docText(s), "getA") {
+		t.Fatal("only $b was chosen")
+	}
+}

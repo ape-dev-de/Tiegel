@@ -153,6 +153,7 @@ var appDefs = []Def{
 	{ID: ParameterInfo, Title: "Parameter Info", Context: CtxEditor, Mac: []string{"Cmd+P"}, PC: []string{"Ctrl+P"}},
 	{ID: QuickDocumentation, Title: "Quick Documentation", Context: CtxEditor, Mac: []string{"F1", "Ctrl+J"}, PC: []string{"Ctrl+Q"}},
 	// Editor convenience (AP17.3): live templates, Generate, LSP refactorings.
+	{ID: CodeGenerate, Title: "Generate…", Context: CtxEditor, Mac: []string{"Cmd+N"}, PC: []string{"Ctrl+Alt+G"}},
 	{ID: InsertLiveTemplate, Title: "Insert Live Template…", Context: CtxEditor, Mac: []string{"Cmd+J"}, PC: []string{"Ctrl+J"}},
 	{ID: SurroundWith, Title: "Surround With…", Context: CtxEditor, Mac: []string{"Cmd+Alt+T"}, PC: []string{"Ctrl+Alt+T"}},
 	{ID: SurroundWithLiveTemplate, Title: "Surround with Live Template…", Context: CtxEditor, Mac: []string{"Cmd+Alt+J"}, PC: []string{"Ctrl+Alt+J"}},
