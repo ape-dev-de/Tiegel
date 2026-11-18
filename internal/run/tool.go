@@ -188,7 +188,7 @@ const (
 
 func externalToolType() ConfigType {
 	return ConfigType{
-		ID: TypeExternalTool, Label: "External Tool",
+		ID: TypeExternalTool, Label: "External Tool", Tool: true,
 		Description: "Run a program with macros ($FilePath$, $LineNumber$, $SelectedText$, …) filled in from the current editor; listed under Tools › External Tools.",
 		Fields: []Field{
 			{Key: ToolFieldProgram, Kind: settings.KindString, Label: "Program", Required: true,

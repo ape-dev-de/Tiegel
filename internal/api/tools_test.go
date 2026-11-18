@@ -112,3 +112,57 @@ func TestExternalTools(t *testing.T) {
 		t.Fatalf("binding after reopen %+v", ks)
 	}
 }
+
+// Starting or saving an External Tool never changes the selected run
+// configuration (review wave 8, #4): Run keeps starting the previous one.
+func TestExternalToolKeepsSelection(t *testing.T) {
+	a := newTestApp(t)
+	self := selfExe(t)
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "src", "A.php"), "<?php\n")
+	call(t, a, "project.open", PathParams{Path: root}, nil)
+
+	selected := func() string {
+		var cfgs []RunConfigInfo
+		call(t, a, "run.configs.list", nil, &cfgs)
+		for _, c := range cfgs {
+			if c.Selected {
+				return c.Name
+			}
+		}
+		return ""
+	}
+	var tool run.Config
+	call(t, a, "run.configs.save", run.Config{Name: "Tool", Type: run.TypeExternalTool, Values: map[string]any{
+		run.ToolFieldProgram: self, run.ToolFieldArgs: "$FileName$", run.ToolFieldEnv: []string{runHelperEnv + "=echo"},
+		run.ToolFieldSync: false}}, &tool)
+	if s := selected(); s != "" {
+		t.Fatalf("saving the first tool selected %q", s)
+	}
+	call(t, a, "run.configs.save", run.Config{Name: "Main", Type: run.TypeCommand, Values: map[string]any{
+		"command": run.QuoteWords([]string{self}), "env": []string{runHelperEnv + "=echo"}}}, nil)
+	if s := selected(); s != "Main" {
+		t.Fatalf("selected %q, want Main", s)
+	}
+	var types []RunConfigTypeInfo
+	call(t, a, "run.configTypes", nil, &types)
+	for _, ty := range types {
+		if ty.Tool != (ty.ID == run.TypeExternalTool) {
+			t.Fatalf("type %s: tool %v", ty.ID, ty.Tool)
+		}
+	}
+
+	var info run.Info
+	call(t, a, "run.start", RunStartParams{Config: tool.ID, Context: &run.MacroContext{File: "src/A.php"}}, &info)
+	waitRun(t, a, info.ID)
+	if s := selected(); s != "Main" {
+		t.Fatalf("after the tool run selected %q, want Main", s)
+	}
+	// A normal configuration still becomes the selection when started.
+	call(t, a, "run.configs.select", RunConfigIDParams{ID: tool.ID}, nil)
+	call(t, a, "run.start", RunStartParams{Config: "Main"}, &info)
+	waitRun(t, a, info.ID)
+	if s := selected(); s != "Main" {
+		t.Fatalf("after Main selected %q", s)
+	}
+}

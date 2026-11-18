@@ -305,8 +305,12 @@ func (a *App) specFor(ctx context.Context, p RunStartParams) (run.Spec, error) {
 		if err != nil {
 			return run.Spec{}, err
 		}
-		if err := settings.Set(a.settingsStore(), run.KeySelected, cfg.ID); err != nil {
-			a.log.Warn("run: select", "err", err)
+		// Tools (External Tools) run on demand and keep the selection:
+		// Run must not start them later without editor context.
+		if t, ok := a.configType(ctx, cfg.Type); ok && !t.Tool {
+			if err := settings.Set(a.settingsStore(), run.KeySelected, cfg.ID); err != nil {
+				a.log.Warn("run: select", "err", err)
+			}
 		}
 		return spec, nil
 	case p.File != "":
@@ -413,6 +417,9 @@ func startError(err error) error {
 	}
 	if errors.Is(err, exec.ErrNotFound) {
 		return Errorf(CodeUnavailable, "%w", err)
+	}
+	if errors.Is(err, run.ErrBatchArgument) {
+		return Errorf(CodeInvalidParams, "%w", err)
 	}
 	return Errorf(CodeFailed, "%w", err)
 }
@@ -690,8 +697,11 @@ func (a *App) runConfigsSave(ctx context.Context, c run.Config) (run.Config, err
 }
 
 // storeRunConfig adds or replaces checked in the stored list (under
-// runConfigsMu, so concurrent changes are not lost).
+// runConfigsMu, so concurrent changes are not lost). The first stored
+// configuration becomes the selected one unless its type is a tool
+// (External Tools never become the selection).
 func (a *App) storeRunConfig(checked run.Config) (run.Config, error) {
+	t, _ := a.configType(context.Background(), checked.Type)
 	runConfigsMu.Lock()
 	defer runConfigsMu.Unlock()
 	list, err := a.storedRunConfigs()
@@ -715,7 +725,7 @@ func (a *App) storeRunConfig(checked run.Config) (run.Config, error) {
 	if err := settings.Set(a.ProjectSettings(), run.KeyConfigurations, list); err != nil {
 		return run.Config{}, Errorf(CodeFailed, "run configurations: %w", err)
 	}
-	if settings.Get(a.ProjectSettings(), run.KeySelected, "") == "" {
+	if !t.Tool && settings.Get(a.ProjectSettings(), run.KeySelected, "") == "" {
 		_ = settings.Set(a.ProjectSettings(), run.KeySelected, checked.ID)
 	}
 	return checked, nil

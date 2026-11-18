@@ -530,16 +530,16 @@ Bereiche und Abbildungen (Spec: [einstellungen-abgleich.md](einstellungen-abglei
 
 | Methode | Parameter | Ergebnis |
 |---|---|---|
-| `run.start` | genau eins von `config` (ID oder Name), `file` (+ `args?`), `spec` (`{name?, php?, program?, args?, dir?, env?, interpreter?}`); `interpreter?` (`project`, `host` oder Interpreter-ID) für `file`/`spec` | Lauf `{id, name, config?, type?, display, where, dir, project, state: running\|exited\|stopped, exitCode, error?, started, finished?, durationMs, lines, replaces?, spec}`; Guard `run.before` (Autosave) vorher; Programm nicht gefunden bzw. Interpreter nicht verfügbar `-32005`, Veto `-32000`, Konfiguration ungültig `-32602`, Typ eines abgeschalteten Plugins `-32006` |
+| `run.start` | genau eins von `config` (ID oder Name), `file` (+ `args?`), `spec` (`{name?, php?, program?, args?, dir?, env?, interpreter?}`); `interpreter?` (`project`, `host` oder Interpreter-ID) für `file`/`spec` | Lauf `{id, name, config?, type?, display, where, dir, project, state: running\|exited\|stopped, exitCode, error?, started, finished?, durationMs, lines, replaces?, spec}`; Guard `run.before` (Autosave) vorher; Programm nicht gefunden bzw. Interpreter nicht verfügbar `-32005`, Veto `-32000`, Konfiguration ungültig `-32602`, Typ eines abgeschalteten Plugins `-32006`; mit `config` wird die Konfiguration ausgewählt (`run.selected`), außer ihr Typ ist ein Tool (`tool: true`, z.B. `external-tool`, D460); unter Windows bekommen External Tools auf dem Host keine Batch-Datei mit cmd-Metazeichen in Argumenten (`-32602`, D461) |
 | `run.stop` / `run.rerun` / `run.wait` / `run.remove` | `runId` | Lauf; `rerun` stoppt einen aktiven Lauf, startet neu (`replaces` = alte ID) und vergisst den alten; `remove` nur für beendete Läufe (`-32004` sonst) |
 | `run.list` | `active?` | Läufe, älteste zuerst (höchstens 30 beendete) |
 | `run.output` | `runId`, `since?` (Sequenznummer), `limit?` | `{runId, state, lines: [{seq, stream: stdout\|stderr\|system, text, links?: [{start, end, path, file, line, column?}]}], last, dropped?}` (Puffer 10 000 Zeilen) |
 | `run.closeCheck` | – | `{policy: ask\|terminate\|keep, active: [Lauf], project?}` (Einstellung `run.confirmClose`; `project` = Wurzel, für die geprüft wurde) |
 | `run.stopAll` / `run.keepAll` | `project?` (Wurzel, Standard: offenes Projekt, ohne Projekt alle), `wait?` (nur `stopAll`: erst antworten, wenn die Läufe beendet sind, höchstens 15 s) | IDs der gestoppten bzw. beim Beenden von Tiegel weiterlaufenden Läufe (`keep: true` im Lauf, D301) |
 | `run.configs.list` | – | `[{id, name, type, values, typeLabel, available, display?, error?, selected?}]` |
-| `run.configs.save` | `{id?, name, type, values}` | gespeicherte Konfiguration (geprüft gegen die Felder des Typs; neuer Name doppelt `-32004`) |
+| `run.configs.save` | `{id?, name, type, values}` | gespeicherte Konfiguration (geprüft gegen die Felder des Typs; neuer Name doppelt `-32004`); ist noch nichts ausgewählt, wird sie ausgewählt – außer bei Tool-Typen (D460) |
 | `run.configs.delete` / `run.configs.select` | `id` (ID oder Name) | – bzw. Konfiguration |
-| `run.configTypes` | – | `[{id, label, description, plugin?, fields: [{key, kind, label, help?, default?, options?, required?, suggest?}], suggestions?: {feld: [werte]}}]` |
+| `run.configTypes` | – | `[{id, label, description, plugin?, tool?, fields: [{key, kind, label, help?, default?, options?, required?, suggest?}], suggestions?: {feld: [werte]}}]`; `tool: true` = Start auf Abruf, ändert die Auswahl nie (D460) |
 | `run.macros` | `context?` (`{file?, line?, column?, selectedText?}`) | `[{name, description, needsFile?, value, error?}]` – die Makros der External Tools mit ihrem Wert für den Kontext |
 
 Events: `run.started`, `run.exited` (Lauf), `run.output` (`{runId, lines}`, gebündelt), `run.removed` (`{runId}`), `run.configsChanged` (Liste wie `run.configs.list`). Hooks: Guard `run.before` (`{name, config?, type?, display, rerun?}`), Filter `run.configTypes` (Plugins hängen Typen mit Feldern und `Build` an, z.B. PHPUnit), Filter `run.interpreter` (php-runtime liefert den Interpreter).
@@ -567,7 +567,7 @@ Die `$File…$`-Makros brauchen eine aktuelle Datei; ohne sie scheitert der Star
 
 | Methode | Parameter | Ergebnis |
 |---|---|---|
-| `composer.scripts` | – | `{file, exists, scripts: [{name, commands, description?, line?}], command}` (`line` = Zeile des Schlüssels in `composer.json`, `command` z.B. `composer` oder `php composer.phar`); ohne `composer.json` `exists: false` |
+| `composer.scripts` | – | `{file, exists, scripts: [{name, commands, description?, line?}], command, configType, scriptField}` (`line` = Zeile des Schlüssels in `composer.json`, `command` z.B. `composer` oder `php composer.phar`; `configType`/`scriptField` = Run-Typ und Feld für eine Konfiguration des Skripts, D462); ohne `composer.json` `exists: false` |
 | `composer.run` | `{script, args?, interpreter?}` | Lauf wie `run.start` (Typ `composer-script`, Name `composer <script>`); Skriptnamen mit `-` am Anfang oder Leerraum `-32602` |
 
 **diff.texts** (Kern, D313) – `{left, right, leftLabel?, rightLabel?, ignoreWhitespace?}` → Änderungsblöcke im Format von `git.fileDiff` (`{left, right, blocks, identical}`); damit zeigt das Diff-Fenster expected/actual eines Tests.

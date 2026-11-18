@@ -4,7 +4,7 @@ import (
 	"context"
 	"path/filepath"
 
-	"github.com/ape-dev-de/tiegel/internal/modules/composer"
+	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/run"
 )
 
@@ -15,7 +15,7 @@ type Composer struct {
 	c *Controller
 	// Result is the last composer.scripts answer (empty while the
 	// plugin is off or no project is open).
-	Result composer.ScriptsResult
+	Result api.ComposerScriptsResult
 	// Version changes with Result.
 	Version uint64
 	project string
@@ -31,7 +31,7 @@ func (m *Composer) ProjectChanged() {
 		return
 	}
 	m.project = root
-	m.Result = composer.ScriptsResult{}
+	m.Result = api.ComposerScriptsResult{}
 	m.Version++
 	if root != "" {
 		m.Load(nil)
@@ -53,12 +53,12 @@ func (m *Composer) Load(done func(error)) {
 	m.seq++
 	seq := m.seq
 	m.c.Go(func(ctx context.Context) func() {
-		var res composer.ScriptsResult
+		var res api.ComposerScriptsResult
 		err := m.c.call(ctx, "composer.scripts", nil, &res)
 		return func() {
 			if seq == m.seq {
 				if err != nil {
-					res = composer.ScriptsResult{}
+					res = api.ComposerScriptsResult{}
 				}
 				m.Result = res
 				m.Version++
@@ -72,11 +72,11 @@ func (m *Composer) Load(done func(error)) {
 
 // ScriptsAt returns the scripts by 1-based line if file is the project's
 // composer.json (nil otherwise).
-func (m *Composer) ScriptsAt(file string) map[int]composer.Script {
+func (m *Composer) ScriptsAt(file string) map[int]api.ComposerScript {
 	if m.Result.File == "" || filepath.Clean(file) != m.Result.File || len(m.Result.Scripts) == 0 {
 		return nil
 	}
-	out := make(map[int]composer.Script, len(m.Result.Scripts))
+	out := make(map[int]api.ComposerScript, len(m.Result.Scripts))
 	for _, s := range m.Result.Scripts {
 		if s.Line > 0 {
 			out[s.Line] = s
@@ -89,7 +89,7 @@ func (m *Composer) ScriptsAt(file string) map[int]composer.Script {
 func (m *Composer) Run(script string) {
 	m.c.Go(func(ctx context.Context) func() {
 		var info run.Info
-		err := m.c.call(ctx, "composer.run", composer.RunParams{Script: script}, &info)
+		err := m.c.call(ctx, "composer.run", api.ComposerRunParams{Script: script}, &info)
 		return func() {
 			if err != nil {
 				m.c.Status.Notice = "Composer: " + err.Error()
@@ -101,8 +101,13 @@ func (m *Composer) Run(script string) {
 	})
 }
 
-// ComposerConfigFor returns an unsaved run configuration of script (to edit and
-// save in the run configuration editor).
-func ComposerConfigFor(script string) run.Config {
-	return run.Config{Name: "composer " + script, Type: composer.TypeScript, Values: map[string]any{composer.FieldScript: script}}
+// ConfigFor returns an unsaved run configuration of script (to edit and
+// save in the run configuration editor); the type and field come from
+// the composer.scripts answer, so the GUI names no plugin type (D462).
+// ok is false while no answer is loaded.
+func (m *Composer) ConfigFor(script string) (cfg run.Config, ok bool) {
+	if m.Result.ConfigType == "" || m.Result.ScriptField == "" {
+		return run.Config{}, false
+	}
+	return run.Config{Name: "composer " + script, Type: m.Result.ConfigType, Values: map[string]any{m.Result.ScriptField: script}}, true
 }

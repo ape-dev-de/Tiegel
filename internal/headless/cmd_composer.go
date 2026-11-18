@@ -8,7 +8,6 @@ import (
 	"text/tabwriter"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
-	"github.com/ape-dev-de/tiegel/internal/modules/composer"
 	runsvc "github.com/ape-dev-de/tiegel/internal/run"
 )
 
@@ -39,7 +38,7 @@ func runComposer(c *cli) error {
 		if len(c.p.args) > 1 {
 			return usagef("usage: tiegel --headless %s", commands["composer"].usage)
 		}
-		var res composer.ScriptsResult
+		var res api.ComposerScriptsResult
 		if err := c.call("composer.scripts", nil, &res); err != nil {
 			return err
 		}
@@ -65,7 +64,7 @@ func runComposer(c *cli) error {
 		if len(c.p.args) < 2 {
 			return usagef("usage: tiegel --headless composer run NAME [-- ARGS...]")
 		}
-		return streamRun(c, "composer.run", composer.RunParams{Script: c.p.args[1], Args: c.p.args[2:], Interpreter: c.p.value("interpreter")})
+		return streamRun(c, "composer.run", api.ComposerRunParams{Script: c.p.args[1], Args: c.p.args[2:], Interpreter: c.p.value("interpreter")})
 	}
 	return usagef("usage: tiegel --headless %s", commands["composer"].usage)
 }

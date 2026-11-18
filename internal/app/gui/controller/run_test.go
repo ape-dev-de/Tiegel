@@ -269,3 +269,53 @@ func TestRunConfigSelectsAgainstStaleList(t *testing.T) {
 		t.Fatalf("select calls %v", selected)
 	}
 }
+
+// Tools (External Tools and other types flagged Tool) never become the
+// configuration Ctrl+R runs (review wave 8, #4).
+func TestToolRunKeepsSelection(t *testing.T) {
+	f := projectFake()
+	var mu sync.Mutex
+	var selected []string
+	f.on("run.configs.select", func(raw json.RawMessage) (any, error) {
+		var p api.RunConfigIDParams
+		_ = json.Unmarshal(raw, &p)
+		mu.Lock()
+		defer mu.Unlock()
+		selected = append(selected, p.ID)
+		return api.RunConfigInfo{}, nil
+	})
+	f.on("run.start", func(raw json.RawMessage) (any, error) {
+		var p api.RunStartParams
+		_ = json.Unmarshal(raw, &p)
+		typ := map[string]string{"tool": run.TypeExternalTool, "gen": "plugin-tool", "a": run.TypeCommand}[p.Config]
+		return run.Info{ID: "run-" + p.Config, State: run.StateRunning, Project: root, Config: p.Config,
+			Spec: run.Spec{Config: p.Config, Type: typ}}, nil
+	})
+	f.answer("run.configs.list", []api.RunConfigInfo{
+		{Config: run.Config{ID: "a", Name: "Main", Type: run.TypeCommand}, Available: true, Selected: true},
+		{Config: run.Config{ID: "tool", Name: "Tool", Type: run.TypeExternalTool}, Available: true},
+		{Config: run.Config{ID: "gen", Name: "Gen", Type: "plugin-tool"}, Available: true},
+	})
+	f.answer("run.configTypes", []api.RunConfigTypeInfo{{ConfigType: run.ConfigType{ID: "plugin-tool", Label: "Gen", Tool: true}}})
+	f.answer("run.list", []run.Info{})
+	c := started(t, f)
+	r := c.Run
+	r.ProjectChanged()
+	c.Settle(time.Second)
+
+	r.RunTool("tool", &run.MacroContext{File: "src/A.php"})
+	r.RunConfig("tool")
+	r.RunConfig("gen")
+	c.Settle(time.Second)
+	if got := r.SelectedConfig(); got == nil || got.ID != "a" {
+		t.Fatalf("selected %+v, want a", got)
+	}
+	if r.SelectsOnStart("tool") || r.SelectsOnStart("gen") || !r.SelectsOnStart("a") {
+		t.Fatal("SelectsOnStart")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(selected) != 0 {
+		t.Fatalf("select calls %v", selected)
+	}
+}
