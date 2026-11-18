@@ -23,7 +23,7 @@ Flags dürfen vor oder nach dem Befehl stehen (`--name wert` oder `--name=wert`)
 | Flag | Bedeutung |
 |---|---|
 | `--json` | maschinenlesbare Ausgabe (eingerücktes JSON auf stdout) |
-| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `lsp-status`, `lsp-restart`, `lsp-doctor`, `lsp-select`, `install`, `qa`, `run`, `run-configs`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`, `interp-*`, `docker`) nehmen ohne Angabe das Arbeitsverzeichnis. |
+| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `lsp-status`, `lsp-restart`, `lsp-doctor`, `lsp-select`, `install`, `qa`, `run`, `run-configs`, `test`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`, `interp-*`, `docker`) nehmen ohne Angabe das Arbeitsverzeichnis. |
 | `--config-dir DIR` | Einstellungsverzeichnis statt `<UserConfigDir>/Tiegel`; alternativ Umgebungsvariable `TIEGEL_CONFIG_DIR` (Tests, CI, portable Nutzung) |
 | `--help`, `-h` | Hilfe |
 | `--version` | Version (auch `tiegel --version` ohne `--headless`) |
@@ -86,6 +86,14 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `qa [list \| run [PFAD...] \| format DATEI... [--preview] \| diagnostics [PFAD] \| clear [PFAD]] [--tool PLUGIN]` | Qualitäts-Tool-Plugins (AP17.1): `list` zeigt Plugin-ID, Name, Art (format/inspect), Befehl und ob vorhanden (fehlt es: Hinweis `tiegel --headless install PLUGIN`); `run` prüft Pfade (ohne: das Projekt laut Tool-Konfiguration bzw. `<plugin>.paths`) mit allen vorhandenen Analyse-Plugins oder `--tool`, Ausgabe `pfad:zeile:spalte: schwere: meldung [code] (plugin)`, **Exit 1 bei Funden** oder Tool-Fehler; `format` formatiert mit dem ersten Formatter-Plugin für „Reformat Code“ (oder `--tool`) und schreibt die Datei (Local History), `--preview` zeigt nur das Ergebnis; `diagnostics`/`clear` lesen bzw. löschen gespeicherte Funde (nur in `serve` sinnvoll, ein Einzelaufruf hat keine) | `qa.list`, `qa.run`, `qa.format`, `qa.diagnostics`, `qa.clear` |
 | `run KONFIG` / `run --file DATEI [ARGS...]` / `run --cmd -- BEFEHL [ARGS...]` `[--interpreter project\|host\|ID] [--env K=V]... [--dir DIR]` | startet eine Run-Konfiguration (ID oder Name), eine PHP-Datei mit dem Projekt-Interpreter oder einen beliebigen Befehl (`--cmd`, Standard auf dem Host; `--interpreter project` im Interpreter, z.B. per `docker compose exec`). Vorher wird gespeichert (Guard `run.before`). Ausgabe gestreamt (stdout/stderr getrennt), **Exit-Code des Prozesses wird durchgereicht**, Strg+C stoppt den Prozessbaum (auch im Container) und endet mit 130. `--json`: `{run, output}` am Ende | `run.start`, `run.wait`, `run.output`, `run.stop`, Event `run.output` |
 | `run-configs [list \| types \| save JSON\|- \| delete ID \| select ID]` | Run-Konfigurationen des Projekts (`*` = ausgewählt, mit Befehlsvorschau oder Fehler); `types` zeigt die Typen (Kern: `php-script`, `command`, `composer-script`; dazu Plugin-Typen) mit Feldern und Vorschlägen (z.B. Composer-Skripte); `save` nimmt `{id?, name, type, values}` (auch von stdin mit `-`) | `run.configs.*`, `run.configTypes` |
+| `test [status]` | Test-Framework des Projekts (Plugin `phpunit`): Skript (`vendor/bin/phpunit` bzw. `phpunit.executable`), ParaTest, Version (aus `vendor/composer/installed.json`), Konfigurationsdatei, Suites, Testverzeichnisse; fehlt PHPUnit: Hinweis und `install phpunit --dry-run` (D194, nichts wird automatisch installiert) | `test.status` |
+| `test discover [PFAD]` | Testklassen und -methoden einer Datei, eines Verzeichnisses oder der Testverzeichnisse (Tree-sitter: Klassen mit `TestCase`-Vorfahr, `test*`, `#[Test]`, `@test`, Datenprovider aus `#[DataProvider]`/`@dataProvider`) mit Zeile | `test.discover` |
+| `test run [PFAD] [--suite S] [--class C] [--method M] [--data-set D] [--filter F] [--config NAME] [--debug] [--interpreter I]` | führt Tests über die Run-Infrastruktur im Projekt-Interpreter aus (`php vendor/bin/phpunit --teamcity …`, lokal/Compose/Image/WSL); jede beendete Testmethode erscheint sofort (`PASSED`/`FAILED`/`IGNORED`), am Ende die Zusammenfassung. `--method` läuft genau diese Methode (Filter `/^(?:Ns\\Cls::m(?: with data set .*)?)$/`), `--data-set 0` bzw. `--data-set name` genau einen Datensatz. `--debug` startet den Xdebug-Listener und setzt `XDEBUG_TRIGGER`/`XDEBUG_SESSION`. Exit 1 bei Fehlschlägen, 130 nach Strg+C; `--json`: Testlauf mit Baum | `test.run`, Events `test.updated`/`test.finished` |
+| `test rerun-failed [LAUF] [--debug]` | die fehlgeschlagenen Tests eines Laufs (Standard: des letzten in diesem Prozess) erneut | `test.rerunFailed` |
+| `test results [LAUF]` | Ergebnisbaum mit Dauer, Meldung, expected/actual und Fehlerort (lokaler Pfad) | `test.results` |
+| `test config [PFAD] [--suite S] [--class C] [--method M] [--data-set D]` | ungespeicherte Run-Konfiguration vom Typ `phpunit` als JSON (z.B. `… \| tiegel --headless run-configs save -`) | `test.configFor` |
+| `test goto DATEI` | Go to Test: die Tests einer Klasse bzw. die getestete Klasse eines Tests (PSR-4 aus `composer.json`, Konvention `Tests\…\<Name>Test`, auch unter `Unit\`/`Feature\`/`Integration\`/`Functional\`) | `test.goto` |
+| `test create DATEI [--file ZIEL] [--dry-run]` | Create Test: Testgerüst für die Klasse anlegen (Standard `tests/Unit/…Test.php`, wenn `tests/Unit` existiert; erbt von `Tests\TestCase`, falls vorhanden); eine vorhandene Datei bleibt unverändert | `test.create` |
 | `modules [enable ID \| disable ID]` | Module anzeigen/schalten | `modules.*` |
 | `settings [--schema] [--module ID\|core] [--query TEXT]` | Alle deklarierten Einstellungen (D190): „Core › Seite“ und „Plugins › Modul [on/off]“ mit Schlüssel, Typ, wirksamem Wert, Quelle (`default`/`global`/`project`) und Label; `--query` sucht in Schlüssel, Label, Hilfe, Gruppe, Modul-ID; `--json` liefert das vollständige Schema | `settings.schema` |
 | `settings get KEY [--scope global\|project] [--effective]` | gespeicherten (oder mit `--effective` den wirksamen) Wert lesen | `settings.get` |
@@ -291,6 +299,7 @@ Von den Modulen veröffentlichte Topics:
 | php-index | `index.progress` (`{phase: scanning\|indexing\|ready, done, total}`, höchstens alle 100 ms), `index.updated` (`{files, truncated, generation, reason: sync\|file\|doc\|cache}`) |
 | docker | `docker.contextChanged` (`{context, scope, previous}`), `docker.servicesChanged` (Stand wie `docker.services` plus `refresh: events\|poll`; nur während einer Beobachtung per `docker.watchStart`), `docker.log` (`{id, lines: [{container, text, stream}], done?, error?}`; gebündelt alle 100 ms) |
 | Kern (qa) | `qa.diagnostics` (`{path, file, source, diagnostics}` – aktuelle Funde eines Plugins für eine Datei, leere Liste = gelöscht), `qa.started`/`qa.finished` (`{tool, kind: format\|inspect, paths, trigger: manual\|save, count, error?, messages?, millis}`) |
+| phpunit | `test.started` (Testlauf ohne Baum), `test.updated` (Testlauf mit Baum, gedrosselt auf 150 ms), `test.finished` (Testlauf mit Baum) |
 | debug-xdebug | `debug.listening`, `debug.stopped`, `debug.sessionStarted`, `debug.sessionEnded`, `debug.break` (gemappte Host-Datei/Zeile), `debug.breakpointHit`, `debug.breakpoints.changed`, `debug.status`, `debug.output`, `debug.notification`, `debug.breakpoint.resolved` |
 
 ## Module
@@ -307,7 +316,8 @@ Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`,
 | `git` | – | `git.*` | ruft Guard `commit.before` (Kern: Autosave) und Filter `commit.message` |
 | `syntax` | – | `syntax.*` | – (folgt `doc.edited`) |
 | `php-index` | – | `index.*`, `nav.*` | ruft Filter `nav.lsp` (Anbieter: lang-php) |
-| `debug-xdebug` | `php-runtime` | `debug.*` | ruft Guard `debug.before` (Kern: Autosave), nutzt `runtime.pathMappings` |
+| `debug-xdebug` | `php-runtime` | `debug.*` | ruft Guard `debug.before` (Kern: Autosave), nutzt `runtime.pathMappings`, stellt `debug.listener` (Filter, für `run.start` mit `debug`) bereit |
+| `phpunit` | – | `test.*` | stellt `run.configTypes` (Typ `phpunit`) und `install.recipes` (`composer require --dev phpunit/phpunit` im Projekt-Interpreter) bereit; nutzt `runtime.pathMappings` und `nav.typeHierarchy` (falls php-index läuft) |
 
 `modules.enable`/`modules.disable` wirken sofort (und dauerhaft): ein abgeschaltetes Modul räumt Hooks und Abos ab, seine Methoden antworten mit `-32006 module disabled`. `app.methods` zeigt zu jeder Methode `module` und `disabled`.
 
@@ -499,6 +509,28 @@ Nach `install.done` sucht lang-php den Server neu und startet ihn ohne Neustart 
 | `run.configTypes` | – | `[{id, label, description, plugin?, fields: [{key, kind, label, help?, default?, options?, required?, suggest?}], suggestions?: {feld: [werte]}}]` |
 
 Events: `run.started`, `run.exited` (Lauf), `run.output` (`{runId, lines}`, gebündelt), `run.removed` (`{runId}`), `run.configsChanged` (Liste wie `run.configs.list`). Hooks: Guard `run.before` (`{name, config?, type?, display, rerun?}`), Filter `run.configTypes` (Plugins hängen Typen mit Feldern und `Build` an, z.B. PHPUnit), Filter `run.interpreter` (php-runtime liefert den Interpreter).
+
+`run.start` nimmt zusätzlich `debug?`: Der Kern ruft den Filter `debug.listener` (Anbieter: debug-xdebug startet seinen Listener, falls nötig; ohne Anbieter `-32006`), setzt `XDEBUG_TRIGGER=1` und `XDEBUG_SESSION=tiegel` und stellt PHP-Läufen `-dxdebug.mode=debug -dxdebug.start_with_request=trigger -dxdebug.client_port=PORT` voran; `run.rerun` eines solchen Laufs lässt den Debugger erneut lauschen (D311).
+
+**diff.texts** (Kern, D313) – `{left, right, leftLabel?, rightLabel?, ignoreWhitespace?}` → Änderungsblöcke im Format von `git.fileDiff` (`{left, right, blocks, identical}`); damit zeigt das Diff-Fenster expected/actual eines Tests.
+
+**test** (Plugin `phpunit`, AP15.2–15.4, D310–D318) – Tests finden, ausführen und Ergebnisse lesen; der Kern kennt kein Test-Framework, die Typen stehen in `internal/api/testcontract.go`.
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `test.status` | – | `{framework, available, executable?, parallel?, version?, config?, suites?, testDirs?, hint?, install?, configType}` |
+| `test.discover` | `path?` (Datei oder Verzeichnis, Standard: Testverzeichnisse; offene Dokumente mit ungespeichertem Text) | `{classes: [{id, kind: class, name, class, file, line, status?, children: [{id: "Ns\\Cls::m", kind: method, method, line, dataProviders?, status?}]}], files, errors?}` |
+| `test.run` | `suite?`, `path?`, `class?`, `method?`, `dataSet?`, `filter?` (roh), `tests?` (IDs), `debug?`, `interpreter?` oder `config` (Run-Konfiguration vom Typ `phpunit`) | Testlauf `{runId, name, framework, state, exitCode, started, durationMs, counts: {total, passed, failed, ignored, running, terminated, expected?}, scope, debug?, tree?, error?}`; Ausgabe zusätzlich wie jeder Lauf über `run.output` |
+| `test.rerunFailed` | `runId?` (Standard: der letzte), `debug?` | neuer Testlauf mit den fehlgeschlagenen/abgebrochenen Tests (Suite und Pfad des alten Laufs bleiben) |
+| `test.results` | `runId?` | Testlauf mit Baum: `tree: [{id, kind: suite\|class\|method\|test\|dataset, name, file?, class?, method?, dataSet?, status: running\|passed\|failed\|ignored\|terminated, durationMs, message?, details?, expected?, actual?, comparison?, failFile?, failLine?, output?, children?}]` (Pfade auf den Host zurückgemappt) |
+| `test.runs` | – | Testläufe dieser Sitzung (höchstens 20) mit Zählern, ohne Baum |
+| `test.lastStatus` | `ids?` | `{id: status}` – letztes Ergebnis je Klasse, Methode und Datensatz (für das Gutter) |
+| `test.configFor` | wie `test.run` (Scope) | ungespeicherte Run-Konfiguration `{name, type: phpunit, values}` |
+| `test.goto` | `path` | `{direction: test\|subject, class, targets: [{file, class, exists}], create?: {file, class, content, exists}}` |
+| `test.create` | `path`, `file?`, `dryRun?` | `{file, class, content, exists}`; schreibt die Datei (Local History, `files.changed`), eine vorhandene bleibt unverändert |
+
+Läufe einer Run-Konfiguration vom Typ `phpunit` (z.B. mit Ctrl+R gestartet) erscheinen ebenso als Testlauf. Einstellungen: `phpunit.executable`, `phpunit.configuration`, `phpunit.interpreter` (Standard `project`), `phpunit.parallel` (ParaTest für Suites und Verzeichnisse), `phpunit.arguments`.
+
 
 **git** – Hunk-Indizes beziehen sich auf `git.diff` mit denselben Optionen. Jeder Hunk in `git.diff` hat `header` und `hash` (Inhalts-Hash); eine Auswahl `{hunk, header?, hash?}` mit diesen Werten wird abgelehnt (-32004 mit `data: {reason: "staleSelection", path, hunk}`), wenn sich der Diff inzwischen geändert hat (z.B. durch Formatierung beim Speichern) – statt still einen anderen Hunk zu nehmen; der Client lädt dann den Diff neu. Ohne `header`/`hash` gilt nur der Index (rückwärtskompatibel). Clients sollten beide mitschicken.
 

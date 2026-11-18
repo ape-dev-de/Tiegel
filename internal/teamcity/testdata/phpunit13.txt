@@ -1,0 +1,73 @@
+PHPUnit 13.1.0 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.5.10
+
+##teamcity[testCount count='9' flowId='42']
+##teamcity[testSuiteStarted name='Tests\CalcTest' locationHint='php_qn:///app/tests/CalcTest.php::\Tests\CalcTest' flowId='42']
+##teamcity[testStarted name='testAdd' locationHint='php_qn:///app/tests/CalcTest.php::\Tests\CalcTest::testAdd' flowId='42']
+##teamcity[testFinished name='testAdd' duration='2' flowId='42']
+##teamcity[testStarted name='testFail' locationHint='php_qn:///app/tests/CalcTest.php::\Tests\CalcTest::testFail' flowId='42']
+##teamcity[testFailed name='testFail' message='Failed asserting that two strings are identical.' details='/app/tests/CalcTest.php:17|n' duration='3' type='comparisonFailure' actual='|'foo|nbaz|'' expected='|'foo|nbar|'' flowId='42']
+##teamcity[testFinished name='testFail' duration='3' flowId='42']
+##teamcity[testStarted name='itSkips' locationHint='php_qn:///app/tests/CalcTest.php::\Tests\CalcTest::itSkips' flowId='42']
+##teamcity[testIgnored name='itSkips' message='later' duration='0' flowId='42']
+##teamcity[testFinished name='itSkips' duration='0' flowId='42']
+##teamcity[testSuiteStarted name='testPairs' locationHint='php_qn:///app/tests/CalcTest.php::\Tests\CalcTest::testPairs' flowId='42']
+##teamcity[testStarted name='testPairs with data set "same"' locationHint='php_qn:///app/tests/CalcTest.php::\Tests\CalcTest::testPairs with data set "same"' flowId='42']
+##teamcity[testFinished name='testPairs with data set "same"' duration='0' flowId='42']
+##teamcity[testStarted name='testPairs with data set "diff"' locationHint='php_qn:///app/tests/CalcTest.php::\Tests\CalcTest::testPairs with data set "diff"' flowId='42']
+##teamcity[testFailed name='testPairs with data set "diff"' message='Failed asserting that 2 is identical to 1.' details='/app/tests/CalcTest.php:29|n' duration='0' flowId='42']
+##teamcity[testFinished name='testPairs with data set "diff"' duration='0' flowId='42']
+##teamcity[testStarted name='testPairs with data set #0' locationHint='php_qn:///app/tests/CalcTest.php::\Tests\CalcTest::testPairs with data set #0' flowId='42']
+##teamcity[testFinished name='testPairs with data set #0' duration='0' flowId='42']
+##teamcity[testSuiteFinished name='testPairs' flowId='42']
+##teamcity[testStarted name='testError' locationHint='php_qn:///app/tests/CalcTest.php::\Tests\CalcTest::testError' flowId='42']
+##teamcity[testFailed name='testError' message='RuntimeException: boom' details='/app/tests/CalcTest.php:39|n' duration='0' flowId='42']
+##teamcity[testFinished name='testError' duration='0' flowId='42']
+##teamcity[testStarted name='testIncomplete' locationHint='php_qn:///app/tests/CalcTest.php::\Tests\CalcTest::testIncomplete' flowId='42']
+##teamcity[testIgnored name='testIncomplete' message='todo' details='/app/tests/CalcTest.php:44|n' duration='0' flowId='42']
+##teamcity[testFinished name='testIncomplete' duration='0' flowId='42']
+##teamcity[testStarted name='testRisky' locationHint='php_qn:///app/tests/CalcTest.php::\Tests\CalcTest::testRisky' flowId='42']
+##teamcity[testFailed name='testRisky' message='This test did not perform any assertions' details='' duration='0' flowId='42']
+hello output##teamcity[testFinished name='testRisky' duration='0' flowId='42']
+##teamcity[testSuiteFinished name='Tests\CalcTest' flowId='42']
+Time: 00:00.009, Memory: X
+
+There was 1 error:
+
+1) Tests\CalcTest::testError
+RuntimeException: boom
+
+/app/tests/CalcTest.php:39
+
+--
+
+There were 2 failures:
+
+1) Tests\CalcTest::testFail
+Failed asserting that two strings are identical.
+--- Expected
++++ Actual
+@@ @@
+ 'foo
+-bar'
++baz'
+
+/app/tests/CalcTest.php:17
+
+2) Tests\CalcTest::testPairs@diff with data (1, 2)
+Failed asserting that 2 is identical to 1.
+
+/app/tests/CalcTest.php:29
+
+--
+
+There was 1 risky test:
+
+1) Tests\CalcTest::testRisky
+This test did not perform any assertions
+
+/app/tests/CalcTest.php:46
+
+ERRORS!
+Tests: 9, Assertions: 5, Errors: 1, Failures: 2, Skipped: 1, Incomplete: 1, Risky: 1.

@@ -169,6 +169,14 @@ var appDefs = []Def{
 	{ID: "run.runFile", Title: "Run Current File", Context: CtxGlobal, Mac: []string{"Ctrl+Shift+R"}, PC: []string{"Ctrl+Shift+F10"}},
 	{ID: "run.rerun", Title: "Rerun", Context: CtxToolWindow, Mac: []string{"Cmd+R"}, PC: []string{"Ctrl+F5"}},
 	{ID: "view.run", Title: "Run Tool Window", Context: CtxGlobal, Mac: []string{"Cmd+4"}, PC: []string{"Alt+4"}},
+	// Debug runs and tests (AP15.3/15.4): Debug runs the selected
+	// configuration under the debugger, the context variants run the test
+	// at the caret (or the current file).
+	{ID: "run.debug", Title: "Debug", Context: CtxGlobal, Mac: []string{"Ctrl+D"}, PC: []string{"Shift+F9"}},
+	{ID: "run.debugFile", Title: "Debug Context Configuration", Context: CtxGlobal, Mac: []string{"Ctrl+Shift+D"}, PC: []string{"Ctrl+Shift+F9"}},
+	{ID: "navigate.gotoTest", Title: "Go to Test", Context: CtxEditor, Mac: []string{"Cmd+Shift+T"}, PC: []string{"Ctrl+Shift+T"}},
+	{ID: "test.rerunFailed", Title: "Rerun Failed Tests", Context: CtxGlobal},
+	{ID: "view.tests", Title: "Test Results Tool Window", Context: CtxGlobal},
 }
 
 // editorTitles are the titles of the editor widget actions.

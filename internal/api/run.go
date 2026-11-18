@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +38,9 @@ type RunStartParams struct {
 	Spec *run.Spec `json:"spec,omitempty"`
 	// Interpreter overrides the interpreter of File and Spec runs.
 	Interpreter string `json:"interpreter,omitempty"`
+	// Debug runs under the debugger: the listener is started (hook
+	// debug.listener, D311) and the Xdebug trigger is set.
+	Debug bool `json:"debug,omitempty"`
 }
 
 // RunIDParams address a run.
@@ -343,6 +348,11 @@ func (a *App) runStart(ctx context.Context, p RunStartParams) (run.Info, error) 
 	if err := a.guardRun(ctx, spec, ""); err != nil {
 		return run.Info{}, err
 	}
+	if p.Debug || spec.Debug {
+		if spec, err = a.debugSpec(ctx, spec); err != nil {
+			return run.Info{}, err
+		}
+	}
 	root := a.ProjectRoot()
 	info, err := a.runs.Start(ctx, spec, a.launcher(spec), run.StartOptions{Project: root, LinkDirs: []string{root}})
 	if err != nil {
@@ -350,6 +360,39 @@ func (a *App) runStart(ctx context.Context, p RunStartParams) (run.Info, error) 
 	}
 	a.log.Info("run started", "id", info.ID, "command", info.Display, "where", info.Where)
 	return info, nil
+}
+
+// debugListener makes the debugger listen (hook debug.listener) and
+// returns its port (0 if unknown).
+func (a *App) debugListener(ctx context.Context) (int, error) {
+	q, err := HookDebugListener.Apply(ctx, a.hooks, DebugListenerQuery{})
+	if err != nil {
+		return 0, Errorf(CodeFailed, "debugger: %w", err)
+	}
+	if q.Err != "" {
+		return 0, Errorf(CodeUnavailable, "debugger: %s", q.Err)
+	}
+	if q.Addr == "" {
+		return 0, Errorf(CodeModuleDisabled, "debugging needs a debugger plugin (debug-xdebug is disabled)")
+	}
+	_, port, _ := net.SplitHostPort(q.Addr)
+	n, _ := strconv.Atoi(port)
+	return n, nil
+}
+
+// debugSpec starts the listener and returns spec with the Xdebug trigger
+// (environment, and php options for PHP specs).
+func (a *App) debugSpec(ctx context.Context, spec run.Spec) (run.Spec, error) {
+	port, err := a.debugListener(ctx)
+	if err != nil {
+		return spec, err
+	}
+	spec.Debug = true
+	spec.Env = append(slices.Clone(spec.Env), run.DebugEnv()...)
+	if spec.PHP {
+		spec.Args = append(run.DebugPHPArgs(port), spec.Args...)
+	}
+	return spec, nil
 }
 
 // startError keeps API errors and wraps others.
@@ -388,6 +431,11 @@ func (a *App) runRerun(ctx context.Context, p RunIDParams) (run.Info, error) {
 	}
 	if err := a.guardRun(ctx, old.Spec, p.RunID); err != nil {
 		return run.Info{}, err
+	}
+	if old.Spec.Debug {
+		if _, err := a.debugListener(ctx); err != nil {
+			return run.Info{}, err
+		}
 	}
 	info, err := a.runs.Rerun(ctx, p.RunID)
 	if err != nil {

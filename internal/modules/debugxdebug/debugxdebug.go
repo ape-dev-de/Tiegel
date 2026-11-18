@@ -28,6 +28,7 @@ import (
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/bus"
+	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/dbgp"
@@ -129,6 +130,19 @@ func (m *Module) Start(ctx module.Context) error {
 	if err := p.Err(); err != nil {
 		return err
 	}
+	// run.start with debug (e.g. a debugged test run) asks for a listener.
+	ctx.OnStop(api.HookDebugListener.On(ctx.Hooks(), 0, func(c context.Context, q api.DebugListenerQuery) (api.DebugListenerQuery, error) {
+		if q.Addr != "" {
+			return q, nil
+		}
+		res, err := m.debugListen(c, DebugListenParams{})
+		if err != nil {
+			q.Err = err.Error()
+			return q, nil
+		}
+		q.Addr, q.Err = res.Addr, ""
+		return q, nil
+	}, hooks.WithOwner(ID)))
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicMappingsChanged, m.onMappingsChanged))
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicProjectOpened, func(bus.Event) {
 		app.Bus().Publish(api.TopicDebugBreakpoints, m.load())

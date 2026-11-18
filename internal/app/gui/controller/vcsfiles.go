@@ -50,6 +50,17 @@ type DiffSpec struct {
 	IgnoreWhitespace bool
 	// Title overrides the tab title.
 	Title string
+	// Texts compares two texts that are no files (expected/actual of a
+	// failed test) via diff.texts; Path names the related file.
+	Texts *DiffTexts
+}
+
+// DiffTexts are the sides of a text comparison.
+type DiffTexts struct {
+	Left, Right           string
+	LeftLabel, RightLabel string
+	// Key distinguishes comparisons of the same file (e.g. the test ID).
+	Key string
 }
 
 func (s DiffSpec) target() string {
@@ -62,6 +73,9 @@ func (s DiffSpec) target() string {
 // key identifies the tab of a comparison (ignoring the white space
 // option and the title).
 func (s DiffSpec) key() string {
+	if s.Texts != nil {
+		return "texts:" + s.Path + ":" + s.Texts.Key
+	}
 	if s.External {
 		return "disk:" + s.Path
 	}
@@ -173,7 +187,7 @@ func (w *Workspace) loadDiff(dt *DiffTab) {
 	dt.seq++
 	seq := dt.seq
 	doc := c.documentFor(dt.File)
-	needDoc := spec.External || spec.target() == VersionWorking
+	needDoc := spec.Texts == nil && (spec.External || spec.target() == VersionWorking)
 	own := dt.ownGen
 	c.Go(func(ctx context.Context) func() {
 		var err error
@@ -191,7 +205,11 @@ func (w *Workspace) loadDiff(dt *DiffTab) {
 		}
 		var raw json.RawMessage
 		var disk string
-		if spec.External {
+		if spec.Texts != nil {
+			tx := spec.Texts
+			err = c.call(ctx, "diff.texts", api.DiffTextsParams{Left: tx.Left, Right: tx.Right, LeftLabel: tx.LeftLabel,
+				RightLabel: tx.RightLabel, IgnoreWhitespace: spec.IgnoreWhitespace}, &raw)
+		} else if spec.External {
 			var rd struct {
 				Content string `json:"content"`
 			}

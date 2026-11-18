@@ -13,6 +13,7 @@
 //	qa-pint, qa-php-cs-fixer, qa-phpcs, qa-phpstan, qa-psalm, qa-phpmd
 //	              quality tool plugins (contribute to the kernel's qa.*
 //	              service via hooks; AP17.1)
+//	phpunit       test discovery, runs and results (test.*; D310)
 //
 // The modules never import each other; they share data through the bus and
 // the hook points declared in internal/api/contract.go. None of them imports
@@ -30,6 +31,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/modules/phpfeatures"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpindex"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpruntime"
+	"github.com/ape-dev-de/tiegel/internal/modules/phpunit"
 	"github.com/ape-dev-de/tiegel/internal/modules/qa"
 	"github.com/ape-dev-de/tiegel/internal/modules/syntaxmod"
 )
@@ -43,6 +45,7 @@ type Options struct {
 	Debug    debugxdebug.Options
 	Index    phpindex.Options
 	Docker   docker.Options
+	PHPUnit  phpunit.Options
 }
 
 // All returns new instances of all compiled-in modules in dependency order.
@@ -61,6 +64,7 @@ func All(opts Options) []module.Module {
 		syntaxmod.New(),
 		phpindex.New(opts.Index),
 		docker.New(opts.Docker),
+		phpunit.New(opts.PHPUnit),
 	)
 	for _, p := range qa.All() {
 		mods = append(mods, p)

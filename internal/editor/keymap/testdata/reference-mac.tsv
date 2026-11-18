@@ -66,9 +66,10 @@ Join Lines	Ctrl+Shift+J	edit.joinLines
 Toggle Case	Cmd+Shift+U	edit.toggleCase
 Paste from History	Cmd+Shift+V	edit.pasteFromHistory
 Complete Current Statement	Cmd+Shift+Enter	later:M17
-Go to Test / Create Test	Cmd+Shift+T	later:M15
+Go to Test / Create Test	Cmd+Shift+T	navigate.gotoTest
 Run	Ctrl+R	run.run
-Debug	Ctrl+D	later:M15
+Debug	Ctrl+D	run.debug
+Debug Context Configuration	Ctrl+Shift+D	run.debugFile
 Run Context Configuration	Ctrl+Shift+R	run.runFile
 Rerun (Run window)	Cmd+R	run.rerun
 Generate	Cmd+N	later:M17

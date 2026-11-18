@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -302,4 +303,32 @@ func TestGuardAndModuleDisable(t *testing.T) {
 	if err := (&Module{}).Start(nil); err == nil {
 		t.Fatal("start without app context")
 	}
+}
+
+// run.start with debug asks for a listener through the debug.listener
+// hook (D311); a running listener is reused.
+func TestDebugListenerHook(t *testing.T) {
+	a := newApp(t, "")
+	modtest.Project(t, a, map[string]string{"index.php": "<?php\n"})
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
+	_ = l.Close()
+	modtest.Call(t, a, "settings.set", api.SettingsSetParams{Key: SettingPort, Scope: "project", Value: []byte(port)}, nil)
+	q, err := api.HookDebugListener.Apply(context.Background(), a.Hooks(), api.DebugListenerQuery{})
+	if err != nil || q.Err != "" || !strings.HasSuffix(q.Addr, ":"+port) {
+		t.Fatalf("listener %+v %v", q, err)
+	}
+	var s DebugListenResult
+	modtest.Call(t, a, "debug.listen", DebugListenParams{}, &s)
+	if !s.Listening || s.Addr != q.Addr {
+		t.Fatalf("listen %+v", s)
+	}
+	// An answer of another provider is kept.
+	if q2, _ := api.HookDebugListener.Apply(context.Background(), a.Hooks(), api.DebugListenerQuery{Addr: "x:1"}); q2.Addr != "x:1" {
+		t.Fatal(q2)
+	}
+	modtest.Call(t, a, "debug.stop", nil, nil)
 }
