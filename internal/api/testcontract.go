@@ -112,6 +112,9 @@ type TestStatus struct {
 	// install recipe adds the runner (install.plan / install.run).
 	Hint    string `json:"hint,omitempty"`
 	Install string `json:"install,omitempty"`
+	// ConfigType is the run configuration type of the plugin (for
+	// "Modify Run Configuration" from a test).
+	ConfigType string `json:"configType,omitempty"`
 }
 
 // TestDiscoverParams are the params of "test.discover".

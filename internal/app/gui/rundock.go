@@ -141,7 +141,16 @@ func (d *runDock) runSelected() {
 	d.runs().RunSelected(file)
 }
 
+// runFile is Run Context Configuration (Ctrl+Shift+R): the test at the
+// caret if there is one (AP15.3), else the current PHP file.
 func (d *runDock) runFile() {
+	if t := d.v.tstd; t != nil {
+		file, line := t.caret()
+		if item, ok := d.v.ctl.Tests.TestAt(file, line); ok {
+			d.v.ctl.Tests.RunTests(controller.ScopeOf(item), false)
+			return
+		}
+	}
 	file := d.currentFile()
 	if !isPHPFile(file) {
 		d.v.ctl.Status.Notice = "Run Current File: the active file is not a PHP file"

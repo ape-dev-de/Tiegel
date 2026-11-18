@@ -49,6 +49,9 @@ type Runs struct {
 	// shows the tool window); the view clears it.
 	Started bool
 	project string
+	// cfgSeq numbers LoadConfigs requests; only the latest answer is
+	// applied (an older list may carry an outdated selection).
+	cfgSeq uint64
 }
 
 func newRuns(c *Controller) *Runs { return &Runs{c: c} }
@@ -249,12 +252,17 @@ func (r *Runs) ProjectChanged() {
 
 // LoadConfigs reads the configurations and their types.
 func (r *Runs) LoadConfigs() {
+	r.cfgSeq++
+	seq := r.cfgSeq
 	r.c.Go(func(ctx context.Context) func() {
 		var list []api.RunConfigInfo
 		err := r.c.call(ctx, "run.configs.list", nil, &list)
 		var types []api.RunConfigTypeInfo
 		terr := r.c.call(ctx, "run.configTypes", nil, &types)
 		return func() {
+			if seq != r.cfgSeq {
+				return
+			}
 			if err == nil {
 				r.Configs = list
 			}
@@ -278,6 +286,10 @@ func (r *Runs) start(p api.RunStartParams) {
 			}
 			r.upsert(info)
 			r.Started = true
+			if p.Config != "" {
+				// run.start selected it; replace lists loaded before.
+				r.LoadConfigs()
+			}
 		}
 	})
 }
@@ -303,6 +315,29 @@ func (r *Runs) RunConfig(id string) {
 		r.Configs[i].Selected = r.Configs[i].ID == id
 	}
 	r.Version++
+}
+
+// DebugSelected starts the selected configuration under the debugger
+// (Ctrl+D); without one the PHP file file is debugged (if given).
+func (r *Runs) DebugSelected(file string) {
+	if cfg := r.SelectedConfig(); cfg != nil {
+		r.start(api.RunStartParams{Config: cfg.ID, Debug: true})
+		return
+	}
+	if file != "" {
+		r.DebugFile(file)
+		return
+	}
+	r.c.Status.Notice = "No run configuration – add one in the Run tool window or debug the current file"
+}
+
+// DebugFile runs file as PHP script under the debugger.
+func (r *Runs) DebugFile(file string) {
+	if file == "" {
+		r.c.Status.Notice = "Debug: no file"
+		return
+	}
+	r.start(api.RunStartParams{File: file, Debug: true})
 }
 
 // RunFile runs file as PHP script with the project interpreter.

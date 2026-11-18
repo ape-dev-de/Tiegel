@@ -295,3 +295,34 @@ func scopeOfArgs(args []string, root string) api.TestScope {
 	}
 	return sc
 }
+
+// configFor returns an unsaved run configuration of the plugin's type for
+// a scope ("Modify Run Configuration…" at a test in the gutter).
+func (m *Module) configFor(_ context.Context, sc api.TestScope) (run.Config, error) {
+	root, err := m.root()
+	if err != nil {
+		return run.Config{}, err
+	}
+	vals := map[string]any{fieldScope: scopeAll}
+	path := ""
+	if sc.Path != "" {
+		path = rel(root, abs(root, sc.Path))
+	}
+	switch {
+	case sc.Method != "":
+		vals[fieldScope], vals[fieldPath], vals[fieldClass], vals[fieldMethod] = scopeMethod, path, sc.Class, sc.Method
+		if sc.DataSet != "" {
+			vals[fieldDataSet] = sc.DataSet
+		}
+	case sc.Class != "":
+		vals[fieldScope], vals[fieldPath], vals[fieldClass] = scopeClass, path, sc.Class
+	case sc.Path != "":
+		vals[fieldScope], vals[fieldPath] = scopePath, path
+	case sc.Suite != "":
+		vals[fieldScope], vals[fieldSuite] = scopeSuite, sc.Suite
+	}
+	if sc.Filter != "" {
+		vals[fieldFilter] = sc.Filter
+	}
+	return run.Config{Name: m.runName(sc), Type: ID, Values: vals}, nil
+}

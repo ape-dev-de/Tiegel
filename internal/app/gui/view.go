@@ -144,6 +144,7 @@ type View struct {
 	lspd *lspDock
 	svcd *servicesDock
 	rund *runDock
+	tstd *testDock
 	// work is the file side: tree menu, external changes, diff and
 	// history tabs, remote git (filesdock.go and friends).
 	work *workDock
@@ -204,6 +205,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v.lspd = installLSP(v)
 	v.svcd = installServices(v)
 	v.rund = installRun(v)
+	v.tstd = installTests(v)
 	return v
 }
 

@@ -220,6 +220,8 @@ type Controller struct {
 	Services *Services
 	// Run is the run tool window state (run.go).
 	Run *Runs
+	// Tests is the test state: gutter tests, results (tests.go).
+	Tests *Tests
 }
 
 // New returns a controller for be. Call Close when done.
@@ -237,8 +239,9 @@ func New(be Backend) *Controller {
 	c.Work = newWorkspace(c)
 	c.Services = newServices(c)
 	c.Run = newRuns(c)
+	c.Tests = newTests(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
-		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*"}, func(e api.Event) {
+		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*", "test.*"}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
 	})
 	if err != nil {
@@ -631,6 +634,17 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 	if strings.HasPrefix(topic, "run.") {
 		c.Run.handleEvent(topic, payload)
 		return
+	}
+	if strings.HasPrefix(topic, "test.") || topic == "install.done" {
+		c.Tests.handleEvent(topic, payload)
+	}
+	if topic == "file.saved" {
+		var ev struct {
+			File string `json:"file"`
+		}
+		if json.Unmarshal(payload, &ev) == nil && ev.File != "" {
+			c.Tests.FileChanged(ev.File)
+		}
 	}
 	switch topic {
 	case "git.changed", "git.committed", api.TopicDocEdited:

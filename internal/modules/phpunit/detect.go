@@ -101,7 +101,7 @@ func (m *Module) status(_ context.Context, _ struct{}) (api.TestStatus, error) {
 		return api.TestStatus{}, err
 	}
 	p := m.detect(root)
-	st := api.TestStatus{Framework: Framework, Available: p.Executable != "", Version: p.Version}
+	st := api.TestStatus{Framework: Framework, Available: p.Executable != "", Version: p.Version, ConfigType: ID}
 	if p.Executable != "" {
 		st.Executable = rel(root, p.Executable)
 	}

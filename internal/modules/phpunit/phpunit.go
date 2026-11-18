@@ -138,6 +138,7 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "test.results", "Result tree of a test run (default: the latest)", m.results)
 	api.Add(p, "test.runs", "Test runs of this session with counts (newest last)", m.runs)
 	api.Add(p, "test.lastStatus", "Last result per test ID (class, method, data set)", m.lastStatus)
+	api.Add(p, "test.configFor", "An unsaved run configuration of the test type for a scope (to edit and save with run.configs.save)", m.configFor)
 	api.Add(p, "test.goto", "Go to Test: the tests of a class or the class under test (PSR-4 of composer.json, convention Tests\\…Test)", m.gotoTest)
 	api.Add(p, "test.create", "Create Test: write a test skeleton for a class (dryRun: only the proposal)", m.createTest)
 	if err := p.Err(); err != nil {
