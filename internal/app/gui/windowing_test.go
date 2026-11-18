@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -34,14 +35,17 @@ func (e *env) chooseLabel(s string) {
 		e.frame()
 		return
 	}
-	for i, it := range e.v.chooser.Items {
-		if strings.Contains(it.Label, s) {
-			e.v.choose(palette.ChooseEvent{Index: i, Query: e.v.chooser.Query()})
-			e.frame()
-			return
-		}
+	// An exact label wins: a substring may also occur in a random temp
+	// directory name (e.g. "001" in "…2560200148").
+	idx := slices.IndexFunc(e.v.chooser.Items, func(it palette.Item) bool { return it.Label == s })
+	if idx < 0 {
+		idx = slices.IndexFunc(e.v.chooser.Items, func(it palette.Item) bool { return strings.Contains(it.Label, s) })
 	}
-	e.t.Fatalf("no chooser item %q in %+v", s, e.v.chooser.Items)
+	if idx < 0 {
+		e.t.Fatalf("no chooser item %q in %+v", s, e.v.chooser.Items)
+	}
+	e.v.choose(palette.ChooseEvent{Index: idx, Query: e.v.chooser.Query()})
+	e.frame()
 }
 
 // Tool window shortcuts, stripes, move, maximize and Escape handling.

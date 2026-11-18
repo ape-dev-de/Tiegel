@@ -51,7 +51,12 @@ func TestTerminalDock(t *testing.T) {
 		t.Fatalf("session %+v", cur.Info)
 	}
 	// The view sized the session to the panel.
-	e.waitFor("resize", func() bool { return e.ctl.Terminals.Current().Info.Cols != terminal.DefaultCols })
+	// (Either dimension: with some fonts the panel is exactly the default
+	// width.)
+	e.waitFor("resize", func() bool {
+		i := e.ctl.Terminals.Current().Info
+		return i.Cols != terminal.DefaultCols || i.Rows != terminal.DefaultRows
+	})
 	e.waitFor("focus", func() bool { return e.v.termd.focused() })
 
 	// Typing goes to the shell, also Ctrl+R (not Run).
