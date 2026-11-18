@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -22,6 +23,13 @@ func TestToolCommandWindows(t *testing.T) {
 		"C:/proj/vendor/bin/sh-tool":     false, // a shell proxy, not PHP
 		"C:/proj/vendor/bin/sh-tool.bat": false,
 	}
+	// Paths compare separator-neutrally: filepath.Join yields "\" on
+	// Windows and "/" elsewhere.
+	norm := func(p string) string { return strings.ReplaceAll(p, `\`, "/") }
+	known := map[string]bool{}
+	for k, v := range files {
+		known[norm(k)] = v
+	}
 	fsys := hostFS{
 		look: func(name string) (string, error) {
 			switch name {
@@ -34,8 +42,8 @@ func TestToolCommandWindows(t *testing.T) {
 			}
 			return "", errors.New("not found")
 		},
-		isFile: func(p string) bool { _, ok := files[p]; return ok },
-		isPHP:  func(p string) bool { return files[p] },
+		isFile: func(p string) bool { _, ok := known[norm(p)]; return ok },
+		isPHP:  func(p string) bool { return known[norm(p)] },
 	}
 	evil := "src/a&calc&.php"
 	cases := []struct {
@@ -66,7 +74,14 @@ func TestToolCommandWindows(t *testing.T) {
 			}
 			continue
 		}
-		if err != nil || got.Program != c.want.Program || got.PHP != c.want.PHP || !slices.Equal(got.Args, c.want.Args) {
+		normAll := func(l []string) []string {
+			out := make([]string, len(l))
+			for i, a := range l {
+				out[i] = norm(a)
+			}
+			return out
+		}
+		if err != nil || norm(got.Program) != norm(c.want.Program) || got.PHP != c.want.PHP || !slices.Equal(normAll(got.Args), normAll(c.want.Args)) {
 			t.Errorf("%s: %+v %v, want %+v", c.name, got, err, c.want)
 		}
 	}
@@ -133,7 +148,7 @@ func TestFormatCopy(t *testing.T) {
 	if b, _ := os.ReadFile(c.path); string(b) != "new" {
 		t.Fatalf("content %q", b)
 	}
-	if st, _ := os.Stat(c.path); st.Mode().Perm() != 0o600 {
+	if st, _ := os.Stat(c.path); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", st.Mode())
 	}
 	c.remove()
