@@ -49,6 +49,7 @@ func featureCapabilities() map[string]any {
 		"documentSymbolProvider":          true,
 		"workspaceSymbolProvider":         true,
 		"executeCommandProvider":          map[string]any{"commands": []string{CommandOrganize, CommandFail}},
+		"inlayHintProvider":               true,
 	}
 }
 
@@ -65,6 +66,7 @@ func (s *Server) featureHandlers() map[string]handler {
 		protocol.MethodRename:            s.rename,
 		protocol.MethodDocumentSymbol:    s.documentSymbol,
 		protocol.MethodWorkspaceSymbol:   s.workspaceSymbol,
+		protocol.MethodInlayHint:         s.inlayHint,
 	}
 }
 
@@ -437,6 +439,44 @@ func (s *Server) workspaceSymbol(_ context.Context, req *jsonrpc2.Request) (any,
 	for _, u := range s.sortedDocs() {
 		t, _ := s.doc(u)
 		walk(u, "", symbols(t))
+	}
+	return out, nil
+}
+
+// inlayHint answers a parameter hint "arg:" after every "call(" and a type
+// hint ": int" (label parts) after every "$typed" in the range.
+func (s *Server) inlayHint(_ context.Context, req *jsonrpc2.Request) (any, error) {
+	var p protocol.InlayHintParams
+	if err := req.UnmarshalParams(&p); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	text := s.state.Docs[p.TextDocument.URI]
+	s.mu.Unlock()
+	out := []protocol.InlayHint{}
+	for i, line := range strings.Split(text, "\n") {
+		if i < p.Range.Start.Line || i > p.Range.End.Line {
+			continue
+		}
+		for _, m := range []struct {
+			needle string
+			after  bool
+			hint   protocol.InlayHint
+		}{
+			{"call(", true, protocol.InlayHint{Label: json.RawMessage(`"arg:"`), Kind: protocol.InlayHintParameter, PaddingRight: true}},
+			{"$typed", true, protocol.InlayHint{Label: json.RawMessage(`[{"value":": "},{"value":"int"}]`), Kind: protocol.InlayHintType}},
+		} {
+			for off := 0; ; {
+				j := strings.Index(line[off:], m.needle)
+				if j < 0 {
+					break
+				}
+				off += j + len(m.needle)
+				h := m.hint
+				h.Position = protocol.Position{Line: i, Character: protocol.ByteToUTF16(line, off)}
+				out = append(out, h)
+			}
+		}
 	}
 	return out, nil
 }

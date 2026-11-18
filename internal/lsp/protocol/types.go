@@ -658,6 +658,7 @@ type ServerCapabilities struct {
 	DocumentSymbolProvider          *Provider                    `json:"documentSymbolProvider,omitempty"`
 	WorkspaceSymbolProvider         *Provider                    `json:"workspaceSymbolProvider,omitempty"`
 	ExecuteCommandProvider          *ExecuteCommandOptions       `json:"executeCommandProvider,omitempty"`
+	InlayHintProvider               *Provider                    `json:"inlayHintProvider,omitempty"`
 	Workspace                       *WorkspaceServerCapabilities `json:"workspace,omitempty"`
 }
 
@@ -762,6 +763,7 @@ type TextDocumentClientCapabilities struct {
 	RangeFormatting    *EmptyClientCapabilities              `json:"rangeFormatting,omitempty"`
 	Rename             *RenameClientCapabilities             `json:"rename,omitempty"`
 	DocumentSymbol     *DocumentSymbolClientCapabilities     `json:"documentSymbol,omitempty"`
+	InlayHint          *EmptyClientCapabilities              `json:"inlayHint,omitempty"`
 }
 
 // SyncClientCapabilities are document sync capabilities.

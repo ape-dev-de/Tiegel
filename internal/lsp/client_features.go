@@ -191,3 +191,19 @@ func (c *Client) WorkspaceSymbols(ctx context.Context, query string) ([]protocol
 	}
 	return syms, nil
 }
+
+// CanInlayHints reports whether the server provides inlay hints.
+func (c *Client) CanInlayHints() bool { return c.caps.InlayHintProvider.IsEnabled() }
+
+// InlayHints requests the inlay hints (parameter names, inferred types)
+// of a range.
+func (c *Client) InlayHints(ctx context.Context, uri protocol.DocumentURI, r protocol.Range) ([]protocol.InlayHint, error) {
+	if !c.CanInlayHints() {
+		return nil, ErrNotSupported
+	}
+	var out []protocol.InlayHint
+	if err := c.call(ctx, protocol.MethodInlayHint, protocol.InlayHintParams{TextDocument: protocol.TextDocumentIdentifier{URI: uri}, Range: r}, &out); err != nil {
+		return nil, fmt.Errorf("lsp: inlayHint: %w", err)
+	}
+	return out, nil
+}
