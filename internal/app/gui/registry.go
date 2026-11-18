@@ -76,6 +76,9 @@ type ToolWindow struct {
 	// Share is the minimum share of the editor column a bottom panel
 	// takes when this window opens (0: keep the current size).
 	Share float32
+	// BeforeToggle (optional) runs before the toggle action; returning
+	// true handles it (e.g. focusing an open but unfocused window).
+	BeforeToggle func() bool
 }
 
 // toggleAction returns the ID of the window's toggle action.
@@ -326,9 +329,14 @@ func (r *Registry) addToggle(t ToolWindow) {
 	if t.Mac == "" && t.PC == "" && t.ActionID == "" {
 		return
 	}
-	id := t.ID
+	id, before := t.ID, t.BeforeToggle
 	r.AddAction(Action{ID: t.toggleAction(), Title: t.Title, Mac: t.Mac, PC: t.PC, Menu: "View/Tool Windows",
-		Run: func(v *View) { v.ToggleTool(id) }})
+		Run: func(v *View) {
+			if before != nil && before() {
+				return
+			}
+			v.ToggleTool(id)
+		}})
 }
 
 // RemoveToolWindow removes a tool window (e.g. when its module is

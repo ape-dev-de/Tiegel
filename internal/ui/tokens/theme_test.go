@@ -173,3 +173,26 @@ func TestColorHelpers(t *testing.T) {
 		t.Error("Mode.String")
 	}
 }
+
+func TestTerminalColors(t *testing.T) {
+	for _, th := range []*Theme{Dark(nil), Light(nil)} {
+		if c := th.TerminalColor(1); c != th.Terminal.ANSI[1] {
+			t.Errorf("%v: ANSI 1 = %v", th.Mode, c)
+		}
+		if c := th.TerminalColor(16); c != (color.NRGBA{A: 0xff}) {
+			t.Errorf("cube start %v", c)
+		}
+		if c := th.TerminalColor(231); c != (color.NRGBA{R: 255, G: 255, B: 255, A: 0xff}) {
+			t.Errorf("cube end %v", c)
+		}
+		if c := th.TerminalColor(232); c != (color.NRGBA{R: 8, G: 8, B: 8, A: 0xff}) {
+			t.Errorf("gray start %v", c)
+		}
+		if c := th.TerminalColor(255); c.R != 238 {
+			t.Errorf("gray end %v", c)
+		}
+		if r := ContrastRatio(th.Terminal.Foreground, th.Terminal.Background); r < 7 {
+			t.Errorf("%v: terminal text contrast %.1f", th.Mode, r)
+		}
+	}
+}

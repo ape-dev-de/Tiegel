@@ -220,6 +220,8 @@ type Controller struct {
 	Services *Services
 	// Run is the run tool window state (run.go).
 	Run *Runs
+	// Terminals is the terminal tool window state (terminal.go).
+	Terminals *Terminals
 }
 
 // New returns a controller for be. Call Close when done.
@@ -237,8 +239,9 @@ func New(be Backend) *Controller {
 	c.Work = newWorkspace(c)
 	c.Services = newServices(c)
 	c.Run = newRuns(c)
+	c.Terminals = newTerminals(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
-		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*"}, func(e api.Event) {
+		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*", "terminal.*"}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
 	})
 	if err != nil {
@@ -630,6 +633,12 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 	}
 	if strings.HasPrefix(topic, "run.") {
 		c.Run.handleEvent(topic, payload)
+		return
+	}
+	if strings.HasPrefix(topic, "terminal.") || topic == "settings.changed" {
+		c.Terminals.handleEvent(topic, payload)
+	}
+	if strings.HasPrefix(topic, "terminal.") {
 		return
 	}
 	switch topic {

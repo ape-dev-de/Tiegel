@@ -888,7 +888,38 @@ func (m *Module) launch(argv, env []string) error {
 	return startDetached(argv, env)
 }
 
-func (m *Module) shell(ctx context.Context, p ShellParams) (LaunchResult, error) {
+// Kinds of embedded terminal sessions this module opens (terminal.open
+// with kind and target, answered through api.HookTerminalLaunch).
+const (
+	TerminalKindService   = "docker.service"
+	TerminalKindContainer = "docker.container"
+)
+
+// terminalLaunch answers the terminal.launch filter for the docker
+// kinds: `docker compose exec SERVICE SHELL` or `docker exec -it
+// CONTAINER SHELL`, run by the embedded terminal (a real TTY).
+func (m *Module) terminalLaunch(ctx context.Context, q api.TerminalLaunch) api.TerminalLaunch {
+	p := ShellParams{Shell: q.Shell}
+	switch q.Kind {
+	case TerminalKindService:
+		p.Service = q.Target
+	case TerminalKindContainer:
+		p.Container = q.Target
+	default:
+		return q
+	}
+	argv, c, err := m.shellCommand(ctx, p)
+	if err != nil {
+		q.Err = err.Error()
+		return q
+	}
+	q.Program, q.Args, q.Env, q.Name = argv[0], argv[1:], c.Env, q.Target
+	return q
+}
+
+// shellCommand returns the docker command line of a shell in a service
+// or container and the client it runs with.
+func (m *Module) shellCommand(ctx context.Context, p ShellParams) ([]string, dk.Client, error) {
 	var (
 		argv []string
 		c    dk.Client
@@ -896,11 +927,11 @@ func (m *Module) shell(ctx context.Context, p ShellParams) (LaunchResult, error)
 	switch {
 	case p.Container != "":
 		if err := checkContainer(p.Container); err != nil {
-			return LaunchResult{}, err
+			return nil, c, err
 		}
 		cl, _, err := m.client(ctx, "")
 		if err != nil {
-			return LaunchResult{}, m.unavailable(err)
+			return nil, c, m.unavailable(err)
 		}
 		c = cl
 		sh := p.Shell
@@ -908,20 +939,28 @@ func (m *Module) shell(ctx context.Context, p ShellParams) (LaunchResult, error)
 			sh = "sh"
 		}
 		if err := compose.CheckShell(sh); err != nil {
-			return LaunchResult{}, api.Errorf(api.CodeInvalidParams, "%w", err)
+			return nil, c, api.Errorf(api.CodeInvalidParams, "%w", err)
 		}
 		argv = append([]string{c.Bin()}, c.Args("exec", "-it", p.Container, sh)...)
 	case p.Service != "":
 		st, err := m.stack(ctx)
 		if err != nil {
-			return LaunchResult{}, err
+			return nil, c, err
 		}
 		c = st.Client
 		if argv, err = st.ShellArgs(p.Service, p.Shell); err != nil {
-			return LaunchResult{}, api.Errorf(api.CodeInvalidParams, "%w", err)
+			return nil, c, api.Errorf(api.CodeInvalidParams, "%w", err)
 		}
 	default:
-		return LaunchResult{}, api.Errorf(api.CodeInvalidParams, "service or container is required")
+		return nil, c, api.Errorf(api.CodeInvalidParams, "service or container is required")
+	}
+	return argv, c, nil
+}
+
+func (m *Module) shell(ctx context.Context, p ShellParams) (LaunchResult, error) {
+	argv, c, err := m.shellCommand(ctx, p)
+	if err != nil {
+		return LaunchResult{}, err
 	}
 	term := ""
 	if g := m.globalStore(); g != nil {

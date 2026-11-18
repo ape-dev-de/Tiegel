@@ -453,3 +453,36 @@ func TestStartDetached(t *testing.T) {
 		t.Fatal("lookPath")
 	}
 }
+
+// TestTerminalLaunch: the embedded terminal gets the compose exec and
+// docker exec command lines through the terminal.launch hook.
+func TestTerminalLaunch(t *testing.T) {
+	t.Parallel()
+	f := dockertest.New(t)
+	a, _ := servicesApp(t, f, map[string]string{"compose.yaml": shopCompose})
+	apply := func(q api.TerminalLaunch) api.TerminalLaunch {
+		t.Helper()
+		got, err := api.HookTerminalLaunch.Apply(context.Background(), a.Hooks(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	q := apply(api.TerminalLaunch{Kind: TerminalKindService, Target: "app"})
+	if q.Err != "" || q.Program != f.Binary || q.Name != "app" || strings.Join(q.Args[len(q.Args)-3:], " ") != "exec app sh" || len(q.Env) == 0 {
+		t.Fatalf("service launch %+v", q)
+	}
+	q = apply(api.TerminalLaunch{Kind: TerminalKindContainer, Target: "adminer", Shell: "bash"})
+	if q.Err != "" || strings.Join(q.Args[len(q.Args)-4:], " ") != "exec -it adminer bash" {
+		t.Fatalf("container launch %+v", q)
+	}
+	if q = apply(api.TerminalLaunch{Kind: TerminalKindService, Target: "a;b"}); q.Err == "" || q.Program != "" {
+		t.Fatalf("bad service %+v", q)
+	}
+	if q = apply(api.TerminalLaunch{Kind: "other", Target: "x"}); q.Program != "" || q.Err != "" {
+		t.Fatalf("foreign kind %+v", q)
+	}
+	if q = apply(api.TerminalLaunch{Kind: TerminalKindService, Target: "app", Program: "/bin/x"}); q.Program != "/bin/x" {
+		t.Fatalf("answered launch changed %+v", q)
+	}
+}

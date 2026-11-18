@@ -148,6 +148,12 @@ func (m *Module) Start(ctx module.Context) error {
 		}
 		return m.endpoint(c), nil
 	}, hooks.WithOwner(ID), hooks.WithTimeout(10*time.Second))
+	api.HookTerminalLaunch.On(ctx.Hooks(), 0, func(c context.Context, q api.TerminalLaunch) (api.TerminalLaunch, error) {
+		if q.Program != "" {
+			return q, nil
+		}
+		return m.terminalLaunch(c, q), nil
+	}, hooks.WithOwner(ID), hooks.WithTimeout(10*time.Second))
 
 	ctx.OnStop(settings.Changed.Subscribe(ctx.Bus(), func(ch settings.Change) {
 		if !strings.HasPrefix(ch.Key, "docker.") {

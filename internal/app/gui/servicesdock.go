@@ -35,6 +35,7 @@ const (
 	svcDown       = "down"
 	svcLogs       = "logs"
 	svcShell      = "shell"
+	svcTerminal   = "terminal"
 	svcStandalone = "standalone"
 )
 
@@ -251,7 +252,8 @@ func (d *servicesDock) toolbarItems() []molecules.ToolbarItem {
 		{ID: svcDown, Glyph: atoms.GlyphDelete, Label: "Down: stop and remove the project's containers and networks…", Disabled: !canAct || container != "" || !hasProject},
 		{Separator: true},
 		{ID: svcLogs, Glyph: atoms.GlyphList, Label: "Show Logs (" + what + ")", Disabled: !hasProject && container == ""},
-		{ID: svcShell, Glyph: atoms.GlyphComputer, Label: "Open Shell in External Terminal (the embedded terminal follows with M15.5)", Disabled: service == "" && container == ""},
+		{ID: svcTerminal, Glyph: atoms.GlyphComputer, Label: "Open Shell (" + what + ") in the Terminal", Disabled: service == "" && container == ""},
+		{ID: svcShell, Glyph: atoms.GlyphUpload, Label: "Open Shell in External Terminal", Disabled: service == "" && container == ""},
 		{Separator: true},
 		{ID: svcStandalone, Glyph: atoms.GlyphContainer, Label: "Show Other Containers", Active: s.Standalone},
 	}
@@ -276,6 +278,8 @@ func (d *servicesDock) run(id string) {
 			"Down", func() { s.Action(svcDown, "", "", true) })
 	case svcLogs:
 		s.ShowLogs(service, container)
+	case svcTerminal:
+		d.v.termd.openServiceShell(service, container)
 	case svcShell:
 		s.OpenShell(service, container)
 	case svcStandalone:

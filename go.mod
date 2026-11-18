@@ -45,4 +45,7 @@ require (
 	github.com/tree-sitter/tree-sitter-php v0.25.1
 )
 
-require github.com/mattn/go-pointer v0.0.1 // indirect
+require (
+	github.com/creack/pty v1.1.24 // indirect
+	github.com/mattn/go-pointer v0.0.1 // indirect
+)
