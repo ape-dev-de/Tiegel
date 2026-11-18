@@ -112,6 +112,7 @@ var appDefs = []Def{
 	{ID: "view.structure", Title: "Structure", Context: CtxGlobal, Mac: []string{"Cmd+7"}, PC: []string{"Alt+7"}},
 	{ID: "view.services", Title: "Services", Context: CtxGlobal, Mac: []string{"Cmd+8"}, PC: []string{"Alt+8"}},
 	{ID: "view.git", Title: "Git", Context: CtxGlobal, Mac: []string{"Cmd+9"}, PC: []string{"Alt+9"}},
+	{ID: "view.terminal", Title: "Terminal", Context: CtxGlobal, Mac: []string{"Alt+F12"}, PC: []string{"Alt+F12"}},
 	// Navigation.
 	{ID: "file.quickOpen", Title: "Go to File…", Context: CtxGlobal, Mac: []string{"Cmd+Shift+O"}, PC: []string{"Ctrl+Shift+N"}},
 	{ID: "file.recent", Title: "Recent Files…", Context: CtxGlobal, Mac: []string{"Cmd+E"}, PC: []string{"Ctrl+E"}},

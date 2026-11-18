@@ -124,6 +124,8 @@ type shortcuts struct {
 	focus   event.Tag
 	keys    *keymap.Keymap
 	filters []event.Filter
+	// keep (optional) limits the shortcuts to the chords it accepts.
+	keep func(keymap.Chord) bool
 }
 
 // ---- keymap scheme (M13) -------------------------------------------------------
@@ -283,6 +285,9 @@ func (s *shortcuts) build(r *Registry, scope ActionScope, focus event.Tag) {
 		for _, c := range r.chordsOf(a) {
 			if keymap.IsGesture(c) {
 				continue // pointer and gestures: View.Gesture
+			}
+			if s.keep != nil && !s.keep(c) {
+				continue
 			}
 			if _, taken := s.keys.Lookup(c); taken {
 				continue

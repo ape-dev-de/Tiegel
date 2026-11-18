@@ -39,9 +39,17 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 		h(v, gtx)
 	}
 	v.syncTools()
-	v.global.build(v.Registry, ScopeGlobal, nil)
 	if !v.keymapRecording() {
-		v.global.process(gtx, v)
+		if v.termd.focused() && v.ctl.Terminals.Settings.OverrideKeys {
+			// Keys like Ctrl+R belong to the shell; only the kept
+			// shortcuts reach the IDE.
+			v.termGlobal.keep = keepShortcut(v.goos == "darwin")
+			v.termGlobal.build(v.Registry, ScopeGlobal, nil)
+			v.termGlobal.process(gtx, v)
+		} else {
+			v.global.build(v.Registry, ScopeGlobal, nil)
+			v.global.process(gtx, v)
+		}
 	}
 	v.handleBench(gtx)
 	v.handleTree(gtx)

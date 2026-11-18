@@ -138,13 +138,17 @@ type View struct {
 	// Raise brings the window to the front (set by the window loop).
 	Raise func()
 
-	gitd *gitDock
-	dbgd *debugDock
-	navd *navDock
-	lspd *lspDock
-	svcd *servicesDock
-	rund *runDock
-	tstd *testDock
+	gitd  *gitDock
+	dbgd  *debugDock
+	navd  *navDock
+	lspd  *lspDock
+	svcd  *servicesDock
+	rund  *runDock
+	termd *termDock
+	tstd  *testDock
+	// termGlobal are the window shortcuts while the terminal has the
+	// focus (terminal.overrideIdeShortcuts).
+	termGlobal shortcuts
 	// work is the file side: tree menu, external changes, diff and
 	// history tabs, remote git (filesdock.go and friends).
 	work *workDock
@@ -206,6 +210,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v.svcd = installServices(v)
 	v.rund = installRun(v)
 	v.tstd = installTests(v)
+	v.termd = installTerminal(v)
 	return v
 }
 

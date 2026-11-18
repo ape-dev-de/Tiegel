@@ -22,6 +22,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/lsp/servers"
 	"github.com/ape-dev-de/tiegel/internal/run"
+	"github.com/ape-dev-de/tiegel/internal/terminal"
 	"github.com/ape-dev-de/tiegel/internal/update"
 	"github.com/ape-dev-de/tiegel/internal/version"
 )
@@ -74,6 +75,11 @@ type Options struct {
 	// overwritten by another's stale copy; change events are published on
 	// every sharing App's bus. Use App.Settings of the first App.
 	GlobalSettings *settings.Store
+	// TerminalStart starts terminal programs (nil: a real pseudo
+	// terminal); TerminalPath returns the PATH of terminal sessions
+	// (nil: the login-shell PATH merged with the process PATH).
+	TerminalStart terminal.Starter
+	TerminalPath  func(ctx context.Context) string
 }
 
 // App is the headless core of Tiegel: it owns the kernel services (bus,
@@ -106,10 +112,11 @@ type App struct {
 	watcher  *watch.Watcher
 	closing  chan struct{} // closed by Close
 	closeMu  sync.Once
-	searches searchRegistry // running project searches (search.cancel)
-	installs install.Runner // tool installations (install.*, D194)
-	runs     run.Manager    // processes of the run service (run.*, AP15.1)
-	qa       qaStore        // findings of the quality tool plugins (qa.*)
+	searches searchRegistry   // running project searches (search.cancel)
+	installs install.Runner   // tool installations (install.*, D194)
+	runs     run.Manager      // processes of the run service (run.*, AP15.1)
+	terms    terminal.Manager // terminal sessions (terminal.*, AP15.5)
+	qa       qaStore          // findings of the quality tool plugins (qa.*)
 	// trash moves a path to the trash (files.delete); start launches a
 	// detached program (files.reveal). Tests replace both.
 	trash func(path string) error
@@ -204,6 +211,7 @@ func New(opts Options) (*App, error) {
 	a.registerRun()
 	a.registerQA()
 	a.registerDiff()
+	a.registerTerminal()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)
@@ -228,6 +236,7 @@ func (a *App) Close() error {
 	a.saver.Close()
 	a.installs.CancelAll()
 	a.closeRuns()
+	a.closeTerminals()
 	a.preserveUnsaved("unsaved on exit", nil)
 	if err := a.modules.Stop(); err != nil {
 		errs = append(errs, err)

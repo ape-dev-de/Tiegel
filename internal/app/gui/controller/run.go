@@ -295,9 +295,23 @@ func (r *Runs) start(p api.RunStartParams) {
 			if p.Config != "" {
 				// run.start selected it; replace lists loaded before.
 				r.LoadConfigs()
+				// The backend selected the configuration; a list loaded
+				// concurrently (LoadConfigs) may predate that.
+				r.markSelected(info.Config)
 			}
 		}
 	})
+}
+
+// markSelected marks configuration id as the selected one.
+func (r *Runs) markSelected(id string) {
+	if id == "" {
+		return
+	}
+	for i := range r.Configs {
+		r.Configs[i].Selected = r.Configs[i].ID == id
+	}
+	r.Version++
 }
 
 // RunSelected starts the selected configuration (Ctrl+R); without one

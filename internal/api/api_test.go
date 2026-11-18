@@ -33,6 +33,8 @@ func newTestApp(t *testing.T, ext ...func(*App) error) *App {
 		GOOS:       "linux",
 		AppVersion: "test",
 		Extensions: ext,
+		// Terminal sessions never ask the login shell.
+		TerminalPath: func(context.Context) string { return os.Getenv("PATH") },
 	})
 	if err != nil {
 		t.Fatal(err)

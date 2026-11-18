@@ -50,6 +50,8 @@ func testEnv(t *testing.T, in io.Reader, out, errw io.Writer) Env {
 			Interp:     interp.DiscoverOptions{Dirs: []string{}},
 			LSP:        servers.DetectOptions{HomeDir: home, NoSystemDirs: true},
 			GOOS:       "darwin",
+			// Terminal sessions never ask the login shell.
+			TerminalPath: func(context.Context) string { return os.Getenv("PATH") },
 		},
 		// Never ask the developer's login shell for docker's PATH.
 		Modules: modules.Options{Docker: dockermod.Options{NoLoginShell: true}},

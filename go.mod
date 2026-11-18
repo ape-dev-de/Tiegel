@@ -37,6 +37,7 @@ require (
 )
 
 require (
+	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/tree-sitter-grammars/tree-sitter-xml v0.7.0
 	github.com/tree-sitter-grammars/tree-sitter-yaml v0.7.2

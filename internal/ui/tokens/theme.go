@@ -254,11 +254,13 @@ type Theme struct {
 	Editor EditorPalette
 	Syntax SyntaxPalette
 	Git    GitPalette
-	Font   Fonts
-	Text   TextSizes
-	Space  Spacing
-	Radius Radii
-	Size   Sizes
+	// Terminal holds the colors of the embedded terminal.
+	Terminal TerminalPalette
+	Font     Fonts
+	Text     TextSizes
+	Space    Spacing
+	Radius   Radii
+	Size     Sizes
 	// Shaper shapes text. It must not be shared between windows.
 	Shaper *text.Shaper
 }
@@ -287,8 +289,10 @@ func New(mode Mode, shaper *text.Shaper) *Theme {
 	}
 	if mode == ModeLight {
 		th.Color, th.Editor, th.Syntax, th.Git = lightPalette(), lightEditor(), lightSyntax(), lightGit()
+		th.Terminal = lightTerminal()
 	} else {
 		th.Color, th.Editor, th.Syntax, th.Git = darkPalette(), darkEditor(), darkSyntax(), darkGit()
+		th.Terminal = darkTerminal()
 	}
 	return th
 }

@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"context"
 	"image"
 	"image/png"
 	"os"
@@ -86,6 +87,8 @@ func newEnvWith(t *testing.T, withProject bool, extra map[string]string, prep fu
 		ConfigDir: t.TempDir(),
 		Interp:    interp.DiscoverOptions{Dirs: []string{}},
 		LSP:       servers.DetectOptions{PathEnv: filepath.Join(home, "none"), HomeDir: home, ComposerHome: home, NoSystemDirs: true},
+		// Terminal sessions never ask the login shell.
+		TerminalPath: func(context.Context) string { return os.Getenv("PATH") },
 	}
 	opts.Extensions = append(opts.Extensions, modules.Install)
 	a, err := api.New(opts)
@@ -348,9 +351,10 @@ func TestShortcutsAndRegistry(t *testing.T) {
 	e.h.Router.Queue(key.Event{Name: "F9", State: key.Press})
 	e.frame()
 	e.frame()
-	// Problems, Run, Tests, the test window, Debug, Services and Language Server (the
-	// project is no repository, so the git windows are not installed).
-	if !opened || !ran || len(e.v.bench.Stripes[templates.SideBottom]) != 7 {
+	// Problems, Run, Terminal, Tests, the test window, Debug, Services and
+	// Language Server (the project is no repository, so the git windows
+	// are not installed).
+	if !opened || !ran || len(e.v.bench.Stripes[templates.SideBottom]) != 8 {
 		t.Fatalf("registry: opened %v ran %v tabs %+v", opened, ran, e.v.bench.Stripes)
 	}
 	r.AddStatusProvider(func() []statusbar.Item { return []statusbar.Item{{ID: "debug", Text: "Listening"}} })
