@@ -19,7 +19,8 @@ func TestInstall(t *testing.T) {
 	defer a.Close()
 	var list []api.ModuleInfo
 	modtest.Call(t, a, "modules.list", nil, &list)
-	want := []string{"php-runtime", "php-features", "lang-php", "lsp-phpactor", "lsp-phpantom", "lsp-intelephense", "git", "debug-xdebug", "syntax", "php-index", "docker"}
+	want := []string{"php-runtime", "php-features", "lang-php", "lsp-phpactor", "lsp-phpantom", "lsp-intelephense", "git", "debug-xdebug", "syntax", "php-index", "docker",
+		"qa-pint", "qa-php-cs-fixer", "qa-phpcs", "qa-phpstan", "qa-psalm", "qa-phpmd"}
 	if len(list) != len(want) {
 		t.Fatalf("modules %+v", list)
 	}

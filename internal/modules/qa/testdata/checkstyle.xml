@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<checkstyle version="3.10.0">
+<file name="/app/src/Kernel.php">
+ <error line="8" column="9" severity="error" message="Expected 1 space after IF keyword; 0 found" source="PSR12.ControlStructures.ControlStructureSpacing.SpaceAfterKeyword"/>
+ <error line="3" column="132" severity="warning" message="Line exceeds 120 characters &amp; more" source="Generic.Files.LineLength.TooLong"/>
+</file>
+<file name="src/Other.php">
+ <error line="1" severity="info" message="Note"/>
+</file>
+</checkstyle>

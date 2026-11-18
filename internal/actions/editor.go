@@ -13,7 +13,9 @@ const (
 	NavForward          = "navigate.forward"
 
 	RefactorRename     = "refactor.rename"     // lsp.prepareRename + lsp.rename
-	CodeReformat       = "code.reformat"       // lsp.formatting / lsp.rangeFormatting
+	CodeReformat       = "code.reformat"       // qa.format (formatter plugin) or lsp.formatting / lsp.rangeFormatting
+	CodeInspectFile    = "code.inspectFile"    // qa.run on the file (analyzer plugins)
+	CodeInspectProject = "code.inspectProject" // qa.run on the project
 	CodeContextActions = "code.contextActions" // lsp.codeActions + lsp.applyCodeAction
 	ViewStructure      = "view.structure"      // syntax.outline / lsp.documentSymbols
 
@@ -36,6 +38,25 @@ const (
 // ValueLSP is the Context value set while a language server runs.
 const ValueLSP = "lsp"
 
+// Context values of the quality tool plugins (AP17.1): a formatter plugin
+// serves Reformat Code, analyzer plugins are enabled.
+const (
+	ValueQAFormat  = "qaFormat"
+	ValueQAInspect = "qaInspect"
+)
+
+// reformatEnabled: a language server or a formatter plugin can format
+// PHP documents.
+func reformatEnabled(c Context) bool {
+	return php(c) && (c.Values == nil || c.Value(ValueLSP) != "" || c.Value(ValueQAFormat) != "")
+}
+
+// inspectEnabled: analyzer plugins are enabled (hosts that do not report
+// it leave the actions enabled).
+func inspectEnabled(c Context) bool {
+	return c.Values == nil || c.Value(ValueQAInspect) != ""
+}
+
 // phpLSP enables language server features in PHP documents (hosts that do
 // not report the server state leave them enabled).
 func phpLSP(c Context) bool {
@@ -52,7 +73,9 @@ func editorActions() []Action {
 		{ID: NavGotoSymbol, Label: "Go to Symbol…", Shortcut: Shortcut{Mac: "Cmd+Alt+O", PC: "Ctrl+Alt+Shift+N"}, Keywords: []string{"method", "function", "constant", "property"}},
 		{ID: NavSearchEverywhere, Label: "Search Everywhere", Icon: "search", Keywords: []string{"shift shift", "double shift", "find"}},
 		{ID: RefactorRename, Label: "Rename Symbol…", Icon: "edit", Shortcut: Shortcut{Mac: "Shift+F6", PC: "Shift+F6"}, Enabled: phpLSP, Keywords: []string{"refactor"}},
-		{ID: CodeReformat, Label: "Reformat Code", Shortcut: Shortcut{Mac: "Cmd+Alt+L", PC: "Ctrl+Alt+L"}, Enabled: phpLSP, Keywords: []string{"format", "psr-12", "selection"}},
+		{ID: CodeReformat, Label: "Reformat Code", Shortcut: Shortcut{Mac: "Cmd+Alt+L", PC: "Ctrl+Alt+L"}, Enabled: reformatEnabled, Keywords: []string{"format", "psr-12", "selection", "code style", "fixer"}},
+		{ID: CodeInspectFile, Label: "Inspect File", Enabled: func(c Context) bool { return php(c) && inspectEnabled(c) }, Keywords: []string{"inspect", "analyze", "static analysis", "code sniffer", "problems"}},
+		{ID: CodeInspectProject, Label: "Inspect Project", Enabled: inspectEnabled, Keywords: []string{"inspect code", "analyze", "static analysis", "problems"}},
 		{ID: CodeContextActions, Label: "Show Context Actions", Shortcut: Shortcut{Mac: "Alt+Enter", PC: "Alt+Enter"}, Enabled: phpLSP, Keywords: []string{"quick fix", "intention", "code action", "import"}},
 		{ID: ViewStructure, Label: "Structure", Icon: "list", Shortcut: Shortcut{Mac: "Cmd+7", PC: "Alt+7"}, Keywords: []string{"outline", "members"}},
 		{ID: FindInPath, Label: "Find in Files…", Icon: "search", Shortcut: Shortcut{Mac: "Cmd+Shift+F", PC: "Ctrl+Shift+F"}, Keywords: []string{"search", "path", "project"}},
@@ -76,7 +99,7 @@ func editorMenu() []MenuItem {
 		Item(CodeContextActions), Separator(),
 		Item(EditCut), Item(EditCopy), Item(EditPaste), Separator(),
 		gotoMenu, Item(EditorFindUses), Item(RefactorRename), Separator(),
-		Item(CodeReformat), Item(EditComment), Separator(),
+		Item(CodeReformat), Item(CodeInspectFile), Item(EditComment), Separator(),
 		git, Separator(),
 		Item(FileReveal), Item(FileHistory),
 	}

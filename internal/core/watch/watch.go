@@ -390,14 +390,20 @@ func (w *Watcher) abs(rel string) string {
 	return filepath.Join(w.root, rel)
 }
 
+// TempFilePrefix starts the names of temporary copies Tiegel places next
+// to project files (e.g. a formatter run on unsaved content); the watcher
+// ignores them.
+const TempFilePrefix = "__tiegel_"
+
 // excluded reports whether rel (not below .git) is not watched.
 func (w *Watcher) excluded(rel string) bool {
 	base := filepath.Base(rel)
 	if w.excNames[base] || base == ".git" {
 		return true
 	}
-	// Temporary files of Tiegel's own atomic writes.
-	if strings.HasPrefix(base, ".") && strings.Contains(base, ".tiegel-") {
+	// Temporary files of Tiegel's own atomic writes and of formatter
+	// runs on a copy (TempFilePrefix).
+	if strings.HasPrefix(base, ".") && strings.Contains(base, ".tiegel-") || strings.HasPrefix(base, TempFilePrefix) {
 		return true
 	}
 	for _, p := range w.excPaths {

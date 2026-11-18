@@ -10,6 +10,9 @@
 //	syntax        highlighting, folds, outline over the API (D80)
 //	php-index     Tree-sitter symbol index, navigation (nav.*, index.*; D111)
 //	docker        Docker binary, contexts, engine status (docker.*; D230)
+//	qa-pint, qa-php-cs-fixer, qa-phpcs, qa-phpstan, qa-psalm, qa-phpmd
+//	              quality tool plugins (contribute to the kernel's qa.*
+//	              service via hooks; AP17.1)
 //
 // The modules never import each other; they share data through the bus and
 // the hook points declared in internal/api/contract.go. None of them imports
@@ -27,6 +30,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/modules/phpfeatures"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpindex"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpruntime"
+	"github.com/ape-dev-de/tiegel/internal/modules/qa"
 	"github.com/ape-dev-de/tiegel/internal/modules/syntaxmod"
 )
 
@@ -51,13 +55,17 @@ func All(opts Options) []module.Module {
 	for _, p := range lspplugins.All() {
 		mods = append(mods, p)
 	}
-	return append(mods,
+	mods = append(mods,
 		git.New(opts.Git),
 		debugxdebug.New(opts.Debug),
 		syntaxmod.New(),
 		phpindex.New(opts.Index),
 		docker.New(opts.Docker),
 	)
+	for _, p := range qa.All() {
+		mods = append(mods, p)
+	}
+	return mods
 }
 
 // Installer returns an api.Options extension that adds all modules.

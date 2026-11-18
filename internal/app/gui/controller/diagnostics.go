@@ -55,6 +55,8 @@ const (
 
 type fileDiags struct {
 	lsp, php []Diagnostic
+	// qa are the findings of the quality tool plugins by plugin ID.
+	qa map[string][]Diagnostic
 }
 
 func (c *Controller) setDiagnostics(ev diagEvent, src diagSource) {
@@ -89,14 +91,14 @@ func (c *Controller) setDiagnostics(ev diagEvent, src diagSource) {
 	c.DiagVersion++
 }
 
-// Diagnostics returns the diagnostics of file (language server and PHP
-// feature check), ordered by position.
+// Diagnostics returns the diagnostics of file (language server, PHP
+// feature check and quality tool plugins), ordered by position.
 func (c *Controller) Diagnostics(file string) []Diagnostic {
 	fd := c.diags[file]
 	if fd == nil {
 		return nil
 	}
-	out := append(append([]Diagnostic(nil), fd.lsp...), fd.php...)
+	out := append(append(append([]Diagnostic(nil), fd.lsp...), fd.php...), fd.qaAll()...)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Start < out[j].Start })
 	return out
 }
@@ -126,7 +128,7 @@ func (c *Controller) Problems() []Diagnostic {
 // ProblemCounts returns the number of errors and warnings.
 func (c *Controller) ProblemCounts() (errs, warns int) {
 	for _, fd := range c.diags {
-		for _, l := range [][]Diagnostic{fd.lsp, fd.php} {
+		for _, l := range [][]Diagnostic{fd.lsp, fd.php, fd.qaAll()} {
 			for _, d := range l {
 				switch d.Severity {
 				case SevError:

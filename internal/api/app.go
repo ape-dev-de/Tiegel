@@ -109,6 +109,7 @@ type App struct {
 	searches searchRegistry // running project searches (search.cancel)
 	installs install.Runner // tool installations (install.*, D194)
 	runs     run.Manager    // processes of the run service (run.*, AP15.1)
+	qa       qaStore        // findings of the quality tool plugins (qa.*)
 	// trash moves a path to the trash (files.delete); start launches a
 	// detached program (files.reveal). Tests replace both.
 	trash func(path string) error
@@ -201,6 +202,7 @@ func New(opts Options) (*App, error) {
 	a.registerEditOps()
 	a.registerInstall()
 	a.registerRun()
+	a.registerQA()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)

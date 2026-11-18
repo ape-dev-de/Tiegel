@@ -2,6 +2,7 @@ package gui
 
 import (
 	"fmt"
+	"github.com/ape-dev-de/tiegel/internal/api"
 	"path"
 	"strings"
 	"time"
@@ -48,6 +49,8 @@ const (
 	ActFindUsages       keymap.Action = actions.EditorFindUses
 	ActRenameSymbol     keymap.Action = actions.RefactorRename
 	ActReformat         keymap.Action = actions.CodeReformat
+	ActInspectFile      keymap.Action = actions.CodeInspectFile
+	ActInspectProject   keymap.Action = actions.CodeInspectProject
 	ActContextActions   keymap.Action = actions.CodeContextActions
 	ActStructureView    keymap.Action = actions.ViewStructure
 	ActFindInPath       keymap.Action = actions.FindInPath
@@ -161,7 +164,20 @@ func (d *navDock) actions() []Action {
 		}),
 		ed(ActReformat, "Reformat Code", "Cmd+Alt+L", "Ctrl+Alt+L", "Code", "format", func(s *editorSession) {
 			sel := s.ed.Cursor().Primary()
+			// A formatter plugin formats whole files; a selection (with a
+			// running language server) goes to the language server.
+			if sel.Empty() || !d.v.ctl.Status.LSPRunning {
+				if d.v.ctl.FormatWithQA(s.file, d.v.lspd.openInstall) {
+					return
+				}
+			}
 			d.n.Reformat(s.file, sel.Start(), sel.End(), d.v.ctl.Prefs.TabWidth)
+		}),
+		ed(ActInspectFile, "Inspect File", "", "", "Code", "inspect", func(s *editorSession) {
+			d.v.ctl.Inspect([]string{s.file}, d.offerQAInstall)
+		}),
+		glob(ActInspectProject, "Inspect Project", "", "", "Code", "inspect", func() {
+			d.v.ctl.Inspect(nil, d.offerQAInstall)
 		}),
 		ed(ActContextActions, "Show Context Actions", "Alt+Enter", "Alt+Enter", "Code", "actions", func(s *editorSession) {
 			sel := s.ed.Cursor().Primary()
@@ -179,6 +195,24 @@ func (d *navDock) actions() []Action {
 		}},
 		{ID: actions.GutterShowLineNumbers, Title: "Show Line Numbers", Run: func(v *View) { d.toggleLineNumbers() }},
 	}
+}
+
+// offerQAInstall offers to install the tool of a missing analyzer plugin
+// (D194: only on click; the plan with the command is shown next).
+func (d *navDock) offerQAInstall(missing []api.QAToolInfo) {
+	pop := &Popup{Title: "No inspection tool found", Width: 520,
+		Detail: "The enabled inspection plugins did not find their tool in this project. Install one as dev dependency (the command is shown before anything runs) or set its path in Settings > Plugins."}
+	for _, t := range missing {
+		if !t.Install {
+			continue
+		}
+		plugin := t.Plugin
+		pop.Buttons = append(pop.Buttons, &PopupButton{Text: "Install " + t.Name + "...", Kind: atoms.Secondary, OnClick: func() {
+			d.v.Post(func() { d.v.lspd.openInstall(plugin) })
+		}})
+	}
+	pop.Buttons = append(pop.Buttons, &PopupButton{Text: "Cancel", Kind: atoms.Ghost})
+	d.v.OpenPopup(pop)
 }
 
 // showTool registers a result tool window on first use (Usages, Find,

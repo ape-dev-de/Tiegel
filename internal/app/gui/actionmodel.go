@@ -216,6 +216,14 @@ func (v *View) baseContext(menu actions.ContextID) actions.Context {
 	if v.ctl.Status.LSPRunning {
 		c.Values[actions.ValueLSP] = "true"
 	}
+	if _, ok := v.ctl.QA.Formatter(); ok {
+		c.Values[actions.ValueQAFormat] = "true"
+	}
+	for _, t := range v.ctl.QA.Tools {
+		if t.Analyzer {
+			c.Values[actions.ValueQAInspect] = "true"
+		}
+	}
 	return c
 }
 
