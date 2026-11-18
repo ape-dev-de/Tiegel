@@ -201,6 +201,7 @@ func New(opts Options) (*App, error) {
 	a.registerEditOps()
 	a.registerInstall()
 	a.registerRun()
+	a.registerDiff()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)

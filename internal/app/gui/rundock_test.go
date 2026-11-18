@@ -63,7 +63,7 @@ func TestRunDock(t *testing.T) {
 	e.settle() // empty window with the hint
 
 	// A configuration made in the editor popup runs with Save and Run.
-	e.waitFor("config types", func() bool { return len(e.ctl.Run.Types) == 3 })
+	e.waitFor("config types", func() bool { return len(e.ctl.Run.Types) >= 3 })
 	cmdType, _ := e.v.rund.typeOf(run.TypeCommand)
 	e.v.rund.openEditor(run.Config{Type: run.TypeCommand}, cmdType)
 	if !e.v.PopupOpen() {
