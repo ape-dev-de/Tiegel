@@ -102,6 +102,7 @@ func (m *Module) Start(ctx module.Context) error {
 	m.app = app
 	m.engineIDs = map[string]map[string]string{}
 	m.mu.Unlock()
+	ctx.OnStop(api.OnIDEComponent(ctx, importComponent))
 	p := api.NewProvider(ctx)
 	api.Add(p, "debug.listen", "Start the Xdebug (DBGp) listener (debug.before guard saves documents); events debug.* follow", m.debugListen)
 	api.Add(p, "debug.stop", "Stop the listener and end all sessions", m.debugStop)

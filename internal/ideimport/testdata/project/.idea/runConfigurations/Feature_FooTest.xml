@@ -1,0 +1,6 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="FooTest::testBar" type="PHPUnitRunConfigurationType" factoryName="PHPUnit">
+    <TestRunner class="Tests\Feature\FooTest" file="$PROJECT_DIR$/tests/Feature/FooTest.php" method="testBar" scope="Method" options="--stop-on-failure" />
+    <method v="2" />
+  </configuration>
+</component>

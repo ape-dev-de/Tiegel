@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="FileEditorManager">
+    <leaf />
+  </component>
+  <component name="PhpWorkspaceProjectConfiguration" interpreter_name="app" />
+  <component name="RunManager" selected="PHPUnit.Unit">
+    <configuration name="Unit" type="PHPUnitRunConfigurationType" factoryName="PHPUnit">
+      <TestRunner scope="XML" test_suite="Unit" />
+      <method v="2" />
+    </configuration>
+    <configuration name="FooTest" type="PHPUnitRunConfigurationType" factoryName="PHPUnit" temporary="true">
+      <TestRunner class="Tests\Unit\FooTest" file="$PROJECT_DIR$/tests/Unit/FooTest.php" scope="Class" />
+    </configuration>
+    <configuration default="true" type="PhpLocalRunConfigurationType" factoryName="PHP Console">
+      <method v="2" />
+    </configuration>
+    <configuration name="Cache clear" type="PhpLocalRunConfigurationType" factoryName="PHP Console" path="$PROJECT_DIR$/bin/console" scriptParameters="cache:clear --env=dev">
+      <CommandLine parameters="-d memory_limit=-1" workingDirectory="$PROJECT_DIR$">
+        <envs>
+          <env name="APP_ENV" value="dev" />
+        </envs>
+      </CommandLine>
+      <method v="2" />
+    </configuration>
+    <configuration name="All checks" type="CompoundRunConfigurationType">
+      <toRun name="Unit" type="PHPUnitRunConfigurationType" />
+      <toRun name="Cache clear" type="PhpLocalRunConfigurationType" />
+    </configuration>
+    <configuration name="npm dev" type="js.build_tools.npm">
+      <package-json value="$PROJECT_DIR$/package.json" />
+    </configuration>
+  </component>
+  <component name="Git.Settings">
+    <option name="UPDATE_TYPE" value="REBASE" />
+  </component>
+</project>

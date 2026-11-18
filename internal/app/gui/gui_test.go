@@ -52,6 +52,10 @@ type env struct {
 	h    *uitest.Harness
 }
 
+// ideImportRoots are the configuration roots of the settings import in
+// newEnvWith (a test sets them to the fixture).
+var ideImportRoots []string
+
 func newEnv(t *testing.T, withProject bool) *env {
 	t.Helper()
 	return newEnvWith(t, withProject, nil, nil)
@@ -87,6 +91,8 @@ func newEnvWith(t *testing.T, withProject bool, extra map[string]string, prep fu
 		ConfigDir: t.TempDir(),
 		Interp:    interp.DiscoverOptions{Dirs: []string{}},
 		LSP:       servers.DetectOptions{PathEnv: filepath.Join(home, "none"), HomeDir: home, ComposerHome: home, NoSystemDirs: true},
+		// The settings import never looks at the real home.
+		IDEImport: api.IDEImportOptions{Home: home, Roots: ideImportRoots},
 		// Terminal sessions never ask the login shell.
 		TerminalPath: func(context.Context) string { return os.Getenv("PATH") },
 	}

@@ -133,6 +133,7 @@ func (m *Module) Start(ctx module.Context) error {
 	m.last = cur
 	m.mu.Unlock()
 
+	ctx.OnStop(api.OnIDEComponent(ctx, importComponent))
 	p := api.NewProvider(ctx)
 	api.Add(p, "docker.contexts", "Docker contexts with endpoint and engine (OrbStack, Docker Desktop, …); local only", m.contexts)
 	api.Add(p, "docker.status", "Docker binary, effective context and whether its engine answers (contacts the engine)", m.status)

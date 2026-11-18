@@ -1,0 +1,8 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Unit directory" type="PHPUnitRunConfigurationType" factoryName="PHPUnit">
+    <TestRunner directory="$PROJECT_DIR$/tests/Unit" scope="Directory" />
+    <envs>
+      <env name="XDEBUG_MODE" value="coverage" />
+    </envs>
+  </configuration>
+</component>

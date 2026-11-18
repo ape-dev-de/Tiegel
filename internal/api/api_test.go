@@ -30,6 +30,8 @@ func newTestApp(t *testing.T, ext ...func(*App) error) *App {
 		Interp:     interpOptions(nil),
 		LSP:        servers.DetectOptions{HomeDir: home, PathEnv: "", ComposerHome: filepath.Join(home, "composer"), NoSystemDirs: true},
 		ComposeEnv: map[string]string{},
+		// The settings import never looks at the real home.
+		IDEImport:  IDEImportOptions{Home: home},
 		GOOS:       "linux",
 		AppVersion: "test",
 		Extensions: ext,

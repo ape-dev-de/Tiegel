@@ -28,9 +28,14 @@ type BrowseEvent struct{}
 // RemoveEvent: remove Path from the recent projects.
 type RemoveEvent struct{ Path string }
 
+// ImportEvent: "Import Settings…" was clicked (the host opens the
+// settings import wizard).
+type ImportEvent struct{}
+
 func (OpenEvent) isWelcomeEvent()   {}
 func (BrowseEvent) isWelcomeEvent() {}
 func (RemoveEvent) isWelcomeEvent() {}
+func (ImportEvent) isWelcomeEvent() {}
 
 // View is the welcome organism.
 type View struct {
@@ -49,6 +54,7 @@ type View struct {
 	browse  atoms.Button
 	rows    []molecules.ListRow
 	removes []atoms.IconButton
+	importS atoms.Button
 	list    molecules.ScrollList
 	inited  bool
 }
@@ -62,6 +68,7 @@ func (v *View) init() {
 	v.path.Editor.SingleLine, v.path.Editor.Submit = true, true
 	v.open = atoms.Button{Text: "Open", Kind: atoms.Secondary}
 	v.browse = atoms.Button{Text: "Open…", Kind: atoms.Primary, Glyph: atoms.GlyphFolderOpen}
+	v.importS = atoms.Button{Text: "Import Settings…", Kind: atoms.Secondary}
 }
 
 // SetPath fills the path field.
@@ -89,6 +96,9 @@ func (v *View) Update(gtx layout.Context) []Event {
 	}
 	if v.browse.Clicked(gtx) {
 		out = append(out, BrowseEvent{})
+	}
+	if v.importS.Clicked(gtx) {
+		out = append(out, ImportEvent{})
 	}
 	for i, p := range v.Recent {
 		if v.removes[i].Clicked(gtx) {
@@ -174,6 +184,17 @@ func (v *View) column(th *tokens.Theme) layout.Widget {
 							}),
 						)
 					})
+				})
+			}),
+			layout.Rigid(layout.Spacer{Height: th.Space.XL}.Layout),
+			layout.Rigid(molecules.SectionHeader{Title: "Coming from another IDE?"}.Fn(th)),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: th.Space.S}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions { return v.importS.Layout(gtx, th) }),
+						layout.Rigid(layout.Spacer{Width: th.Space.M}.Layout),
+						layout.Flexed(1, atoms.Small("Keymap, fonts, theme, terminal and more from the reference IDE; preview first.").Fn(th)),
+					)
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {

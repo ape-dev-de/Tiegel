@@ -12,7 +12,8 @@
 // test.runs, test.lastStatus, test.goto, test.create.
 // Events: test.started, test.updated, test.finished (light trees without
 // output and details; test.node and test.results return them).
-// Hooks provided: run.configTypes (type "phpunit"), install.recipes
+// Hooks provided: run.configTypes (type "phpunit"), import.ide.component
+// (settings and run configurations of the reference IDE), install.recipes
 // (composer require --dev phpunit/phpunit in the project interpreter;
 // only on user action, D194).
 // Settings: phpunit.executable, phpunit.configuration,
@@ -152,6 +153,7 @@ func (m *Module) Start(ctx module.Context) error {
 	ctx.OnStop(api.HookInstallRecipes.On(ctx.Hooks(), 100, func(_ context.Context, l []install.Recipe) ([]install.Recipe, error) {
 		return append(slices.Clone(l), Recipe()), nil
 	}, hooks.WithOwner(ID)))
+	ctx.OnStop(api.OnIDEComponent(ctx, importComponent))
 	ctx.OnStop(ctx.Bus().Subscribe("run.*", m.onRun))
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicProjectOpened, func(bus.Event) { m.reset() }))
 	return nil

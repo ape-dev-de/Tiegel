@@ -56,6 +56,8 @@ func configArg(name, config string) []string {
 func Pint() qakit.Definition {
 	return qakit.Definition{
 		ID: PintID, Name: "Laravel Pint", Order: 10, Program: "pint", Package: "laravel/pint",
+		Import: &qakit.ImportSpec{Settings: "LaravelPint", Options: "LaravelPintOptionsConfiguration",
+			ConfigOptions: []string{"configPath", "config"}, Formatter: "LARAVEL_PINT"},
 		ConfigHelp: "pint.json to use; empty: Pint's own lookup (pint.json in the project root).",
 		Format: &qakit.FormatSpec{Args: func(c qakit.Call) []string {
 			return append(append([]string{"--no-interaction"}, configArg("config", c.Config)...), c.File)
@@ -68,6 +70,8 @@ func Pint() qakit.Definition {
 func PHPCSFixer() qakit.Definition {
 	return qakit.Definition{
 		ID: PHPCSFixerID, Name: "PHP-CS-Fixer", Order: 20, Program: "php-cs-fixer", Package: "friendsofphp/php-cs-fixer",
+		Import: &qakit.ImportSpec{Settings: "PhpCSFixer", Options: "PHPCSFixerOptionsConfiguration",
+			ConfigOptions: []string{"rulesetPath", "config"}, Formatter: "PHP_CS_FIXER"},
 		ConfigHelp: ".php-cs-fixer.php to use; empty: the tool's own lookup (.php-cs-fixer.php, .php-cs-fixer.dist.php).",
 		Format: &qakit.FormatSpec{Args: func(c qakit.Call) []string {
 			a := []string{"fix", "--no-interaction", "--using-cache=no", "--show-progress=none", "--quiet"}
@@ -84,6 +88,8 @@ var phpcsConfigs = []string{".phpcs.xml", "phpcs.xml", ".phpcs.xml.dist", "phpcs
 func PHPCS() qakit.Definition {
 	return qakit.Definition{
 		ID: PHPCSID, Name: "PHP_CodeSniffer", Order: 30, Program: "phpcs", FormatProgram: "phpcbf", Package: "squizlabs/php_codesniffer",
+		Import: &qakit.ImportSpec{Settings: "PhpCodeSniffer", Options: "PHPCodeSnifferOptionsConfiguration",
+			ConfigOptions: []string{"customRuleset"}, StandardOption: "codingStandard", Formatter: "PHP_CODE_SNIFFER"},
 		ConfigHelp: "Ruleset (phpcs.xml) or standard name (PSR12); empty: phpcs.xml in the project or the default standard.",
 		Format: &qakit.FormatSpec{
 			Stdin: true,
@@ -118,6 +124,7 @@ var phpstanConfigs = []string{"phpstan.neon", "phpstan.neon.dist", "phpstan.dist
 func PHPStan() qakit.Definition {
 	return qakit.Definition{
 		ID: PHPStanID, Name: "PHPStan", Order: 40, Program: "phpstan", Package: "phpstan/phpstan",
+		Import:     &qakit.ImportSpec{Settings: "PhpStan", Options: "PhpStanOptionsConfiguration", ConfigOptions: []string{"config"}},
 		ConfigHelp: "phpstan.neon to use; empty: phpstan.neon(.dist) in the project.",
 		Analyze: &qakit.AnalyzeSpec{
 			Args: func(c qakit.Call) []string {
@@ -137,6 +144,7 @@ func PHPStan() qakit.Definition {
 func Psalm() qakit.Definition {
 	return qakit.Definition{
 		ID: PsalmID, Name: "Psalm", Order: 50, Program: "psalm", Package: "vimeo/psalm",
+		Import:     &qakit.ImportSpec{Settings: "Psalm", Options: "PsalmOptionsConfiguration", ConfigOptions: []string{"config"}},
 		ConfigHelp: "psalm.xml to use; empty: psalm.xml(.dist) in the project.",
 		Analyze: &qakit.AnalyzeSpec{
 			Args: func(c qakit.Call) []string {
@@ -157,6 +165,7 @@ var phpmdConfigs = []string{"phpmd.xml", "phpmd.xml.dist", ".phpmd.xml", ".phpmd
 func PHPMD() qakit.Definition {
 	d := qakit.Definition{
 		ID: PHPMDID, Name: "PHPMD", Order: 60, Program: "phpmd", Package: "phpmd/phpmd",
+		Import:     &qakit.ImportSpec{Settings: "MessDetector", Options: "MessDetectorOptionsConfiguration", ConfigOptions: []string{"file", "customRuleset"}},
 		ConfigHelp: "Ruleset file or list (e.g. cleancode,codesize); empty: phpmd.xml in the project or the standard rulesets.",
 	}
 	d.Analyze = &qakit.AnalyzeSpec{

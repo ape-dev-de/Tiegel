@@ -80,6 +80,9 @@ type Options struct {
 	// (nil: the login-shell PATH merged with the process PATH).
 	TerminalStart terminal.Starter
 	TerminalPath  func(ctx context.Context) string
+	// IDEImport locates the reference IDE's configuration for
+	// import.ide.* (tests point it at fixtures).
+	IDEImport IDEImportOptions
 }
 
 // App is the headless core of Tiegel: it owns the kernel services (bus,
@@ -212,6 +215,7 @@ func New(opts Options) (*App, error) {
 	a.registerQA()
 	a.registerDiff()
 	a.registerTerminal()
+	a.registerIDEImport()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)

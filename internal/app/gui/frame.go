@@ -56,6 +56,7 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 	v.handleStatus(gtx)
 	v.handleProblems(gtx)
 	v.handleRecovery(gtx)
+	v.offerImportSettings()
 	v.handleOverlay(gtx)
 	v.closeStaleEditors()
 
@@ -93,6 +94,8 @@ func (v *View) frameWelcome(gtx layout.Context) layout.Dimensions {
 			v.openProjectDialog()
 		case welcome.RemoveEvent:
 			v.ctl.RemoveRecentProject(e.Path)
+		case welcome.ImportEvent:
+			v.openImportSettings()
 		}
 	}
 	v.global.build(v.Registry, ScopeGlobal, nil)

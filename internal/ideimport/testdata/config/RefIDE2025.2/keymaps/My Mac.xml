@@ -1,0 +1,24 @@
+<keymap version="1" name="My Mac" parent="My Base">
+  <action id="EditorDuplicate">
+    <keyboard-shortcut first-keystroke="meta D" />
+    <keyboard-shortcut first-keystroke="ctrl shift D" />
+  </action>
+  <action id="ReformatCode">
+    <keyboard-shortcut first-keystroke="meta alt shift L" />
+  </action>
+  <action id="EditorDeleteLine" />
+  <action id="MoveStatementUp">
+    <keyboard-shortcut first-keystroke="meta shift alt UP" />
+  </action>
+  <action id="Back">
+    <keyboard-shortcut first-keystroke="meta OPEN_BRACKET" />
+    <mouse-shortcut keystroke="button4" />
+  </action>
+  <action id="GotoClass">
+    <keyboard-shortcut first-keystroke="meta O" />
+    <keyboard-shortcut first-keystroke="ctrl K" second-keystroke="ctrl C" />
+  </action>
+  <action id="SomePluginAction">
+    <keyboard-shortcut first-keystroke="meta alt P" />
+  </action>
+</keymap>

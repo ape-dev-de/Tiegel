@@ -1,0 +1,15 @@
+<code_scheme name="Team" version="173">
+  <option name="RIGHT_MARGIN" value="100" />
+  <option name="OTHER_INDENT_OPTIONS">
+    <value>
+      <option name="INDENT_SIZE" value="2" />
+      <option name="USE_TAB_CHARACTER" value="false" />
+    </value>
+  </option>
+  <codeStyleSettings language="PHP">
+    <option name="RIGHT_MARGIN" value="140" />
+    <indentOptions>
+      <option name="INDENT_SIZE" value="4" />
+    </indentOptions>
+  </codeStyleSettings>
+</code_scheme>

@@ -69,6 +69,7 @@ func defaultActions() []Action {
 		{ID: ActCloseProject, Title: "Close Project", Menu: "File", Section: "open", Run: (*View).closeProject},
 		{ID: ActSaveAll, Title: "Save All", Mac: "Cmd+Alt+S", PC: "Ctrl+Alt+Shift+S", Menu: "File", Section: "save", Run: func(v *View) { v.ctl.Autosave("focusLost") }},
 		{ID: ActSettings, Title: "Settings…", Mac: "Cmd+,", PC: "Ctrl+Alt+S", Menu: "File", Section: "settings", Run: (*View).openSettings},
+		{ID: ActImportSettings, Title: "Import Settings…", Menu: "File", Section: "settings", Run: (*View).openImportSettings},
 		// Edit (editor keymap actions; their keys belong to the editor)
 		editorMenuAction(keymap.Undo, "Undo", "undo"),
 		editorMenuAction(keymap.Redo, "Redo", "undo"),

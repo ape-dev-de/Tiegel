@@ -14,7 +14,9 @@
 //     interpreter (local php, Compose service, image, WSL) with path
 //     mapping, so it works inside containers;
 //   - formats on save through the file.beforeSave filter (optional) and
-//     inspects saved files in the background (optional).
+//     inspects saved files in the background (optional);
+//   - imports the tool's settings from the reference IDE's project
+//     configuration (Definition.Import, hook import.ide.component).
 //
 // The package knows no tool by name; the definitions live in the
 // plugin package.
@@ -76,6 +78,9 @@ type Definition struct {
 	Analyze *AnalyzeSpec
 	// Disabled makes the module opt-in (off without a stored state).
 	Disabled bool
+	// Import names the tool's components in the reference IDE's
+	// configuration (settings import, M16); nil: none.
+	Import *ImportSpec
 }
 
 // Call is the input of the argument builders. Paths are relative to the
@@ -268,6 +273,9 @@ func (p *Plugin) Start(ctx module.Context) error {
 	ctx.OnStop(api.HookInstallRecipes.On(ctx.Hooks(), p.def.Order, func(_ context.Context, list []install.Recipe) ([]install.Recipe, error) {
 		return append(slices.Clone(list), p.Recipe()), nil
 	}, owner))
+	if p.def.Import != nil {
+		ctx.OnStop(api.OnIDEComponent(ctx, p.importComponent))
+	}
 	if p.def.Format != nil {
 		// Before the .editorconfig filter (priority 1000), which then has
 		// the last word on whitespace.

@@ -144,6 +144,10 @@ Tiegel-Stand (M13 abgeschlossen): ein Katalog aller belegbaren Aktionen (`intern
 | `vcs.xml` | Git-Wurzeln | Plugin `git` |
 | `$PROJECT_DIR$`, `$USER_HOME$` | Makros | auflösen; nicht existierende Pfade → Bericht |
 
+## Umsetzung (M16)
+
+Der Import ist umgesetzt (D390–D398): Kernpaket `internal/ideimport`, Kerndienst `import.ide.*`, Headless `tiegel --headless import-ide`, GUI-Assistent „Import Settings…“. Plugin-Komponenten nehmen die Plugins über `import.ide.component`. Ergänzend zur Tabelle oben übernommen: `ide.general.xml` (Projekt öffnen in, laufende Prozesse), `editor.xml` (Soft Wrap, Whitespace), `codestyles/` (Einrückung, Tabs, rechter Rand), `terminal.xml` (Tasten an die Shell, Tab schließen). Nicht übernommen und im Bericht genannt: Include-Pfade (M17), Compound-Konfigurationen, Zwei-Tasten-Kürzel, Terminal-Schriftfamilie, Run-Konsolen-Schrift, Interpreter über SSH, External Tools (bis zum Run-Typ aus M17.2).
+
 ## Nicht übernommen (bewusst)
 
 Lizenz-/Konto-Dateien, KI-Plugins und deren Einstellungen, Statistik/Telemetrie, Fremd-Plugins ohne Gegenstück, Code-Style-Details (Projekt-Formatter ist die Quelle), Inspektionsprofile, Datenbank-Tools.

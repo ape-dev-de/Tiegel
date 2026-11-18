@@ -19,6 +19,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/completion"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/filetree"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/findbar"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/importwizard"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/palette"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/problems"
 	rtui "github.com/ape-dev-de/tiegel/internal/ui/organisms/runtime"
@@ -126,6 +127,8 @@ type View struct {
 	mappings     []controller.Mapping
 
 	welcome welcome.View
+	// importView is the body of the settings import wizard.
+	importView importwizard.View
 
 	editors map[sessionKey]*editorSession
 
