@@ -81,7 +81,7 @@ Tiegel-Stand (M13 abgeschlossen): ein Katalog aller belegbaren Aktionen (`intern
 | Farbschema (eigene Farben) | 🟡 Palette „crucible“, nicht einstellbar | Kern | ~ hell/dunkel | – |
 | Code Style PHP (umfangreich) | ⛔ (Projekt-Formatter, siehe Plugins Pint/CS-Fixer) | – | – | – |
 | Inspektionen | ⛔ (Diagnosen kommen aus LSP + Plugins) | – | – | – |
-| Datei- und Code-Vorlagen | 🟡 nur „New PHP Class“ | Kern | ~ (`fileTemplates/`) | M17 |
+| Datei- und Code-Vorlagen | ✅ Dateivorlagen Klasse/Abstrakt/Interface/Trait/Enum/Test als Kern-Einstellungen `fileTemplates.<art>` (D426, D427) | Kern | ~ (`fileTemplates/`) | M17 |
 | Live Templates | ✅ Plugin `live-templates` (D420–D424): Tab, Cmd+J, Surround With, Tab-Stopps mit verknüpftem Bearbeiten; eigene Vorlagen als Liste `live-templates.user` | Plugin `live-templates` | ~ | M17 |
 | Dateitypen/Zuordnungen | ✅ `files.associations` (D213) | Kern | ✔ (`filetypes.xml`) | M12 |
 | Inlay Hints | ❌ | Plugin `lang-php` | – | M17 |

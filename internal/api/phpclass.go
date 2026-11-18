@@ -2,85 +2,21 @@ package api
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"io/fs"
+
 	"os"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strings"
+	"time"
+
+	"github.com/ape-dev-de/tiegel/internal/core/psr4"
 )
 
 // PSR4Mapping is one autoload entry of composer.json: namespace prefix →
 // directory (project relative, slash separated, "" for the root).
-type PSR4Mapping struct {
-	Prefix string `json:"prefix"`
-	Dir    string `json:"dir"`
-	Dev    bool   `json:"dev,omitempty"`
-}
-
-// readPSR4 reads the psr-4 mappings of autoload and autoload-dev from
-// composer.json in root. A missing file gives no mappings.
-func readPSR4(root string) ([]PSR4Mapping, error) {
-	data, err := os.ReadFile(filepath.Join(root, "composer.json"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, Errorf(CodeFailed, "composer.json: %w", err)
-	}
-	type autoload struct {
-		PSR4 map[string]json.RawMessage `json:"psr-4"`
-	}
-	var c struct {
-		Autoload    autoload `json:"autoload"`
-		AutoloadDev autoload `json:"autoload-dev"`
-	}
-	if err := json.Unmarshal(data, &c); err != nil {
-		return nil, Errorf(CodeFailed, "composer.json: %v", err)
-	}
-	var out []PSR4Mapping
-	for _, sec := range []struct {
-		m   map[string]json.RawMessage
-		dev bool
-	}{{c.Autoload.PSR4, false}, {c.AutoloadDev.PSR4, true}} {
-		for prefix, raw := range sec.m {
-			var dirs []string
-			var one string
-			if json.Unmarshal(raw, &one) == nil {
-				dirs = []string{one}
-			} else if json.Unmarshal(raw, &dirs) != nil {
-				continue
-			}
-			for _, d := range dirs {
-				out = append(out, PSR4Mapping{Prefix: strings.Trim(prefix, `\`), Dir: normDir(d), Dev: sec.dev})
-			}
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Dev != out[j].Dev {
-			return !out[i].Dev
-		}
-		if out[i].Dir != out[j].Dir {
-			return out[i].Dir < out[j].Dir
-		}
-		return out[i].Prefix < out[j].Prefix
-	})
-	return out, nil
-}
+type PSR4Mapping = psr4.Mapping
 
 // normDir normalises a composer directory to "a/b" ("" for the root).
-func normDir(d string) string {
-	d = filepath.ToSlash(filepath.Clean(filepath.FromSlash(d)))
-	d = strings.TrimPrefix(d, "./")
-	if d == "." || d == "/" {
-		return ""
-	}
-	return strings.TrimSuffix(d, "/")
-}
-
-var phpIdent = regexp.MustCompile(`^[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*$`)
+func normDir(d string) string { return psr4.NormDir(d) }
 
 // phpReserved are words that cannot name a class (case-insensitive).
 var phpReserved = func() map[string]bool {
@@ -99,20 +35,7 @@ var phpReserved = func() map[string]bool {
 
 // validClassName reports whether s can name a PHP class.
 func validClassName(s string) bool {
-	return phpIdent.MatchString(s) && !phpReserved[strings.ToLower(s)]
-}
-
-// validNamespace reports whether ns is empty or a\b\c of identifiers.
-func validNamespace(ns string) bool {
-	if ns == "" {
-		return true
-	}
-	for _, seg := range strings.Split(ns, `\`) {
-		if !phpIdent.MatchString(seg) {
-			return false
-		}
-	}
-	return true
+	return psr4.Ident.MatchString(s) && !phpReserved[strings.ToLower(s)]
 }
 
 // NamespaceResult is the result of "files.phpNamespace".
@@ -131,33 +54,13 @@ type NamespaceResult struct {
 // autoload-dev for the same directory.
 func namespaceFor(maps []PSR4Mapping, rel string) (NamespaceResult, error) {
 	res := NamespaceResult{Dir: rel}
-	best := -1
-	for i, m := range maps {
-		if m.Dir != "" && rel != m.Dir && !strings.HasPrefix(rel, m.Dir+"/") {
-			continue
-		}
-		if best < 0 || len(m.Dir) > len(maps[best].Dir) {
-			best = i
-		}
+	ns, m, found, err := psr4.NamespaceFor(maps, rel)
+	if err != nil {
+		return res, Errorf(CodeInvalidParams, "%v", err)
 	}
-	if best < 0 {
-		return res, nil
+	if found {
+		res.Namespace, res.Found, res.Mapping = ns, true, &m
 	}
-	m := maps[best]
-	rest := strings.TrimPrefix(strings.TrimPrefix(rel, m.Dir), "/")
-	parts := []string{}
-	if m.Prefix != "" {
-		parts = append(parts, m.Prefix)
-	}
-	if rest != "" {
-		for _, seg := range strings.Split(rest, "/") {
-			if !phpIdent.MatchString(seg) {
-				return res, Errorf(CodeInvalidParams, "directory %q is not a valid namespace segment (PSR-4 %s → %s); pass a namespace explicitly", seg, m.Prefix, m.Dir)
-			}
-			parts = append(parts, seg)
-		}
-	}
-	res.Namespace, res.Found, res.Mapping = strings.Join(parts, `\`), true, &m
 	return res, nil
 }
 
@@ -167,9 +70,9 @@ func (a *App) dirNamespace(path string) (NamespaceResult, error) {
 		return NamespaceResult{}, err
 	}
 	root := a.ProjectRoot()
-	maps, err := readPSR4(root)
+	maps, err := psr4.Read(root)
 	if err != nil {
-		return NamespaceResult{}, err
+		return NamespaceResult{}, Errorf(CodeFailed, "%v", err)
 	}
 	rel, _ := filepath.Rel(root, abs)
 	rel = filepath.ToSlash(rel)
@@ -189,13 +92,16 @@ type PHPClassParams struct {
 	Dir string `json:"dir,omitempty"`
 	// Name is the class name; the file is <Dir>/<Name>.php.
 	Name string `json:"name"`
-	// Kind is class (default, final), abstract, interface, trait or enum.
+	// Kind is a file template (FileTemplateKinds): class (default,
+	// final), abstract, interface, trait, enum or test.
 	Kind string `json:"kind,omitempty"`
 	// Namespace overrides the PSR-4 namespace ("" for none); nil means
 	// from composer.json.
 	Namespace *string `json:"namespace,omitempty"`
 	// Open opens the new file as document.
 	Open bool `json:"open,omitempty"`
+	// DryRun returns the content without creating the file.
+	DryRun bool `json:"dryRun,omitempty"`
 }
 
 // PHPClassResult is the result of "files.createPhpClass".
@@ -205,34 +111,16 @@ type PHPClassResult struct {
 	// Class is the fully qualified name.
 	Class string `json:"class"`
 	Kind  string `json:"kind"`
-}
-
-// phpTemplate renders the file of a new type.
-func phpTemplate(kind, namespace, name string) string {
-	var b strings.Builder
-	b.WriteString("<?php\n\ndeclare(strict_types=1);\n\n")
-	if namespace != "" {
-		b.WriteString("namespace " + namespace + ";\n\n")
-	}
-	switch kind {
-	case "abstract":
-		b.WriteString("abstract class ")
-	case "interface", "trait", "enum":
-		b.WriteString(kind + " ")
-	default:
-		b.WriteString("final class ")
-	}
-	b.WriteString(name + "\n{\n}\n")
-	return b.String()
+	// Content is the rendered file (always set for dryRun).
+	Content string `json:"content,omitempty"`
 }
 
 func (a *App) filesCreatePHPClass(ctx context.Context, p PHPClassParams) (PHPClassResult, error) {
-	switch p.Kind {
-	case "":
+	if p.Kind == "" {
 		p.Kind = "class"
-	case "class", "abstract", "interface", "trait", "enum":
-	default:
-		return PHPClassResult{}, Errorf(CodeInvalidParams, "kind must be class, abstract, interface, trait or enum")
+	}
+	if fileTemplateByKind(p.Kind) == nil {
+		return PHPClassResult{}, Errorf(CodeInvalidParams, "kind must be one of %s", strings.Join(FileTemplateKinds(), ", "))
 	}
 	p.Name = strings.TrimSuffix(strings.TrimSpace(p.Name), ".php")
 	if !validClassName(p.Name) {
@@ -241,7 +129,7 @@ func (a *App) filesCreatePHPClass(ctx context.Context, p PHPClassParams) (PHPCla
 	var ns string
 	if p.Namespace != nil {
 		ns = strings.Trim(strings.TrimSpace(*p.Namespace), `\`)
-		if !validNamespace(ns) {
+		if !psr4.ValidNamespace(ns) {
 			return PHPClassResult{}, Errorf(CodeInvalidParams, "%q is not a valid namespace", ns)
 		}
 	} else {
@@ -255,14 +143,68 @@ func (a *App) filesCreatePHPClass(ctx context.Context, p PHPClassParams) (PHPCla
 	if err != nil {
 		return PHPClassResult{}, err
 	}
-	abs, err := a.createFile(filepath.Join(dir, p.Name+".php"), []byte(phpTemplate(p.Kind, ns, p.Name)))
+	content, err := a.renderFileTemplate(p.Kind, a.fileTemplateVars(ns, p.Name))
 	if err != nil {
 		return PHPClassResult{}, err
 	}
-	fr, err := a.openResult(ctx, abs, p.Open)
 	class := p.Name
 	if ns != "" {
 		class = ns + `\` + p.Name
 	}
-	return PHPClassResult{FileOpResult: fr, Namespace: ns, Class: class, Kind: p.Kind}, err
+	res := PHPClassResult{Namespace: ns, Class: class, Kind: p.Kind, Content: content}
+	target := filepath.Join(dir, p.Name+".php")
+	if p.DryRun {
+		res.File, res.Path = target, a.displayPath(target)
+		return res, nil
+	}
+	abs, err := a.createFile(target, []byte(content))
+	if err != nil {
+		return PHPClassResult{}, err
+	}
+	res.Content = ""
+	res.FileOpResult, err = a.openResult(ctx, abs, p.Open)
+	return res, err
+}
+
+// fileTemplateVars are the variables of a new type name in namespace ns:
+// NAME, NAMESPACE, FQN, DATE, YEAR, USER and, for tests, TEST_BASE (the
+// project's own TestCase in the test namespace root if it exists) with
+// TEST_BASE_NAME and TEST_BASE_USE ("" when it needs no import).
+func (a *App) fileTemplateVars(ns, name string) map[string]string {
+	now := time.Now()
+	user := os.Getenv("USER")
+	if user == "" {
+		user = os.Getenv("USERNAME")
+	}
+	fqn := name
+	if ns != "" {
+		fqn = ns + `\` + name
+	}
+	vars := map[string]string{
+		"NAME": name, "NAMESPACE": ns, "FQN": fqn, "USER": user,
+		"DATE": now.Format("2006-01-02"), "YEAR": now.Format("2006"),
+	}
+	base := `PHPUnit\Framework\TestCase`
+	if root := a.ProjectRoot(); root != "" {
+		maps, _ := psr4.Read(root)
+		for _, m := range maps {
+			if m.Dev {
+				if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(m.Dir), "TestCase.php")); err == nil {
+					base = strings.TrimPrefix(m.Prefix+`\TestCase`, `\`)
+				}
+				break
+			}
+		}
+	}
+	vars["TEST_BASE"] = base
+	baseNS, baseName := "", base
+	if i := strings.LastIndexByte(base, '\\'); i >= 0 {
+		baseNS, baseName = base[:i], base[i+1:]
+	}
+	vars["TEST_BASE_NAME"] = baseName
+	vars["TEST_BASE_USE"] = ""
+	if baseNS != ns {
+		vars["TEST_BASE_USE"] = base
+	}
+	return vars
 }

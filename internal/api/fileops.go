@@ -32,7 +32,8 @@ func (a *App) registerFileOps() {
 	mustHandle(a, "files.delete", "Move files or directories to the trash (permanent:true deletes); unsaved open documents block", a.filesDelete)
 	mustHandle(a, "files.reveal", "Show a file in the system file manager (Finder, Explorer, xdg-open)", a.filesReveal)
 	mustHandle(a, "files.copyPath", "Absolute, project-relative and file:// forms of paths (the client copies them)", a.filesCopyPath)
-	mustHandle(a, "files.createPhpClass", "Create a PHP class/interface/trait/enum file with the PSR-4 namespace from composer.json", a.filesCreatePHPClass)
+	mustHandle(a, "files.createPhpClass", "Create a PHP file from a file template (class, abstract, interface, trait, enum, test) with the PSR-4 namespace from composer.json", a.filesCreatePHPClass)
+	mustHandle(a, "files.templates", "File templates (built-in and user replacements from fileTemplates.<kind>)", a.filesTemplates)
 	mustHandle(a, "files.phpNamespace", "PSR-4 namespace of a directory according to composer.json", a.filesPHPNamespace)
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -94,5 +95,15 @@ func TestTemplatesController(t *testing.T) {
 	c.Settle(time.Second)
 	if c.Status.Notice != "no template" {
 		t.Fatalf("notice %q", c.Status.Notice)
+	}
+}
+
+// The New PHP Class kinds are the file templates of the backend.
+func TestPHPClassKindsMatchTemplates(t *testing.T) {
+	if !slices.Equal(PHPClassKinds, api.FileTemplateKinds()) {
+		t.Fatalf("%v vs %v", PHPClassKinds, api.FileTemplateKinds())
+	}
+	if PHPClassKindLabel("test") != "Test" {
+		t.Fatal(PHPClassKindLabel("test"))
 	}
 }
