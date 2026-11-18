@@ -361,10 +361,12 @@ func (m *Manager) wait(p *proc, cmd *exec.Cmd, stdout, stderr io.Reader, outW, e
 	m.mu.Lock()
 	m.pruneLocked()
 	m.mu.Unlock()
-	close(p.done)
+	// OnExit runs before done closes: a returned Wait implies the exit
+	// was reported (after all output).
 	if m.OnExit != nil {
 		m.OnExit(p.snapshot(m.now()))
 	}
+	close(p.done)
 }
 
 // pump reads lines of one stream. Long lines are split at maxLineBytes;

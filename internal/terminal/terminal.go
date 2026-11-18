@@ -461,10 +461,12 @@ func (s *Session) wait() {
 	// Windows the pseudo console handle is freed here).
 	_ = s.proc.Close()
 	s.signal()
-	close(s.done)
+	// OnExit runs before done closes, so a returned wait implies the exit
+	// was reported.
 	if s.m.OnExit != nil && !closing {
 		s.m.OnExit(info)
 	}
+	close(s.done)
 }
 
 // shutdown ends the program and the goroutines; it returns the error of
