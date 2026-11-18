@@ -152,8 +152,12 @@ func ctrlChar(r rune) (byte, bool) {
 	return 0, false
 }
 
+// pasteEnd ends a bracketed paste.
+const pasteEnd = "\x1b[201~"
+
 // EncodePaste wraps pasted text for the program: with bracketed paste
-// mode in ESC [200~ … ESC [201~ (embedded end markers removed), line
+// mode in ESC [200~ … ESC [201~ (embedded end markers removed until
+// none is left, so that nested ones cannot rebuild a marker), line
 // breaks become CR like typed Enter.
 func EncodePaste(text string, m Modes) []byte {
 	text = strings.ReplaceAll(text, "\r\n", "\r")
@@ -161,6 +165,8 @@ func EncodePaste(text string, m Modes) []byte {
 	if !m.BracketedPaste {
 		return []byte(text)
 	}
-	text = strings.ReplaceAll(text, "\x1b[201~", "")
+	for strings.Contains(text, pasteEnd) {
+		text = strings.ReplaceAll(text, pasteEnd, "")
+	}
 	return []byte("\x1b[200~" + text + "\x1b[201~")
 }

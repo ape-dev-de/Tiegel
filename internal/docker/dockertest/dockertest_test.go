@@ -56,7 +56,13 @@ func TestFake(t *testing.T) {
 	if out, _ := run(t, f, "image", "ls", "-q", "img"); !strings.HasPrefix(out, "sha256:") {
 		t.Fatalf("image %q", out)
 	}
-	for _, bad := range [][]string{{}, {"bogus"}, {"run", "img"}, {"compose", "exec", "app", "php"}, {"compose", "exec", "php", "-r"}, {"compose", "exec", "php", "-r", "x"}} {
+	if _, err := run(t, f, "compose", "-p", "x", "exec", "-T", "app", "sh", "-c", "kill", "sh", "7"); err != nil {
+		t.Fatalf("compose exec helper: %v", err)
+	}
+	if _, err := run(t, f, "exec", "adminer", "sh", "-c", "kill", "sh", "7"); err != nil {
+		t.Fatalf("exec helper: %v", err)
+	}
+	for _, bad := range [][]string{{}, {"bogus"}, {"exec", "adminer", "ls"}, {"run", "img"}, {"compose", "exec", "app", "php"}, {"compose", "exec", "php", "-r"}, {"compose", "exec", "php", "-r", "x"}} {
 		if _, err := run(t, f, bad...); err == nil {
 			t.Errorf("%v succeeded", bad)
 		}

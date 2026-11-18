@@ -181,3 +181,103 @@ func TestTerminalLaunchHook(t *testing.T) {
 	wantCode(t, a, "terminal.open", TerminalOpenParams{Kind: "test.kind", Target: "bad"}, CodeUnavailable)
 	// App.Close ends the running session (the cleanup closes the App).
 }
+
+// TestTerminalLaunchStop: the Stop of a plugin launch gets the PID the
+// remote side reported and runs on terminal.close (D370).
+func TestTerminalLaunchStop(t *testing.T) {
+	needSh(t)
+	a := newTestApp(t)
+	pids := make(chan int, 2)
+	HookTerminalLaunch.On(a.Hooks(), 0, func(_ context.Context, q TerminalLaunch) (TerminalLaunch, error) {
+		if q.Kind != "test.remote" {
+			return q, nil
+		}
+		// Plays `docker exec -it C <report> sh`: report, then a shell.
+		argv := terminal.ReportPIDArgs("sh", "-c", "echo ready; sleep 30")
+		q.Program, q.Args = "/bin/sh", argv[1:]
+		q.Stop = func(_ context.Context, pid int) error { pids <- pid; return nil }
+		return q, nil
+	}, hooks.WithOwner("test"))
+	var info terminal.Info
+	call(t, a, "terminal.open", TerminalOpenParams{Kind: "test.remote", Target: "c", Dir: t.TempDir()}, &info)
+	txt := waitScreen(t, a, info.ID, "ready")
+	if strings.Contains(txt, "tiegel-pid") {
+		t.Fatalf("report visible: %q", txt)
+	}
+	var list []terminal.Info
+	call(t, a, "terminal.list", nil, &list)
+	if len(list) != 1 || list[0].RemotePID <= 1 {
+		t.Fatalf("no remote pid %+v", list)
+	}
+	call(t, a, "terminal.close", TerminalIDParams{ID: info.ID}, nil)
+	select {
+	case pid := <-pids:
+		if pid != list[0].RemotePID {
+			t.Fatalf("stop pid %d, reported %d", pid, list[0].RemotePID)
+		}
+	default:
+		t.Fatal("stop not called")
+	}
+}
+
+// TestTerminalKinds: plugins list their kinds; duplicates and invalid
+// entries are dropped.
+func TestTerminalKinds(t *testing.T) {
+	a := newTestApp(t)
+	var kinds []TerminalKind
+	call(t, a, "terminal.kinds", nil, &kinds)
+	if kinds == nil || len(kinds) != 0 {
+		t.Fatalf("no plugins %+v", kinds)
+	}
+	HookTerminalKinds.On(a.Hooks(), 0, func(_ context.Context, l []TerminalKind) ([]TerminalKind, error) {
+		return append(l, TerminalKind{Kind: "x.svc", Label: "Shell in Service", Target: TerminalTargetService},
+			TerminalKind{Kind: "x.svc", Label: "dup"}, TerminalKind{Label: "no kind"}, TerminalKind{Kind: terminal.KindShell}), nil
+	}, hooks.WithOwner("test"))
+	call(t, a, "terminal.kinds", nil, &kinds)
+	if len(kinds) != 1 || kinds[0].Label != "Shell in Service" || kinds[0].Target != TerminalTargetService {
+		t.Fatalf("kinds %+v", kinds)
+	}
+}
+
+// TestTerminalProjectSwitch: opening another project or closing it
+// closes the sessions of the previous one (D371); none keeps running
+// unseen.
+func TestTerminalProjectSwitch(t *testing.T) {
+	needSh(t)
+	a := newTestApp(t)
+	open := func() terminal.Info {
+		t.Helper()
+		var info terminal.Info
+		call(t, a, "terminal.open", TerminalOpenParams{Shell: "/bin/sh", Args: []string{"-c", "sleep 30"}}, &info)
+		return info
+	}
+	waitList := func(want func([]terminal.Info) bool) []terminal.Info {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			var l []terminal.Info
+			call(t, a, "terminal.list", nil, &l)
+			if want(l) {
+				return l
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("sessions %+v", l)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	open() // without a project: closed when a project opens
+	rootA := openProject(t, a, nil)
+	waitList(func(l []terminal.Info) bool { return len(l) == 0 })
+	if a1 := open(); a1.Project != rootA {
+		t.Fatalf("project %+v", a1)
+	}
+	rootB := openProject(t, a, nil)
+	b1 := open()
+	l := waitList(func(l []terminal.Info) bool { return len(l) == 1 })
+	if l[0].ID != b1.ID || l[0].Project != rootB {
+		t.Fatalf("after switch %+v", l)
+	}
+	call(t, a, "project.close", nil, nil)
+	waitList(func(l []terminal.Info) bool { return len(l) == 0 })
+}

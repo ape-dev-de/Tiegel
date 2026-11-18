@@ -22,7 +22,8 @@ import (
 // Terminal tool window (AP15.5): one tab per terminal session with the
 // termview organism; Alt+F12 toggles it (and focuses the terminal).
 // Sessions are the kernel's terminal.* service; a shell inside a compose
-// service comes from the Services window (kind docker.service).
+// service or container comes from the Services window (with the kind a
+// plugin lists in terminal.kinds).
 
 // Terminal tool window and action IDs.
 const (
@@ -105,12 +106,13 @@ func (d *termDock) newTab() {
 
 // OpenServiceShell opens a shell inside a compose service or a
 // container (Services window) in the embedded terminal.
+// The session kind comes from the backend (terminal.kinds, D372).
 func (d *termDock) openServiceShell(service, container string) {
-	p := api.TerminalOpenParams{Kind: "docker.service", Target: service}
 	if container != "" {
-		p = api.TerminalOpenParams{Kind: "docker.container", Target: container}
+		d.terms().OpenIn(api.TerminalTargetContainer, container)
+		return
 	}
-	d.terms().Open(p)
+	d.terms().OpenIn(api.TerminalTargetService, service)
 }
 
 // frame follows the project and shows the window when a session opened

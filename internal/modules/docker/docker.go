@@ -154,6 +154,9 @@ func (m *Module) Start(ctx module.Context) error {
 		}
 		return m.terminalLaunch(c, q), nil
 	}, hooks.WithOwner(ID), hooks.WithTimeout(10*time.Second))
+	api.HookTerminalKinds.On(ctx.Hooks(), 0, func(_ context.Context, l []api.TerminalKind) ([]api.TerminalKind, error) {
+		return terminalKinds(l), nil
+	}, hooks.WithOwner(ID))
 
 	ctx.OnStop(settings.Changed.Subscribe(ctx.Bus(), func(ch settings.Change) {
 		if !strings.HasPrefix(ch.Key, "docker.") {

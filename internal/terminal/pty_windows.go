@@ -25,8 +25,14 @@ type winProcess struct {
 	pid     int
 	tree    *proctree.Tree
 
-	closeOnce sync.Once
+	// mu orders Resize and Kill against Close: the pseudo console and
+	// the process handle are invalid once closed.
+	mu     sync.Mutex
+	closed bool
 }
+
+// errClosed is returned by Resize after Close.
+var errClosed = errors.New("terminal: pseudo console closed")
 
 // StartPTY starts c attached to a new pseudo console. Older Windows
 // versions without ConPTY get an error (the session cannot open).
@@ -127,6 +133,11 @@ func (p *winProcess) Read(b []byte) (int, error)  { return p.out.Read(b) }
 func (p *winProcess) Write(b []byte) (int, error) { return p.in.Write(b) }
 
 func (p *winProcess) Resize(cols, rows int) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return errClosed
+	}
 	return windows.ResizePseudoConsole(p.hpc, windows.Coord{X: int16(clampSize(cols)), Y: int16(clampSize(rows))})
 }
 
@@ -147,20 +158,27 @@ func (p *winProcess) Wait() (int, error) {
 func (p *winProcess) Hangup() error { return p.Kill() }
 
 func (p *winProcess) Kill() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.tree == nil {
+		if p.closed {
+			return nil
+		}
 		return windows.TerminateProcess(p.proc, 1)
 	}
 	return p.tree.Kill()
 }
 
 func (p *winProcess) Close() error {
-	var err error
-	p.closeOnce.Do(func() {
-		// Closing the pseudo console ends the output stream.
-		windows.ClosePseudoConsole(p.hpc)
-		err = errors.Join(p.in.Close(), p.out.Close(), windows.CloseHandle(p.proc))
-	})
-	return err
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return nil
+	}
+	p.closed = true
+	// Closing the pseudo console ends the output stream.
+	windows.ClosePseudoConsole(p.hpc)
+	return errors.Join(p.in.Close(), p.out.Close(), windows.CloseHandle(p.proc))
 }
 
 func (p *winProcess) Pid() int { return p.pid }

@@ -23,6 +23,8 @@
 //	                           <dir>/events-next whenever it appears,
 //	                           until killed; fails when <dir>/events-fail
 //	                           exists
+//	compose … exec … sh -c …, exec … sh -c …
+//	                           succeed without output (stop helpers)
 //	compose … exec|run …, run …  behave like php (-m, -r with the version,
 //	                           ini or probe script); `run` of an image not
 //	                           in <dir>/images with --pull never fails
@@ -210,7 +212,15 @@ func play(dir string, args []string) int {
 		case "up", "down", "start", "stop", "restart":
 			return action(dir, sub)
 		}
+		if shellHelper(args) {
+			return 0
+		}
 		return php(dir, args)
+	case "exec":
+		if shellHelper(args) {
+			return 0
+		}
+		return fail("exec: only sh -c helpers are played")
 	case "start", "stop", "restart":
 		return action(dir, args[0])
 	case "logs":
@@ -244,6 +254,17 @@ func play(dir string, args []string) int {
 		return fail("run without --entrypoint")
 	}
 	return fail("unknown command " + args[0])
+}
+
+// shellHelper reports whether args run `sh -c SCRIPT …` (stop helpers,
+// which the fake answers with success).
+func shellHelper(args []string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "sh" && args[i+1] == "-c" {
+			return true
+		}
+	}
+	return false
 }
 
 // subIndex returns the index of the compose subcommand after the global

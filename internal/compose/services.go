@@ -211,6 +211,23 @@ func (s Stack) ShellArgs(service, shell string) ([]string, error) {
 	return append([]string{s.Client.Bin()}, s.Client.Args(s.args("exec", service, shell)...)...), nil
 }
 
+// ExecArgs returns the docker arguments (without the binary) that run
+// argv inside service: with a TTY (interactive) or with -T (for helper
+// commands whose output is read).
+func (s Stack) ExecArgs(service string, tty bool, argv ...string) ([]string, error) {
+	if err := CheckServices([]string{service}); err != nil {
+		return nil, err
+	}
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("compose: exec without a command")
+	}
+	a := s.args("exec")
+	if !tty {
+		a = append(a, "-T")
+	}
+	return append(append(a, service), argv...), nil
+}
+
 // ParseLogLine splits a line of `docker compose logs` into the container
 // prefix ("app-1  | text") and the text. Lines without a prefix return an
 // empty container.

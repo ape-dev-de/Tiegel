@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/ape-dev-de/tiegel/internal/core/bus"
 	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/core/shellenv"
@@ -58,7 +59,35 @@ type TerminalLaunch struct {
 	Dir  string
 	Name string
 	Err  string
+	// Stop ends the processes on the remote side on terminal.close
+	// (killing the local client, e.g. `docker exec`, leaves them): the
+	// program reports the PID of the remote shell when it is started
+	// through terminal.ReportPIDArgs, and Stop gets it (D370).
+	Stop terminal.StopRemoteFunc
 }
+
+// TerminalKind is a session kind a plugin offers (terminal.kinds), so
+// that clients open plugin sessions without knowing plugin names.
+type TerminalKind struct {
+	Kind string `json:"kind"`
+	// Label names the kind for menus.
+	Label string `json:"label"`
+	// Target says what the target of terminal.open names
+	// (TerminalTargetService, TerminalTargetContainer, or a plugin's
+	// own word).
+	Target string `json:"target"`
+}
+
+// Targets of terminal kinds.
+const (
+	// TerminalTargetService: a compose service of the open project.
+	TerminalTargetService = "service"
+	// TerminalTargetContainer: a container by name or ID.
+	TerminalTargetContainer = "container"
+)
+
+// HookTerminalKinds collects the session kinds of the enabled plugins.
+var HookTerminalKinds = hooks.NewFilter[[]TerminalKind]("terminal.kinds")
 
 // HookTerminalLaunch resolves non-shell sessions (provided by plugins,
 // e.g. docker for "docker.service" and "docker.container").
@@ -165,8 +194,12 @@ func (a *App) registerTerminal() {
 	m.OnChange = func(i terminal.Info) { a.bus.Publish(TopicTerminalChanged, i) }
 	m.OnExit = func(i terminal.Info) { a.bus.Publish(TopicTerminalExited, i) }
 	m.OnClose = func(id string) { a.bus.Publish(TopicTerminalClosed, TerminalIDParams{ID: id}) }
+	for _, topic := range []string{TopicProjectClosed, TopicProjectOpened} {
+		a.bus.Subscribe(topic, func(bus.Event) { a.closeForeignTerminals() })
+	}
 	mustHandle(a, "terminal.open", "Open a terminal session: the shell in the project, or a plugin kind such as a shell in a compose service", a.terminalOpen)
 	mustHandle(a, "terminal.list", "Terminal sessions with state", func(context.Context, struct{}) ([]terminal.Info, error) { return m.List(), nil })
+	mustHandle(a, "terminal.kinds", "Session kinds of the enabled plugins (kind, label, what the target names)", a.terminalKinds)
 	mustHandle(a, "terminal.input", "Send text, a key (encoded for the program's modes) or pasted text to a session", a.terminalInput)
 	mustHandle(a, "terminal.resize", "Change the size of a session (columns, rows)", a.terminalResize)
 	mustHandle(a, "terminal.rename", "Rename a terminal tab", a.terminalRename)
@@ -228,7 +261,7 @@ func (a *App) terminalOpen(ctx context.Context, p TerminalOpenParams) (terminal.
 		if q.Program == "" {
 			return terminal.Info{}, Errorf(CodeUnavailable, "no enabled plugin opens terminals of kind %q", p.Kind)
 		}
-		o.Program, o.Args, extra = q.Program, q.Args, q.Env
+		o.Program, o.Args, extra, o.StopRemote = q.Program, q.Args, q.Env, q.Stop
 		if dir == "" {
 			dir = q.Dir
 		}
@@ -379,4 +412,32 @@ func (a *App) terminalClose(_ context.Context, p TerminalIDParams) (struct{}, er
 // closeTerminals ends all sessions (App.Close).
 func (a *App) closeTerminals() {
 	a.terms.CloseAll()
+}
+
+// terminalKinds lists the plugin session kinds (first entry of a kind
+// wins, entries without kind are dropped).
+func (a *App) terminalKinds(ctx context.Context, _ struct{}) ([]TerminalKind, error) {
+	list, err := HookTerminalKinds.Apply(ctx, a.hooks, nil)
+	if err != nil {
+		return nil, Errorf(CodeFailed, "terminal.kinds: %w", err)
+	}
+	out := []TerminalKind{}
+	seen := map[string]bool{}
+	for _, k := range list {
+		if k.Kind == "" || k.Kind == terminal.KindShell || seen[k.Kind] {
+			continue
+		}
+		seen[k.Kind] = true
+		out = append(out, k)
+	}
+	return out, nil
+}
+
+// closeForeignTerminals closes the sessions that do not belong to the
+// open project (D371): on project.closed and project.opened, so that no
+// session (and no shell in a container of the old stack) keeps running
+// unseen. It runs on the bus goroutine; sessions close in parallel.
+func (a *App) closeForeignTerminals() {
+	root := a.ProjectRoot()
+	a.terms.CloseMatching(func(i terminal.Info) bool { return i.Project != root })
 }

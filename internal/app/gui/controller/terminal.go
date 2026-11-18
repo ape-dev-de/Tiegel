@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -114,17 +115,43 @@ func (t *Terminals) Open(p api.TerminalOpenParams) {
 	t.c.Go(func(ctx context.Context) func() {
 		var info terminal.Info
 		err := t.c.call(ctx, "terminal.open", p, &info)
-		return func() {
-			if err != nil {
-				t.c.Status.Notice = "Terminal: " + err.Error()
-				return
-			}
-			t.add(info)
-			t.Selected = info.ID
-			t.Opened = true
-			t.Version++
-		}
+		return func() { t.opened(info, err) }
 	})
+}
+
+// OpenIn starts a shell inside target, which names a target of the kind
+// role (api.TerminalTargetService, api.TerminalTargetContainer). The
+// session kind comes from the plugins (terminal.kinds), so the GUI
+// names no plugin.
+func (t *Terminals) OpenIn(role, target string) {
+	t.c.Go(func(ctx context.Context) func() {
+		var (
+			kinds []api.TerminalKind
+			info  terminal.Info
+		)
+		err := t.c.call(ctx, "terminal.kinds", nil, &kinds)
+		if err == nil {
+			i := slices.IndexFunc(kinds, func(k api.TerminalKind) bool { return k.Target == role })
+			if i < 0 {
+				err = fmt.Errorf("no enabled plugin opens shells in a %s", role)
+			} else {
+				err = t.c.call(ctx, "terminal.open", api.TerminalOpenParams{Kind: kinds[i].Kind, Target: target}, &info)
+			}
+		}
+		return func() { t.opened(info, err) }
+	})
+}
+
+// opened selects the tab of a session that opened from this window.
+func (t *Terminals) opened(info terminal.Info, err error) {
+	if err != nil {
+		t.c.Status.Notice = "Terminal: " + err.Error()
+		return
+	}
+	t.add(info)
+	t.Selected = info.ID
+	t.Opened = true
+	t.Version++
 }
 
 // add creates the tab of a session if it is new.
@@ -341,8 +368,8 @@ func (t *Terminals) RunningCount() int {
 }
 
 // ProjectChanged shows the sessions of the open project (called by the
-// view when the project root changes). Sessions of other projects keep
-// running in the backend.
+// view when the project root changes). The backend closes the sessions
+// of the previous project (D371); their tabs go right away.
 func (t *Terminals) ProjectChanged() {
 	root := t.c.Project.Root
 	if root == t.project {

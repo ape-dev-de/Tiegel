@@ -74,6 +74,9 @@ type Terminal struct {
 
 	// Reply receives answers to device queries (DSR, DA); may be nil.
 	Reply func([]byte)
+	// OSC receives operating system commands the emulator does not
+	// handle itself (number and text); may be nil.
+	OSC func(num, text string)
 }
 
 const graphemeBase = 0x110000
@@ -888,6 +891,10 @@ func (t *Terminal) oscDispatch() {
 		t.title = sanitize(rest)
 	case "7":
 		t.cwd = fileURLPath(rest)
+	default:
+		if t.OSC != nil {
+			t.OSC(num, rest)
+		}
 	}
 }
 
@@ -949,10 +956,18 @@ func (t *Terminal) Resize(cols, rows int) {
 	if rows < t.rows {
 		extra := t.rows - rows
 		for _, s := range []*screen{&t.main, &t.alt} {
-			below := max(0, len(s.lines)-1-t.row)
+			// Each screen is cut at its own cursor: the active one at
+			// the cursor, the main screen behind the alternate one at
+			// the cursor saved on entry (1049), where it continues.
+			r := t.row
+			if s != t.cur && s.saved.valid {
+				r = s.saved.row
+			}
+			below := max(0, len(s.lines)-1-r)
 			cut := min(extra, below)
 			s.lines = s.lines[:len(s.lines)-cut]
-			if over := len(s.lines) - rows; over > 0 {
+			over := max(0, len(s.lines)-rows)
+			if over > 0 {
 				if s == &t.main {
 					for _, l := range s.lines[:over] {
 						t.pushScrollback(l)
@@ -960,8 +975,14 @@ func (t *Terminal) Resize(cols, rows int) {
 				}
 				s.lines = s.lines[over:]
 			}
+			// Positions move up with the content.
+			if s == t.cur {
+				t.row = max(0, t.row-over)
+			}
+			if s.saved.valid {
+				s.saved.row = max(0, s.saved.row-over)
+			}
 		}
-		t.row = max(0, t.row-max(0, extra-max(0, t.rows-1-t.row)))
 	} else if rows > t.rows {
 		// Pull lines back from the scrollback (main screen) so the
 		// content stays at the bottom, like xterm.
@@ -979,6 +1000,9 @@ func (t *Terminal) Resize(cols, rows int) {
 			t.dropScrollbackTail(pull)
 			t.main.lines = append(back, t.main.lines...)
 			t.row += pull
+			if t.main.saved.valid {
+				t.main.saved.row += pull
+			}
 		}
 		for len(t.main.lines) < rows {
 			t.main.lines = append(t.main.lines, newLine(cols, Style{}))
