@@ -216,6 +216,7 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "lsp.definition", "Definition locations of the symbol at a position", m.lspDefinition)
 	api.Add(p, "lsp.implementation", "Implementations of the symbol at a position", m.lspImplementation)
 	api.Add(p, "lsp.semanticTokens", "Semantic tokens of a document", m.lspSemanticTokens)
+	api.Add(p, "lsp.inlayHints", "Inlay hints (parameter names, inferred types) of a document or range, if the server provides them", m.lspInlayHints)
 	m.registerRefactoring(p)
 	if err := p.Err(); err != nil {
 		m.sup.Close()

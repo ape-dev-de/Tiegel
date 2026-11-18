@@ -292,7 +292,7 @@ func (e *Editor) lineBytes(v visLine) []byte { return e.lineText[v.tStart:v.tEnd
 
 // colOf returns the visual column of document offset off in line v.
 func (e *Editor) colOf(v visLine, off int) int {
-	return buffer.VisualCol(e.lineBytes(v), off-v.start, e.tabWidth())
+	return buffer.VisualCol(e.lineBytes(v), off-v.start, e.tabWidth()) + inlayShift(e.visInlays(v), off-v.start)
 }
 
 func (e *Editor) paint(gtx layout.Context, th *tokens.Theme) {
@@ -353,7 +353,7 @@ func (e *Editor) paint(gtx layout.Context, th *tokens.Theme) {
 	for _, v := range vis {
 		line := e.lineBytes(v)
 		spans := e.lineSpans(s, v)
-		call, cols := e.lineDrawing(th, lineKey{v.line, v.sub}, line, spans, firstCol, lastCol, e.wsFrom(v))
+		call, cols := e.lineDrawing(th, lineKey{v.line, v.sub}, line, spans, firstCol, lastCol, e.wsFrom(v), e.visInlays(v))
 		if !e.wrapped {
 			e.maxCols = max(e.maxCols, cols)
 		}

@@ -134,7 +134,9 @@ func (e *Editor) rowCol(s buffer.Snapshot, off int) (row, col int) {
 		return e.view.RowOf(s, off)
 	}
 	pos := s.OffsetToPos(off)
-	return e.folds.DocToVisible(pos.Line), buffer.VisualCol(s.Line(pos.Line), pos.Col, e.tabWidth())
+	line := s.Line(pos.Line)
+	ins := e.lineInlays(s.LineStart(pos.Line), line)
+	return e.folds.DocToVisible(pos.Line), buffer.VisualCol(line, pos.Col, e.tabWidth()) + inlayShift(ins, pos.Col)
 }
 
 // caretRowCol is rowCol for the head of sel with its row-end affinity.
@@ -195,7 +197,7 @@ func (e *Editor) wsFrom(v visLine) int {
 
 // paintWhitespace marks the spaces and tabs of seg[b0:] (seg starts at
 // visual column 0) in a row whose top left corner is at (x0, y).
-func (e *Editor) paintWhitespace(ops *op.Ops, c color.NRGBA, seg []byte, b0, x0, y int) {
+func (e *Editor) paintWhitespace(ops *op.Ops, c color.NRGBA, seg []byte, b0, x0, y int, ins []lineInlay) {
 	tab := e.tabWidth()
 	lineH := e.met.lineH
 	cy := y + lineH/2
@@ -207,11 +209,13 @@ func (e *Editor) paintWhitespace(ops *op.Ops, c color.NRGBA, seg []byte, b0, x0,
 		case ch == '\t':
 			w = (col/tab+1)*tab - col
 			if i >= b0 {
-				e.paintTabArrow(ops, c, x0+e.met.colX(col), x0+e.met.colX(col+w), cy)
+				sh := inlayShift(ins, i)
+				e.paintTabArrow(ops, c, x0+e.met.colX(col+sh), x0+e.met.colX(col+sh+w), cy)
 			}
 		case ch == ' ':
 			if i >= b0 {
-				cx := x0 + (e.met.colX(col)+e.met.colX(col+1))/2
+				sh := inlayShift(ins, i)
+				cx := x0 + (e.met.colX(col+sh)+e.met.colX(col+sh+1))/2
 				draw.Rect(ops, image.Rect(cx-dot/2, cy-dot/2, cx-dot/2+dot, cy-dot/2+dot), c)
 			}
 		case ch >= 0x80:
@@ -264,7 +268,7 @@ func (e *Editor) paintSelectionWhitespace(ops *op.Ops, th *tokens.Theme, vis []v
 			seg := e.lineBytes(v)
 			b0, b1 := max(0, sel.Start()-v.start), min(len(seg), sel.End()-v.start)
 			if b1 > b0 {
-				e.paintWhitespace(ops, th.Editor.Whitespace, seg[:b1], b0, ox, v.y)
+				e.paintWhitespace(ops, th.Editor.Whitespace, seg[:b1], b0, ox, v.y, e.visInlays(v))
 			}
 		}
 	}

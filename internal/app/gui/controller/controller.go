@@ -67,6 +67,8 @@ type Prefs struct {
 	// global; 0 = none), ShowRightMargin whether it is drawn (D287).
 	RightMargin     int
 	ShowRightMargin bool
+	// InlayHints shows the language server's inlay hints (AP17.3).
+	InlayHints bool
 }
 
 // Setting keys of the GUI: declared core settings (settings.schema) and
@@ -89,6 +91,7 @@ const (
 	KeyShowWhitespace = "editor.showWhitespace"
 	KeyRightMargin    = "editor.rightMargin"
 	KeyShowMargin     = "editor.showRightMargin"
+	KeyInlayHints     = "editor.inlayHints"
 )
 
 // DefaultOpenTool is the tool window shown on the first start of a
@@ -123,6 +126,8 @@ type Controller struct {
 	Prefs Prefs
 	// Status feeds the status bar.
 	Status Status
+	// Templates is the live templates integration (templates.go).
+	Templates LiveTemplates
 	// Tree is the lazily loaded project tree.
 	Tree *Tree
 	// Git maps project-relative paths to their git state.
@@ -404,6 +409,7 @@ func (c *Controller) loadPrefs(ctx context.Context) Prefs {
 	p.ShowWhitespace = getEffective(ctx, c.be, KeyShowWhitespace, "none")
 	p.RightMargin = getEffective(ctx, c.be, KeyRightMargin, 120)
 	p.ShowRightMargin = getEffective(ctx, c.be, KeyShowMargin, true)
+	p.InlayHints = getEffective(ctx, c.be, KeyInlayHints, true)
 	var cfg struct {
 		IdleSeconds *int `json:"idleSeconds"`
 	}

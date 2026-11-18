@@ -14,8 +14,9 @@ import (
 // keeps open documents in step. Results arrive on the UI goroutine; the
 // tree itself follows files.changed.
 
-// PHPClassKinds are the kinds of files.createPhpClass in menu order.
-var PHPClassKinds = []string{"class", "abstract", "interface", "trait", "enum"}
+// PHPClassKinds are the kinds of files.createPhpClass (the file templates,
+// api.FileTemplateKinds) in menu order.
+var PHPClassKinds = []string{"class", "abstract", "interface", "trait", "enum", "test"}
 
 // PHPClassKindLabel is the menu label of a kind.
 func PHPClassKindLabel(kind string) string {

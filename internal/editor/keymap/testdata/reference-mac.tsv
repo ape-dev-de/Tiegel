@@ -72,11 +72,11 @@ Debug	Ctrl+D	run.debug
 Debug Context Configuration	Ctrl+Shift+D	run.debugFile
 Run Context Configuration	Ctrl+Shift+R	run.runFile
 Rerun (Run window)	Cmd+R	run.rerun
-Generate	Cmd+N	later:M17
-Surround With	Cmd+Alt+T	later:M17
-Insert Live Template	Cmd+J	later:M17
-Extract Variable	Cmd+Alt+V	later:M17
-Extract Method	Cmd+Alt+M	later:M17
+Generate	Cmd+N	code.generate
+Surround With	Cmd+Alt+T	code.surroundWith
+Insert Live Template	Cmd+J	code.insertLiveTemplate
+Extract Variable	Cmd+Alt+V	refactor.extractVariable
+Extract Method	Cmd+Alt+M	refactor.extractMethod
 Terminal tool window	Alt+F12	view.terminal
 Run tool window	Cmd+4	view.run
 Bookmarks tool window	Cmd+2	later:M17
@@ -105,3 +105,4 @@ Step Into	F7	debug.stepInto
 Step Out	Shift+F8	debug.stepOut
 Stop	Cmd+F2	debug.stop
 Toggle Line Breakpoint	Cmd+F8	debug.toggleBreakpoint
+Surround with Live Template	Cmd+Alt+J	code.surroundWithLiveTemplate

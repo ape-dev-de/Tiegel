@@ -144,6 +144,7 @@ type View struct {
 	gitd  *gitDock
 	dbgd  *debugDock
 	navd  *navDock
+	tmpl  *templateDock
 	lspd  *lspDock
 	svcd  *servicesDock
 	rund  *runDock
@@ -210,6 +211,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v.dbgd = installDebug(v)
 	v.work = installWork(v)
 	v.navd = installNav(v)
+	v.tmpl = installTemplates(v)
 	v.installKeyNav()
 	v.lspd = installLSP(v)
 	v.svcd = installServices(v)

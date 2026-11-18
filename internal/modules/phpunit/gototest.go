@@ -2,13 +2,12 @@ package phpunit
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
+	"github.com/ape-dev-de/tiegel/internal/core/psr4"
 	"github.com/ape-dev-de/tiegel/internal/index"
 )
 
@@ -19,48 +18,30 @@ type psr4Entry struct {
 	Dev    bool
 }
 
-// readPSR4 reads the PSR-4 maps of composer.json, longest prefix first.
+// readPSR4 reads the PSR-4 maps of composer.json (the kernel's helper
+// psr4.Read), one entry per prefix with all its directories, longest
+// prefix first.
 func readPSR4(root string) []psr4Entry {
-	b, err := os.ReadFile(filepath.Join(root, "composer.json"))
+	maps, err := psr4.Read(root)
 	if err != nil {
 		return nil
 	}
-	var cj struct {
-		Autoload struct {
-			PSR4 map[string]json.RawMessage `json:"psr-4"`
-		} `json:"autoload"`
-		AutoloadDev struct {
-			PSR4 map[string]json.RawMessage `json:"psr-4"`
-		} `json:"autoload-dev"`
-	}
-	if json.Unmarshal(b, &cj) != nil {
-		return nil
-	}
 	var out []psr4Entry
-	add := func(m map[string]json.RawMessage, dev bool) {
-		for prefix, raw := range m {
-			var dirs []string
-			var one string
-			if json.Unmarshal(raw, &one) == nil {
-				dirs = []string{one}
-			} else if json.Unmarshal(raw, &dirs) != nil {
-				continue
-			}
-			e := psr4Entry{Prefix: prefix, Dev: dev}
-			if e.Prefix != "" && !strings.HasSuffix(e.Prefix, `\`) {
+	idx := map[psr4.Mapping]int{} // prefix + dev (Dir cleared) → entry
+	for _, m := range maps {
+		key := psr4.Mapping{Prefix: m.Prefix, Dev: m.Dev}
+		i, ok := idx[key]
+		if !ok {
+			e := psr4Entry{Prefix: m.Prefix, Dev: m.Dev}
+			if e.Prefix != "" {
 				e.Prefix += `\`
 			}
-			for _, d := range dirs {
-				e.Dirs = append(e.Dirs, abs(root, strings.TrimSuffix(d, "/")))
-			}
-			if len(e.Dirs) == 0 {
-				e.Dirs = []string{root}
-			}
+			i = len(out)
+			idx[key] = i
 			out = append(out, e)
 		}
+		out[i].Dirs = append(out[i].Dirs, filepath.Join(root, filepath.FromSlash(m.Dir)))
 	}
-	add(cj.Autoload.PSR4, false)
-	add(cj.AutoloadDev.PSR4, true)
 	sort.SliceStable(out, func(i, j int) bool {
 		if len(out[i].Prefix) != len(out[j].Prefix) {
 			return len(out[i].Prefix) > len(out[j].Prefix)

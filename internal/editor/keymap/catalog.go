@@ -66,6 +66,14 @@ const (
 	ViewFind           Action = "view.find"
 	ViewSoftWrap       Action = "view.softWrap"
 	ViewShowWhitespace Action = "view.showWhitespace"
+
+	// Editor convenience (AP17.3).
+	CodeGenerate             Action = "code.generate"
+	InsertLiveTemplate       Action = "code.insertLiveTemplate"
+	SurroundWith             Action = "code.surroundWith"
+	SurroundWithLiveTemplate Action = "code.surroundWithLiveTemplate"
+	ExtractVariable          Action = "refactor.extractVariable"
+	ExtractMethod            Action = "refactor.extractMethod"
 )
 
 // Def declares a bindable action with its default chords per preset
@@ -144,6 +152,13 @@ var appDefs = []Def{
 	{ID: "editor.complete", Title: "Complete", Context: CtxEditor, Mac: []string{"Ctrl+Space"}, PC: []string{"Ctrl+Space"}},
 	{ID: ParameterInfo, Title: "Parameter Info", Context: CtxEditor, Mac: []string{"Cmd+P"}, PC: []string{"Ctrl+P"}},
 	{ID: QuickDocumentation, Title: "Quick Documentation", Context: CtxEditor, Mac: []string{"F1", "Ctrl+J"}, PC: []string{"Ctrl+Q"}},
+	// Editor convenience (AP17.3): live templates, Generate, LSP refactorings.
+	{ID: CodeGenerate, Title: "Generate…", Context: CtxEditor, Mac: []string{"Cmd+N"}, PC: []string{"Ctrl+Alt+G"}},
+	{ID: InsertLiveTemplate, Title: "Insert Live Template…", Context: CtxEditor, Mac: []string{"Cmd+J"}, PC: []string{"Ctrl+J"}},
+	{ID: SurroundWith, Title: "Surround With…", Context: CtxEditor, Mac: []string{"Cmd+Alt+T"}, PC: []string{"Ctrl+Alt+T"}},
+	{ID: SurroundWithLiveTemplate, Title: "Surround with Live Template…", Context: CtxEditor, Mac: []string{"Cmd+Alt+J"}, PC: []string{"Ctrl+Alt+J"}},
+	{ID: ExtractVariable, Title: "Extract Variable…", Context: CtxEditor, Mac: []string{"Cmd+Alt+V"}, PC: []string{"Ctrl+Alt+V"}},
+	{ID: ExtractMethod, Title: "Extract Method…", Context: CtxEditor, Mac: []string{"Cmd+Alt+M"}, PC: []string{"Ctrl+Alt+M"}},
 	// Window.
 	{ID: "window.nextGroup", Title: "Next Editor Group", Context: CtxGlobal, Mac: []string{"Cmd+Alt+]"}, PC: []string{"Ctrl+Alt+]"}},
 	{ID: "window.previousGroup", Title: "Previous Editor Group", Context: CtxGlobal, Mac: []string{"Cmd+Alt+["}, PC: []string{"Ctrl+Alt+["}},

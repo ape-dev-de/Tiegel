@@ -97,6 +97,7 @@ type Editor struct {
 	annot   GutterColumn
 	decos   []LineDecoration
 	diags   []Diagnostic
+	inlays  []InlayHint
 	query   *search.Query
 	// hls are usage highlights for buffer version hlVersion.
 	hls       []Highlight
@@ -282,6 +283,7 @@ func (e *Editor) onEdit(ed buffer.Edit) {
 	e.wrap.ApplyEdit(e.buf.Snapshot(), ed) // no-op unless wrapping
 	e.cache.applyEdit(ed)
 	e.shiftDecorations(ed)
+	e.shiftInlays(ed)
 	for i := range e.diags {
 		e.diags[i].Start = mapOffset(e.diags[i].Start, ed)
 		e.diags[i].End = mapOffset(e.diags[i].End, ed)

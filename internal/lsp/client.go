@@ -396,6 +396,7 @@ func clientCapabilities() protocol.ClientCapabilities {
 				SymbolKind:                        &protocol.SymbolKindCapabilities{ValueSet: protocol.AllSymbolKinds()},
 				HierarchicalDocumentSymbolSupport: true,
 			},
+			InlayHint: &protocol.EmptyClientCapabilities{},
 		},
 	}
 }

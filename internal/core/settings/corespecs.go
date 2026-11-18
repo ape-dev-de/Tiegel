@@ -21,6 +21,7 @@ const (
 	KeyShowWhitespace    = "editor.showWhitespace"
 	KeyRightMargin       = "editor.rightMargin"
 	KeyShowRightMargin   = "editor.showRightMargin"
+	KeyInlayHints        = "editor.inlayHints"
 	KeyEditorConfig      = "files.editorconfig"
 	KeyFileAssociations  = "files.associations"
 	KeyWatchExclude      = "watch.exclude"
@@ -94,6 +95,8 @@ var kernelSpecs = []Spec{
 		Label: "Right margin (columns)", Help: "Column of the vertical ruler (0 = none); max_line_length from .editorconfig overrides it per file.", Group: PageEditor},
 	{Key: KeyShowRightMargin, Kind: KindBool, Default: true, Scope: ScopeGlobal,
 		Label: "Show right margin", Help: "Draw a thin vertical line at the right margin column.", Group: PageEditor},
+	{Key: KeyInlayHints, Kind: KindBool, Default: true, Scope: ScopeGlobal,
+		Label: "Show inlay hints", Help: "Show parameter names and inferred types from the language server inline (if it provides them; not with soft wrap).", Group: PageEditor},
 
 	{Key: KeyEditorConfig, Kind: KindBool, Default: true, Scope: ScopeProject,
 		Label: "Use .editorconfig", Help: "Apply indent style and size, final newline and trailing whitespace rules from .editorconfig files.", Group: PageFiles},

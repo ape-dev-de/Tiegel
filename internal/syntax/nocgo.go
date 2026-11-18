@@ -159,3 +159,6 @@ func (s *Snapshot) Outline() []Symbol { return nil }
 
 // Close is a no-op.
 func (s *Snapshot) Close() {}
+
+// NodesAt returns nil: this build has no syntax trees.
+func (d *Document) NodesAt(int) []Node { return nil }
