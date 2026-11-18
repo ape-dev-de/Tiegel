@@ -37,6 +37,7 @@ require (
 )
 
 require (
+	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/tree-sitter-grammars/tree-sitter-xml v0.7.0
 	github.com/tree-sitter-grammars/tree-sitter-yaml v0.7.2
@@ -45,7 +46,4 @@ require (
 	github.com/tree-sitter/tree-sitter-php v0.25.1
 )
 
-require (
-	github.com/creack/pty v1.1.24 // indirect
-	github.com/mattn/go-pointer v0.0.1 // indirect
-)
+require github.com/mattn/go-pointer v0.0.1 // indirect
