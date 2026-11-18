@@ -81,7 +81,7 @@ func (m *Module) Stop() error { return nil }
 // SettingSpecs implements module.SettingsProvider.
 func (m *Module) SettingSpecs() []settings.Spec {
 	return []settings.Spec{
-		{Key: SettingPath, Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Label: "Composer executable",
+		{Key: SettingPath, Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Label: "Composer executable", Executable: true,
 			Help: "composer (from PATH), a path relative to the project or absolute; a .phar runs with php. Empty: composer.phar in the project root if present, else composer."},
 		{Key: SettingInterp, Kind: settings.KindString, Default: run.InterpreterProject, Scope: settings.ScopeProject, Label: "Interpreter",
 			Help: "Where Composer scripts run: project (the project's interpreter, e.g. a Compose service), host or an interpreter ID."},

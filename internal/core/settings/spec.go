@@ -55,6 +55,10 @@ type Spec struct {
 	// ReadOnlyHint names the way to change a ReadOnly setting (e.g.
 	// "use interpreter.select"); it is part of the settings.set error.
 	ReadOnlyHint string `json:"readOnlyHint,omitempty"`
+	// Executable marks a setting whose value names a program Tiegel runs
+	// (a binary, script or shell). Imports from a project's foreign
+	// configuration write it only with an explicit opt-in (D440).
+	Executable bool `json:"executable,omitempty"`
 }
 
 // Validate checks the declaration itself (not a value).

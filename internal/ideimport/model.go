@@ -98,6 +98,12 @@ type Change struct {
 	// Event, if set, is published after the change was written (e.g. the
 	// interpreter changed); the kernel interprets it.
 	Event string `json:"event,omitempty"`
+	// Executable marks a setting whose value names a program Tiegel runs.
+	// The kernel also knows this from the settings spec (Spec.Executable)
+	// and the interpreter and run configuration types; plugins may set it
+	// for undeclared keys. Such changes from a project's .idea need the
+	// opt-in for programs from the repository.
+	Executable bool `json:"executable,omitempty"`
 }
 
 // String describes the change for reports.
@@ -123,6 +129,16 @@ type Item struct {
 	// Plugin is the module that mapped the item (plugin components).
 	Plugin  string   `json:"plugin,omitempty"`
 	Changes []Change `json:"changes,omitempty"`
+	// Executable is the program the item makes Tiegel run when it comes
+	// from the project (or points into it). The kernel sets it; such an
+	// item is imported only with the opt-in for programs from the
+	// repository (D440).
+	Executable string `json:"executable,omitempty"`
+	// AppDefined marks an item of ScanProject whose program is defined
+	// in the application configuration (the user's own interpreter list),
+	// so only the choice comes from the project. The kernel honours it
+	// only for the core's own items, never for plugin items.
+	AppDefined bool `json:"-"`
 }
 
 // Setting returns a setting change.

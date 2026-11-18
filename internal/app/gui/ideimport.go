@@ -17,11 +17,12 @@ import (
 const ActImportSettings = "app.importSettings"
 
 // openImportSettings opens the wizard: a preview of what the reference
-// IDE's configuration (and the project's .idea) would change.
+// IDE's configuration (and the project's .idea) would change. The
+// previous global settings are saved before an import changes them.
 func (v *View) openImportSettings() {
 	v.OpenPopup(&Popup{
 		Title:    "Import Settings",
-		Detail:   "Settings of the reference IDE on this computer and of the project's .idea directory. Nothing changes until you click Import.",
+		Detail:   "Settings of the reference IDE on this computer and of the project's .idea directory. Nothing changes until you click Import; your current global settings are backed up first.",
 		Body:     v.layoutImportWizard,
 		Width:    760,
 		Centered: true, BodyHeight: 520,
@@ -31,9 +32,26 @@ func (v *View) openImportSettings() {
 	v.ctl.OpenIDEImport()
 }
 
+// openProjectImportSettings opens the wizard for the project's .idea
+// only (the offer for a project): theme, fonts, keymap and the other
+// global settings stay as they are (D441).
+func (v *View) openProjectImportSettings() {
+	v.OpenPopup(&Popup{
+		Title:    "Import Project Settings",
+		Detail:   "Settings of the project's .idea directory only; your global settings stay as they are (File › Import Settings… imports those). Nothing changes until you click Import.",
+		Body:     v.layoutImportWizard,
+		Width:    760,
+		Centered: true, BodyHeight: 520,
+		OnClose: v.ctl.CloseIDEImport,
+	})
+	v.importView = importwizard.View{}
+	v.ctl.OpenProjectIDEImport()
+}
+
 // syncImportView copies the controller state into the wizard.
 func syncImportView(w *importwizard.View, st controller.IDEImportState) {
 	w.Busy, w.Done, w.Error = st.Busy, st.Done, st.Err
+	w.Executables, w.AllowExecutables = st.Executables(), st.AllowExecutables
 	w.Source, w.Project, w.Notes, w.Areas, w.Items = "", "", nil, w.Areas[:0], w.Items[:0]
 	rep := st.Report
 	if rep == nil {
@@ -51,7 +69,7 @@ func syncImportView(w *importwizard.View, st controller.IDEImportState) {
 		if it.Plugin != "" {
 			detail = fmt.Sprintf("%s (plugin %s)", detail, it.Plugin)
 		}
-		w.Items = append(w.Items, importwizard.Item{Area: it.Area, Name: it.Name, Status: string(it.Status), Detail: detail, Source: it.Source})
+		w.Items = append(w.Items, importwizard.Item{Area: it.Area, Name: it.Name, Status: string(it.Status), Detail: detail, Source: it.Source, Executable: it.Executable})
 	}
 	// Group the report by area (in the order of the checkboxes).
 	order := map[string]int{}
@@ -76,6 +94,8 @@ func (v *View) layoutImportWizard(gtx layout.Context, th *tokens.Theme) layout.D
 		switch e := e.(type) {
 		case importwizard.ToggleEvent:
 			v.ctl.SetIDEImportArea(e.ID, e.Selected)
+		case importwizard.AllowExecutablesEvent:
+			v.ctl.SetIDEImportAllowExecutables(e.Allowed)
 		case importwizard.ImportEvent:
 			v.ctl.ApplyIDEImport()
 		case importwizard.CloseEvent:
@@ -100,7 +120,7 @@ func (v *View) offerImportSettings() {
 		Detail:   "This project has a .idea directory of the reference IDE. Its interpreter, run configurations and tool settings can be imported; you see a preview first.",
 		Centered: true,
 		Buttons: []*PopupButton{
-			{Text: "Import Settings…", Kind: atoms.Primary, OnClick: v.openImportSettings},
+			{Text: "Import Settings…", Kind: atoms.Primary, OnClick: v.openProjectImportSettings},
 			{Text: "Not Now", Kind: atoms.Secondary},
 		},
 	})

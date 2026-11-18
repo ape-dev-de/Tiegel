@@ -59,6 +59,19 @@ func TestIDEImportWithPlugins(t *testing.T) {
 	if _, ok := ps.Raw("qa-pint.config"); ok {
 		t.Fatal("dry run wrote plugin settings")
 	}
+	// The tool path of the project's .idea points into the repository:
+	// held back without the opt-in.
+	held := false
+	for _, it := range dry.Items {
+		if it.Name == "PHP-CS-Fixer: tool" {
+			held = it.Status == ideimport.StatusSkipped && it.Executable == "tools/php-cs-fixer"
+		}
+	}
+	if !held {
+		t.Error("the tool path from the repository was not held back without opt-in")
+	}
+	params.AllowProjectExecutables = true
+	modtest.Call(t, a, "import.ide.apply", params, &dry)
 	params.DryRun = false
 	var rep api.IDEImportReport
 	modtest.Call(t, a, "import.ide.apply", params, &rep)
@@ -87,7 +100,7 @@ func TestIDEImportWithPlugins(t *testing.T) {
 		"PHPUnit version cache": ideimport.StatusSkipped, "Version control roots": ideimport.StatusSkipped,
 		"PhpIncludePathManager": ideimport.StatusUnsupported, "SomeThirdPartyComponent": ideimport.StatusUnsupported,
 		"Run configuration npm dev": ideimport.StatusUnsupported, "Run configuration All checks": ideimport.StatusUnsupported,
-		"External tool Make Docs": ideimport.StatusUnsupported,
+		"External tool Make Docs": ideimport.StatusImported,
 	} {
 		if it := byName[name]; it.Status != status {
 			t.Errorf("%s = %+v, want %s", name, it, status)
@@ -144,7 +157,7 @@ func TestIDEImportWithPlugins(t *testing.T) {
 	if _, ok := got["FooTest"]; ok {
 		t.Error("temporary configuration imported")
 	}
-	if len(cfgs) != 5 {
+	if len(cfgs) != 6 {
 		t.Errorf("configs = %d", len(cfgs))
 	}
 }
@@ -206,5 +219,35 @@ func TestCoreNamesNoPluginComponent(t *testing.T) {
 	}
 	if files < 100 {
 		t.Fatalf("only %d files scanned", files)
+	}
+}
+
+// A cloned repository's .idea must not set the global docker binary to a
+// program inside the repository (review wave 8, finding 1), not even
+// with the opt-in for programs from the repository.
+func TestIDEImportProjectDockerPathNotGlobal(t *testing.T) {
+	opts := modtest.Options(t)
+	opts.Extensions = []func(*api.App) error{Install}
+	a, err := api.New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	modtest.Project(t, a, map[string]string{
+		".idea/misc.xml": `<project version="4"><component name="DockerToolSettings">
+  <option name="DOCKER_PATH" value="$PROJECT_DIR$/tools/docker" />
+</component></project>`,
+		"tools/docker": "#!/bin/sh\n",
+	})
+	if err := os.Chmod(filepath.Join(a.ProjectRoot(), "tools", "docker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var rep api.IDEImportReport
+	modtest.Call(t, a, "import.ide.apply", api.IDEImportParams{NoApp: true, Areas: []string{"all"}, AllowProjectExecutables: true}, &rep)
+	if _, ok := a.Settings().Raw("docker.path"); ok {
+		t.Fatalf("the project's .idea set the global docker.path: %+v", rep.Items)
+	}
+	if _, ok := a.ProjectSettings().Raw("docker.path"); ok {
+		t.Fatal("docker.path written to the project")
 	}
 }

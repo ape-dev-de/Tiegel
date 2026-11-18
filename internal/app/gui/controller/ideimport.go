@@ -4,13 +4,17 @@ import (
 	"context"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
+	"github.com/ape-dev-de/tiegel/internal/ideimport"
 )
 
 // Settings import from the reference IDE (M16) as seen by the GUI: the
-// wizard previews with import.ide.scan (all areas checked, so every item
-// shows its outcome), the user picks areas and import.ide.apply writes
-// them. A project with a .idea directory is offered the import once
-// (project setting KeyIDEImportOffered).
+// wizard previews with import.ide.scan (all areas checked and programs
+// from the repository allowed, so every item shows its outcome), the
+// user picks areas and import.ide.apply writes them. A project with a
+// .idea directory is offered the import once (project setting
+// KeyIDEImportOffered); that offer imports the project only, the
+// application configuration comes only through File › Import Settings…
+// (D441). Programs from the repository need the separate opt-in (D440).
 
 // KeyIDEImportOffered marks a project whose import was offered (client
 // state, project settings).
@@ -29,14 +33,27 @@ type IDEImportState struct {
 	// Offer: the open project has a .idea directory and was not offered
 	// the import yet.
 	Offer bool
+	// ProjectOnly: the wizard imports the project's .idea only (NoApp),
+	// as offered for a project.
+	ProjectOnly bool
+	// AllowExecutables is the opt-in for items that run a program from
+	// the repository (off until the user checks it).
+	AllowExecutables bool
 }
 
-// OpenIDEImport opens the wizard and starts the preview.
-func (c *Controller) OpenIDEImport() {
-	c.IDEImport = IDEImportState{Open: true, Busy: true, Offer: c.IDEImport.Offer}
+// OpenIDEImport opens the wizard for the application configuration and
+// the open project (File › Import Settings…) and starts the preview.
+func (c *Controller) OpenIDEImport() { c.openIDEImport(false) }
+
+// OpenProjectIDEImport opens the wizard for the open project's .idea
+// only (the offer for a project): global settings stay untouched.
+func (c *Controller) OpenProjectIDEImport() { c.openIDEImport(true) }
+
+func (c *Controller) openIDEImport(projectOnly bool) {
+	c.IDEImport = IDEImportState{Open: true, Busy: true, Offer: c.IDEImport.Offer, ProjectOnly: projectOnly}
 	c.Go(func(ctx context.Context) func() {
 		var rep api.IDEImportReport
-		err := c.call(ctx, "import.ide.scan", api.IDEImportParams{Areas: []string{"all"}}, &rep)
+		err := c.call(ctx, "import.ide.scan", api.IDEImportParams{Areas: []string{"all"}, NoApp: projectOnly, AllowProjectExecutables: true}, &rep)
 		return func() {
 			if !c.IDEImport.Open {
 				return
@@ -63,6 +80,24 @@ func (c *Controller) SetIDEImportArea(id string, on bool) {
 	c.IDEImport.Selected[id] = on
 }
 
+// SetIDEImportAllowExecutables sets the opt-in for items that run a
+// program from the repository.
+func (c *Controller) SetIDEImportAllowExecutables(on bool) { c.IDEImport.AllowExecutables = on }
+
+// Executables counts the items of the preview that run a
+// program from the repository and would be imported with the opt-in.
+func (st IDEImportState) Executables() int {
+	n := 0
+	if st.Report != nil {
+		for _, it := range st.Report.Items {
+			if it.Executable != "" && (it.Status == ideimport.StatusReady || it.Status == ideimport.StatusImported) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // ApplyIDEImport imports the selected areas and reloads what the import
 // may have changed (preferences, keymap, recent projects, runtime).
 func (c *Controller) ApplyIDEImport() {
@@ -81,9 +116,10 @@ func (c *Controller) ApplyIDEImport() {
 		return
 	}
 	st.Busy, st.Err = true, ""
+	params := api.IDEImportParams{Areas: areas, NoApp: st.ProjectOnly, AllowProjectExecutables: st.AllowExecutables}
 	c.Go(func(ctx context.Context) func() {
 		var rep api.IDEImportReport
-		err := c.call(ctx, "import.ide.apply", api.IDEImportParams{Areas: areas}, &rep)
+		err := c.call(ctx, "import.ide.apply", params, &rep)
 		p := c.loadPrefs(ctx)
 		return func() {
 			c.IDEImport.Busy = false

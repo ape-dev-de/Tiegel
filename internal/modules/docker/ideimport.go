@@ -36,6 +36,14 @@ func importComponent(c ideimport.Component) ([]ideimport.Item, bool) {
 	if c.Kind != ideimport.KindComponent {
 		return nil, false
 	}
+	if (c.Name == refDockerComponent || c.Name == refDockerTools) && c.Scope != ideimport.ScopeGlobal {
+		// The Docker connection and binary are global settings; a
+		// project's .idea (a cloned repository) must not change them
+		// (D440).
+		it := c.Item("Docker settings", "global settings are imported only from the application configuration")
+		it.Status = ideimport.StatusSkipped
+		return []ideimport.Item{it}, true
+	}
 	switch c.Name {
 	case refDockerComponent:
 		uri := ""

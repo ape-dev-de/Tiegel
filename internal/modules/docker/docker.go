@@ -106,7 +106,7 @@ func (m *Module) Claims() []string { return []string{"docker.*"} }
 // SettingSpecs implements module.SettingsProvider.
 func (m *Module) SettingSpecs() []settings.Spec {
 	return append([]settings.Spec{
-		{Key: SettingPath, Kind: settings.KindPath, Scope: settings.ScopeGlobal, Label: "Docker binary",
+		{Key: SettingPath, Kind: settings.KindPath, Scope: settings.ScopeGlobal, Label: "Docker binary", Executable: true,
 			Help: "Path to the docker CLI; empty searches PATH, the login shell PATH and the usual install directories (Homebrew, OrbStack, Docker Desktop)."},
 		{Key: SettingContext, Kind: settings.KindString, Default: "", Scope: settings.ScopeProject, Label: "Docker context",
 			Help: "Context for compose and image interpreters (e.g. orbstack, desktop-linux); empty uses docker's current context."},

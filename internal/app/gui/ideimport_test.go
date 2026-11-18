@@ -40,10 +40,43 @@ func TestImportSettingsWizard(t *testing.T) {
 		t.Fatalf("offer popup = %+v", e.v.popup)
 	}
 	e.v.popup.Buttons[0].OnClick()
+	e.waitFor("project preview", func() bool { return e.ctl.IDEImport.Report != nil && !e.ctl.IDEImport.Busy })
+	e.frame()
+	// The offer imports the project only: no application configuration,
+	// so theme, fonts and keymap stay (review wave 8, finding 3).
+	st := e.ctl.IDEImport
+	if !st.ProjectOnly || st.Err != "" || st.Report.Source != nil || st.Report.Project == "" {
+		t.Fatalf("project preview = %+v", st)
+	}
+	for _, it := range st.Report.Items {
+		for _, c := range it.Changes {
+			if c.RunConfig == nil && c.Scope != ideimport.ScopeProject {
+				t.Errorf("project offer changes a global setting: %+v", it)
+			}
+		}
+	}
+	// The tool path into the repository needs the opt-in (finding 1).
+	if st.Executables() == 0 || st.AllowExecutables || e.v.importView.Executables == 0 {
+		t.Errorf("executables = %d, allowed %v", st.Executables(), st.AllowExecutables)
+	}
+	e.ctl.ApplyIDEImport()
+	e.waitFor("project import", func() bool { return e.ctl.IDEImport.Done })
+	if rep := e.ctl.IDEImport.Report; rep.Backup != "" || rep.Counts.Imported == 0 {
+		t.Errorf("project import: backup %q, counts %+v", rep.Backup, rep.Counts)
+	}
+	for _, it := range e.ctl.IDEImport.Report.Items {
+		if it.Executable != "" && it.Status == ideimport.StatusImported {
+			t.Errorf("imported without opt-in: %+v", it)
+		}
+	}
+	e.v.ClosePopup()
+
+	// File › Import Settings… imports the application configuration too.
+	e.v.openImportSettings()
 	e.waitFor("preview", func() bool { return e.ctl.IDEImport.Report != nil && !e.ctl.IDEImport.Busy })
 	e.frame()
-	st := e.ctl.IDEImport
-	if st.Done || st.Err != "" || st.Report.Source == nil || st.Report.Project == "" {
+	st = e.ctl.IDEImport
+	if st.ProjectOnly || st.Done || st.Err != "" || st.Report.Source == nil || st.Report.Project == "" {
 		t.Fatalf("preview = %+v", st)
 	}
 	if st.Selected[ideimport.AreaRecent] || !st.Selected[ideimport.AreaEditor] {
@@ -73,6 +106,10 @@ func TestImportSettingsWizard(t *testing.T) {
 	}
 	if imported == 0 || e.ctl.Prefs.EditorFont != "Fira Code" {
 		t.Errorf("imported %d, editor font %q", imported, e.ctl.Prefs.EditorFont)
+	}
+	// The global settings were backed up before.
+	if _, err := os.Stat(rep.Backup); rep.Backup == "" || err != nil {
+		t.Errorf("backup %q: %v", rep.Backup, err)
 	}
 	for _, it := range e.v.importView.Items {
 		if it.Status == importwizard.StatusFailed {

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -600,8 +602,9 @@ func (s *appScan) interpreters() {
 		Detail: fmt.Sprintf("%d interpreters; Tiegel finds local ones itself, the project's choice is imported with the project", n)})
 }
 
-// externalTools returns the tools of tools/*.xml as components (no core
-// run type; a plugin may take them).
+// externalTools returns the tools of tools/*.xml as components; the
+// kernel maps them to external tool run configurations of the open
+// project (ExternalToolItem) unless a plugin takes them.
 func (s *appScan) externalTools() {
 	files, err := readXMLDir(s.src.Dir, "tools")
 	if err != nil {
@@ -619,19 +622,100 @@ func (s *appScan) externalTools() {
 
 // ExternalTool is the neutral form of an external tool.
 type ExternalTool struct {
-	Name       string `json:"name"`
-	Program    string `json:"program"`
-	Args       string `json:"args,omitempty"`
-	WorkingDir string `json:"workingDir,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Program     string `json:"program"`
+	Args        string `json:"args,omitempty"`
+	WorkingDir  string `json:"workingDir,omitempty"`
+	// Console shows the tool's output (default true); Sync synchronizes
+	// the files after the run (default true).
+	Console bool `json:"console"`
+	Sync    bool `json:"sync"`
+	// Disabled tools are switched off in the reference IDE.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // ParseExternalTool reads a <tool> element of tools/*.xml.
 func ParseExternalTool(t *Element) ExternalTool {
-	et := ExternalTool{Name: t.Attr("name")}
+	et := ExternalTool{Name: t.Attr("name"), Description: t.Attr("description")}
 	if ex := t.Child("exec"); ex != nil {
 		et.Program, _ = ex.Option("COMMAND")
 		et.Args, _ = ex.Option("PARAMETERS")
 		et.WorkingDir, _ = ex.Option("WORKING_DIRECTORY")
 	}
+	flag := func(attr, option string, def bool) bool {
+		v, ok := t.LookupAttr(attr)
+		if !ok {
+			v, ok = t.Option(option)
+		}
+		if b, valid := parseBool(v); ok && valid {
+			return b
+		}
+		return def
+	}
+	et.Console = flag("useConsole", "SHOW_CONSOLE", true)
+	et.Sync = flag("synchronizeAfterRun", "SYNC_AFTER", true)
+	et.Disabled = flag("disabled", "DISABLED", false)
 	return et
+}
+
+// toolMacroRe finds the $Name$ macros of external tools.
+var toolMacroRe = regexp.MustCompile(`\$[A-Za-z][A-Za-z0-9_]*\$`)
+
+// UnknownToolMacros returns the $Name$ macros of s that external tools
+// in Tiegel do not know (run.Macros), each once.
+func UnknownToolMacros(s string) []string {
+	known := map[string]bool{}
+	for _, m := range run.Macros() {
+		known[m.Name] = true
+	}
+	var out []string
+	for _, m := range toolMacroRe.FindAllString(s, -1) {
+		if !known[m] && !slices.Contains(out, m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// ExternalToolItem maps an external tool component to a run
+// configuration of the type external-tool (D443). Program, arguments and
+// working directory keep their macros (Tiegel's macro names are those of
+// the reference IDE); macros Tiegel does not know are named in the detail
+// and stay as they are. Disabled tools and tools without a program are
+// skipped.
+func ExternalToolItem(c Component) Item {
+	et := ParseExternalTool(c.Element)
+	it := c.Item("External tool "+et.Name, "")
+	it.Area = AreaTools
+	prog := strings.TrimSpace(c.Macros.Expand(et.Program))
+	switch {
+	case et.Name == "":
+		it.Status, it.Detail = StatusSkipped, "tool without a name"
+		return it
+	case prog == "":
+		it.Status, it.Detail = StatusSkipped, "no program"
+		return it
+	case et.Disabled:
+		it.Status, it.Detail = StatusSkipped, "disabled in the reference IDE"
+		return it
+	}
+	vals := map[string]any{run.ToolFieldProgram: prog, run.ToolFieldConsole: et.Console, run.ToolFieldSync: et.Sync}
+	if v := strings.TrimSpace(c.Macros.Expand(et.Args)); v != "" {
+		vals[run.ToolFieldArgs] = v
+	}
+	// The project root is the default working directory.
+	if v := strings.TrimSpace(c.Macros.Expand(et.WorkingDir)); v != "" && v != "$ProjectFileDir$" {
+		vals[run.ToolFieldDir] = v
+	}
+	if v := strings.TrimSpace(et.Description); v != "" {
+		vals[run.ToolFieldDescription] = v
+	}
+	it.Detail = strings.TrimSpace(prog + " " + strings.TrimSpace(et.Args))
+	if unknown := UnknownToolMacros(c.Macros.Expand(et.Program + " " + et.Args + " " + et.WorkingDir)); len(unknown) > 0 {
+		it.Detail = JoinDetail(it.Detail, "macros not supported (kept as text): "+strings.Join(unknown, ", "))
+	}
+	cfg := run.Config{Name: et.Name, Type: run.TypeExternalTool, Values: vals}
+	it.Changes = []Change{{RunConfig: &cfg}}
+	return it
 }

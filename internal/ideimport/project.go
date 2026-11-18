@@ -247,10 +247,11 @@ func (s *projectScan) interpreter() {
 	candidates := projInterp.Find("interpreter")
 	source := projFile
 	var found *Element
+	appDefined := false
 	if name != "" {
-		for _, el := range append(slices.Clone(candidates), s.appInterpreters()...) {
+		for i, el := range append(slices.Clone(candidates), s.appInterpreters()...) {
 			if el.Attr("name") == name {
-				found = el
+				found, appDefined = el, i >= len(candidates)
 				break
 			}
 		}
@@ -266,7 +267,7 @@ func (s *projectScan) interpreter() {
 		return
 	}
 	in := ParseInterpreter(found, s.macros)
-	it := Item{Area: AreaInterpreter, Name: "PHP interpreter " + in.Name, Source: source}
+	it := Item{Area: AreaInterpreter, Name: "PHP interpreter " + in.Name, Source: source, AppDefined: appDefined}
 	switch in.Kind {
 	case "local":
 		if in.Path == "" {

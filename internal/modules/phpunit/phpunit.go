@@ -98,7 +98,7 @@ func (m *Module) Claims() []string { return []string{"test.*"} }
 // SettingSpecs implements module.SettingsProvider.
 func (m *Module) SettingSpecs() []settings.Spec {
 	return []settings.Spec{
-		{Key: SettingExecutable, Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Label: "PHPUnit script",
+		{Key: SettingExecutable, Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Label: "PHPUnit script", Executable: true,
 			Help: "Path of the phpunit script (project relative or absolute); empty uses vendor/bin/phpunit. It runs with php of the interpreter."},
 		{Key: SettingConfig, Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Label: "Configuration file",
 			Help: "phpunit.xml to use; empty finds phpunit.xml, phpunit.xml.dist or phpunit.dist.xml in the project root."},

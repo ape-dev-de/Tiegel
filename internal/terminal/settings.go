@@ -28,7 +28,7 @@ const PageTerminal = "Terminal"
 // SettingSpecs returns the core settings of the terminal.
 func SettingSpecs() []settings.Spec {
 	return []settings.Spec{
-		{Key: KeyShell, Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Group: PageTerminal,
+		{Key: KeyShell, Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Group: PageTerminal, Executable: true,
 			Label: "Shell path", Help: "Program started in new terminal tabs; empty uses $SHELL (Windows: PowerShell, else cmd.exe)."},
 		{Key: KeyShellArgs, Kind: settings.KindList, Default: []string{}, Scope: settings.ScopeProject, Group: PageTerminal,
 			Label: "Shell arguments", Help: "Arguments of the shell; empty starts bash, zsh and fish as login shells (-l)."},

@@ -15,11 +15,11 @@ import (
 // found or --from) and, with --project, the project's .idea directory.
 
 func init() {
-	for name, takes := range map[string]bool{"from": true, "dry-run": false, "areas": true, "no-app": false, "no-project": false, "sources": false} {
+	for name, takes := range map[string]bool{"from": true, "dry-run": false, "areas": true, "no-app": false, "no-project": false, "sources": false, "allow-project-executables": false} {
 		flagSpec[name] = takes
 	}
 	register(&command{name: "import-ide",
-		usage:   "import-ide [--project DIR] [--from CONFIGDIR] [--areas LIST] [--no-app] [--no-project] [--dry-run] [--sources]",
+		usage:   "import-ide [--project DIR] [--from CONFIGDIR] [--areas LIST] [--no-app] [--no-project] [--allow-project-executables] [--dry-run] [--sources]",
 		summary: "import settings from the reference IDE (application configuration and the project's .idea; --dry-run only reports)",
 		maxArgs: 0, run: runImportIDE})
 }
@@ -43,7 +43,8 @@ func runImportIDE(c *cli) error {
 			}
 		})
 	}
-	p := api.IDEImportParams{From: c.p.value("from"), NoApp: c.p.has("no-app"), NoProject: c.p.has("no-project"), DryRun: c.p.has("dry-run")}
+	p := api.IDEImportParams{From: c.p.value("from"), NoApp: c.p.has("no-app"), NoProject: c.p.has("no-project"), DryRun: c.p.has("dry-run"),
+		AllowProjectExecutables: c.p.has("allow-project-executables")}
 	if v := c.p.value("areas"); v != "" {
 		for _, a := range strings.Split(v, ",") {
 			if a = strings.TrimSpace(a); a != "" {
@@ -96,6 +97,15 @@ func printImportReport(w io.Writer, rep api.IDEImportReport) {
 			fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\n", statusWord(it.Status, rep.DryRun), it.Name, detail, it.Source)
 		}
 		_ = tw.Flush()
+	}
+	held := 0
+	for _, it := range rep.Items {
+		if it.Executable != "" && it.Status == ideimport.StatusSkipped {
+			held++
+		}
+	}
+	if held > 0 {
+		fmt.Fprintf(w, "%d item(s) would run a program from the repository and were left out; review them and pass --allow-project-executables to import them\n", held)
 	}
 	k := rep.Counts
 	if rep.DryRun {

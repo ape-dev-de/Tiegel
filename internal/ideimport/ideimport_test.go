@@ -267,7 +267,7 @@ func TestScanApp(t *testing.T) {
 		t.Fatalf("external tool = %+v", tool)
 	}
 	et := ParseExternalTool(tool.Element)
-	if et != (ExternalTool{Name: "Make Docs", Program: "make", Args: "docs", WorkingDir: "$ProjectFileDir$"}) {
+	if et != (ExternalTool{Name: "Make Docs", Description: "Builds the docs", Program: "make", Args: "docs", WorkingDir: "$ProjectFileDir$", Console: true, Sync: true}) {
 		t.Errorf("external tool = %+v", et)
 	}
 }

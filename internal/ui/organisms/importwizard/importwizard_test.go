@@ -14,7 +14,7 @@ import (
 
 func sample() *View {
 	return &View{
-		Source: "RefIDE2025.2", Project: "/p/shop", Notes: []string{"note"},
+		Source: "RefIDE2025.2", Project: "/p/shop", Notes: []string{"note"}, Executables: 1,
 		Areas: []Area{
 			{ID: "editor", Label: "Editor", Count: 2, Total: 3, Selected: true},
 			{ID: "recentProjects", Label: "Recent projects", Count: 1, Total: 1},
@@ -25,6 +25,7 @@ func sample() *View {
 			{Area: "editor", Name: "Soft wrap", Status: StatusSkipped, Detail: "already set"},
 			{Area: "editor", Name: "Console font", Status: StatusUnsupported},
 			{Area: "recentProjects", Name: "Recent projects", Status: StatusFailed, Detail: "boom"},
+			{Area: "editor", Name: "Shell", Status: StatusReady, Detail: "executes a program from the repository: bin/sh", Executable: "bin/sh"},
 		},
 	}
 }
@@ -46,7 +47,7 @@ func TestWizard(t *testing.T) {
 	}
 	v.Done, v.Error = true, "1 failed"
 	uitest.Smoke(t, "done", image.Pt(720, 480), w)
-	if !v.checks[0].Disabled {
+	if !v.checks[0].Disabled || !v.allow.Disabled {
 		t.Error("done: checkboxes enabled")
 	}
 	v.Done, v.Busy, v.Error = false, true, ""
@@ -70,6 +71,13 @@ func TestBadges(t *testing.T) {
 		if b := badge(tc.status, tc.done); b.Kind != tc.kind || b.Text == "" {
 			t.Errorf("%s/%v = %+v", tc.status, tc.done, b)
 		}
+	}
+	exe := Item{Status: StatusReady, Executable: "bin/x"}
+	if b := itemBadge(exe, false, false); b.Kind != atoms.BadgeWarning || b.Text != "needs opt-in" {
+		t.Errorf("executable without opt-in = %+v", b)
+	}
+	if b := itemBadge(exe, false, true); b.Kind != atoms.BadgeAccent {
+		t.Errorf("executable with opt-in = %+v", b)
 	}
 	if joinText("", "b") != "b" || joinText("a", "b") != "a · b" {
 		t.Error("joinText")
