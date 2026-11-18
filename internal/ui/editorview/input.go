@@ -573,7 +573,11 @@ func (e *Editor) offsetAt(pt image.Point) int {
 		return e.view.OffsetAt(s, row, col)
 	}
 	line := e.folds.VisibleToDoc(row)
-	return s.LineStart(line) + buffer.ByteColFromVisual(s.Line(line), col, e.tabWidth())
+	text, ls := s.Line(line), s.LineStart(line)
+	if ins := e.lineInlays(ls, text); ins != nil {
+		col = unshiftCol(ins, text, col, e.tabWidth())
+	}
+	return ls + buffer.ByteColFromVisual(text, col, e.tabWidth())
 }
 
 // OffsetAt returns the document offset at a point in the editor's

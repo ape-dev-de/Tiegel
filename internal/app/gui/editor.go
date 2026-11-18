@@ -72,6 +72,8 @@ type editorSession struct {
 	// (templatedock.go); snipOff removes its buffer listener.
 	snip    *snippet.Session
 	snipOff func()
+
+	inlay inlayState // inlay hints (inlays.go)
 }
 
 // softWrap reports whether the editor wraps lines: the per-editor toggle,
@@ -238,6 +240,7 @@ func (v *View) layoutEditor(gtx layout.Context, s *editorSession, active bool) l
 		s.ed.TabWidth, s.ed.InsertSpaces = s.tab.TabWidthFor(c.Prefs.TabWidth), s.tab.InsertSpacesFor(c.Prefs.InsertSpaces)
 	}
 	s.applyDisplayPrefs(c.Prefs)
+	v.inlayHints(gtx, s, buf.Version())
 	s.ed.Keymap = v.Registry.EditorKeymap() // follows keymap changes
 	s.ed.SetGutterMarkers(v.Registry.markers(s.file))
 	s.ed.SetGutterColumn(v.Registry.gutterColumn(s.file))

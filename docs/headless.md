@@ -122,6 +122,7 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `git-update [--strategy S] [--autostash] [--prune]` | Update Project: Dokumente speichern, Upstream holen, integrieren, offene Dokumente neu laden; Exit 1 bei Konflikten | `git.updateProject` |
 | `git-stash [list \| push [-m MSG] [--untracked] [--keep-index] [DATEI...] \| apply [N] [--restore-index] \| pop [N] [--restore-index] \| drop [N]]` | Stash verwalten (`N` oder `stash@{N}`, ohne Unterbefehl: Liste); Exit 1 bei Konflikten von `apply`/`pop` | `git.stash*` |
 | `usages DATEI ZEILE:SPALTE [--no-declaration] [--server ID] [--command PATH]` | Find Usages über den Language Server: `pfad:zeile:spalte: zeile`; Exit 1 ohne Treffer | `lsp.start`, `lsp.references` |
+| `inlay-hints DATEI [--server ID] [--command PATH]` | Inlay Hints des Language Servers (Parameternamen, abgeleitete Typen) als `DATEI:ZEILE:SPALTE: [parameter\|type\|other] LABEL`; bietet der Server keine, Hinweis auf stderr | `lsp.inlayHints` |
 | `code-actions DATEI ZEILE:SPALTE [--apply N\|ID\|TITEL] [--timeout DUR] [--server ID] [--command PATH]` | Code Actions (Quick Fixes mit den Diagnosen an der Stelle, Refactorings, Organize Imports) auflisten; `--apply` wendet eine an und speichert die geänderten Dokumente | `lsp.codeActions`, `lsp.applyCodeAction` |
 | `format DATEI... [--preview] [--tab-size N] [--server ID] [--command PATH]` | Reformat über den Language Server und speichern (`--preview`: nur die Änderungen) | `lsp.formatting` |
 | `rename-symbol DATEI ZEILE:SPALTE NEUER-NAME [--preview] [--server ID] [--command PATH]` | Symbol in allen Dateien umbenennen (prepareRename + rename) und speichern | `lsp.rename` |
@@ -468,6 +469,7 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `lsp.hover` | `path`, `at` | `{found, kind, contents, range?}` |
 | `lsp.signature` | `path`, `at` | `{signatures[{label, documentation, parameters[{label, documentation}]}], activeSignature, activeParameter}` |
 | `lsp.definition` / `lsp.implementation` | `path`, `at` | `[{path, file, range}]` |
+| `lsp.inlayHints` | `path`, `start?`, `end?` | `{supported, hints: [{offset, line, col, label, kind?: type\|parameter, paddingLeft?, paddingRight?}], version}`; `supported` false, wenn der Server `textDocument/inlayHint` nicht anbietet |
 | `lsp.semanticTokens` | `path` | `[{range, type, modifiers}]` |
 | `lsp.references` | `path`, `at`, `includeDeclaration?` (Standard `true`) | Find Usages: `[{path, file, range, lineText}]` sortiert nach Datei/Position |
 | `lsp.documentHighlight` | `path`, `at` | `[{range, kind}]` (`text`, `read`, `write`) |

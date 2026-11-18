@@ -98,6 +98,7 @@ type lineEntry struct {
 	key   metricsKey
 	tab   int
 	ws    int // whitespace marks from this byte offset (-1: none)
+	ins   []lineInlay
 	cols  int // visual width of the whole line
 	used  uint64
 	ops   op.Ops
@@ -206,7 +207,7 @@ const maxShapeBytes = 2048
 // (or of one soft-wrapped row). line is the full row content, spans are
 // row-relative; whitespace from byte ws on is marked (-1: none). The
 // drawing has column 0 at x = 0 and the row top at y = 0.
-func (e *Editor) lineDrawing(th *tokens.Theme, l lineKey, line []byte, spans []highlight.Span, firstCol, lastCol, ws int) (op.CallOp, int) {
+func (e *Editor) lineDrawing(th *tokens.Theme, l lineKey, line []byte, spans []highlight.Span, firstCol, lastCol, ws int, ins []lineInlay) (op.CallOp, int) {
 	from, to := 0, len(line)
 	if len(line) > maxShapeBytes {
 		from = buffer.ByteColFromVisual(line, max(0, firstCol-8), e.tabWidth())
@@ -215,24 +216,26 @@ func (e *Editor) lineDrawing(th *tokens.Theme, l lineKey, line []byte, spans []h
 	}
 	ent := e.cache.get(l)
 	if ent.th == th && ent.key == e.met.key && ent.tab == e.tabWidth() && ent.from == from && ent.ws == ws &&
-		bytes.Equal(ent.text, line[from:to]) && spansEqual(ent.spans, spans) {
+		bytes.Equal(ent.text, line[from:to]) && spansEqual(ent.spans, spans) && inlayEqual(ent.ins, ins) {
 		return ent.call, ent.cols
 	}
 	ent.text = append(ent.text[:0], line[from:to]...)
 	ent.spans = append(ent.spans[:0], spans...)
+	ent.ins = append(ent.ins[:0], ins...)
 	ent.th, ent.key, ent.tab, ent.from, ent.ws = th, e.met.key, e.tabWidth(), from, ws
 	ent.col0 = 0
 	if from > 0 {
 		ent.col0 = buffer.VisualCol(line, from, e.tabWidth())
 	}
-	ent.cols = buffer.VisualCol(line, len(line), e.tabWidth())
+	ent.cols = buffer.VisualCol(line, len(line), e.tabWidth()) + inlayCols(ins)
 	ent.ops.Reset()
 	m := op.Record(&ent.ops)
 	if ws >= 0 && ws < to {
 		// Marks of the shaped part; columns count from the line start.
-		e.paintWhitespace(&ent.ops, th.Editor.Whitespace, line[:to], max(ws, from), 0, 0)
+		e.paintWhitespace(&ent.ops, th.Editor.Whitespace, line[:to], max(ws, from), 0, 0, ins)
 	}
-	e.paintGlyphs(&ent.ops, th, ent.text, from, ent.col0, spans)
+	e.paintInlays(&ent.ops, th, line, ins)
+	e.paintGlyphs(&ent.ops, th, ent.text, from, ent.col0, spans, ins, color.NRGBA{})
 	ent.call = m.Stop()
 	return ent.call, ent.cols
 }
@@ -267,7 +270,10 @@ type cluster struct {
 // col0 of its line) and paints it on a monospace grid: every grapheme
 // cluster starts at its column, so tabs, wide characters and combining
 // marks line up exactly with the cursor model's visual columns.
-func (e *Editor) paintGlyphs(ops *op.Ops, th *tokens.Theme, seg []byte, from, col0 int, spans []highlight.Span) {
+//
+// Clusters move right by the columns of the inlay hints ins before them;
+// a non-zero fixed color replaces the span colors (hint labels).
+func (e *Editor) paintGlyphs(ops *op.Ops, th *tokens.Theme, seg []byte, from, col0 int, spans []highlight.Span, ins []lineInlay, over color.NRGBA) {
 	if len(seg) == 0 {
 		return
 	}
@@ -283,7 +289,7 @@ func (e *Editor) paintGlyphs(ops *op.Ops, th *tokens.Theme, seg []byte, from, co
 		var w int
 		c, rest, w, state = uniseg.FirstGraphemeCluster(rest, state)
 		ci := int32(len(clusters))
-		clusters = append(clusters, cluster{b: b, col: col})
+		clusters = append(clusters, cluster{b: b, col: col + inlayShift(ins, from+b)})
 		for i := 0; i < len(c); {
 			_, n := utf8.DecodeRune(c[i:])
 			runeToCluster = append(runeToCluster, ci)
@@ -350,6 +356,9 @@ func (e *Editor) paintGlyphs(ops *op.Ops, th *tokens.Theme, seg []byte, from, co
 			role = spans[si].Role
 		}
 		c := th.SyntaxColor(tokens.SyntaxRole(role))
+		if over.A != 0 {
+			c = over
+		}
 		if c != runColor || len(run) >= 256 {
 			flush()
 			runColor = c

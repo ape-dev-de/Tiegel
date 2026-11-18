@@ -84,7 +84,7 @@ Tiegel-Stand (M13 abgeschlossen): ein Katalog aller belegbaren Aktionen (`intern
 | Datei- und Code-Vorlagen | ✅ Dateivorlagen Klasse/Abstrakt/Interface/Trait/Enum/Test als Kern-Einstellungen `fileTemplates.<art>` (D426, D427) | Kern | ~ (`fileTemplates/`) | M17 |
 | Live Templates | ✅ Plugin `live-templates` (D420–D424): Tab, Cmd+J, Surround With, Tab-Stopps mit verknüpftem Bearbeiten; eigene Vorlagen als Liste `live-templates.user` | Plugin `live-templates` | ~ | M17 |
 | Dateitypen/Zuordnungen | ✅ `files.associations` (D213) | Kern | ✔ (`filetypes.xml`) | M12 |
-| Inlay Hints | ❌ | Plugin `lang-php` | – | M17 |
+| Inlay Hints | ✅ `editor.inlayHints` (D430): Parameternamen/Typen des Language Servers inline, nach Änderungen verzögert neu geladen | Kern-Einstellung, Daten von `lang-php` | – | M17 |
 
 ## 4. Versionskontrolle (Plugin `git`)
 
