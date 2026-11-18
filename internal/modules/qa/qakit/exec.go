@@ -3,13 +3,12 @@ package qakit
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +16,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/compose"
 	"github.com/ape-dev-de/tiegel/internal/core/proctree"
-	"github.com/ape-dev-de/tiegel/internal/core/watch"
+	"github.com/ape-dev-de/tiegel/internal/interp"
 	"github.com/ape-dev-de/tiegel/internal/run"
 )
 
@@ -33,11 +32,21 @@ type result struct {
 // maxOutput bounds the captured stdout and stderr of a tool.
 const maxOutput = 64 << 20
 
+// errToolTimeout is the cause of the context of a tool run when the
+// plugin's timeout setting ends it (as opposed to the caller's deadline).
+var errToolTimeout = errors.New("tool timeout")
+
 // execTool runs program with args in the project root, through the run
 // infrastructure: in the project interpreter (useInterpreter) or on the
 // host. stdin may be nil. The run ends at the timeout setting or when ctx
 // ends; processes inside a container are stopped too.
 func (p *Plugin) execTool(ctx context.Context, program string, args []string, stdin []byte) (result, error) {
+	return p.execWith(ctx, program, func(run.Target) ([]string, error) { return args, nil }, stdin)
+}
+
+// execWith is execTool with the arguments built for the resolved target
+// (a formatter places its copy depending on where the tool runs).
+func (p *Plugin) execWith(ctx context.Context, program string, build func(t run.Target) ([]string, error), stdin []byte) (result, error) {
 	app := p.getApp()
 	if app == nil {
 		return result{}, errors.New(p.def.ID + ": not started")
@@ -50,18 +59,41 @@ func (p *Plugin) execTool(ctx context.Context, program string, args []string, st
 	if p.useInterpreter() {
 		ipt = run.InterpreterProject
 	}
-	ctx, cancel := context.WithTimeout(ctx, p.timeout())
+	timeout := p.timeout()
+	ctx, cancel := context.WithTimeoutCause(ctx, timeout, errToolTimeout)
 	defer cancel()
 	t, err := app.RunTarget(ctx, ipt)
 	if err != nil {
 		return result{}, err
 	}
-	spec := run.Spec{Name: p.def.Name, Program: program, Args: append(args, p.listSetting(KeyArgs)...), Dir: root, Interpreter: ipt}
+	args, err := build(t)
+	if err != nil {
+		return result{}, err
+	}
+	pathEnv := p.pathEnv()
+	tc, err := toolCommand(runtime.GOOS, hostSide(t), root, program, append(args, p.listSetting(KeyArgs)...), hostFS{
+		look: func(name string) (string, error) { return lookPath(name, pathEnv) },
+	})
+	if err != nil {
+		return result{}, fmt.Errorf("%s: %w", p.def.Name, err)
+	}
+	spec := run.Spec{Name: p.def.Name, Program: tc.Program, PHP: tc.PHP, Args: tc.Args, Dir: root, Interpreter: ipt}
 	l, err := run.Prepare(ctx, spec, t)
 	if err != nil {
 		return result{}, fmt.Errorf("%s: %w", p.def.Name, err)
 	}
-	return runLaunch(ctx, l, stdin, p.timeout())
+	return runLaunch(ctx, l, stdin, timeout)
+}
+
+// hostSide reports whether t runs processes directly on the host (no
+// interpreter or a local php): Windows command line rules apply, and a
+// temporary copy need not be visible to a container.
+func hostSide(t run.Target) bool {
+	switch t.Interp.(type) {
+	case nil, *interp.Local:
+		return true
+	}
+	return false
 }
 
 // runLaunch starts l, feeds stdin, collects the output and waits; at the
@@ -101,8 +133,12 @@ func runLaunch(ctx context.Context, l *run.Launch, stdin []byte, timeout time.Du
 		case <-time.After(5 * time.Second):
 		}
 		tree.Release()
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		switch {
+		case errors.Is(context.Cause(ctx), errToolTimeout):
 			return res, fmt.Errorf("stopped after the timeout of %s", timeout)
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			// The caller's deadline, not the timeout setting.
+			return res, fmt.Errorf("stopped: the caller stopped waiting: %w", ctx.Err())
 		}
 		return res, ctx.Err()
 	}
@@ -241,42 +277,37 @@ func (p *Plugin) format(ctx context.Context, req api.QAFormatRequest) ([]byte, e
 		}
 		return res.Stdout, nil
 	}
-	tmp, err := tempCopy(req.File, req.Content)
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(tmp)
-	rel, _ := filepath.Rel(root, tmp)
-	res, err := p.execTool(ctx, r.Program, fs.Args(Call{File: filepath.ToSlash(rel), Config: p.config()}), nil)
+	// The tool fixes a copy in place: under the file's own name and
+	// relative path, so that rules depending on the file name (PSR
+	// autoloading) see the real one (D360).
+	var cp *formatCopy
+	defer func() {
+		if cp != nil {
+			cp.remove()
+		}
+	}()
+	res, err := p.execWith(ctx, r.Program, func(t run.Target) ([]string, error) {
+		c, err := newFormatCopy(root, req.File, req.Content, hostSide(t))
+		if err != nil {
+			return nil, err
+		}
+		cp = c
+		return fs.Args(Call{File: c.arg, Config: p.config()}), nil
+	}, nil)
 	if err != nil {
 		return nil, err
 	}
 	if !ok(res.Code) {
 		return nil, toolError(p.def.Name, res)
 	}
-	out, err := os.ReadFile(tmp)
+	out, err := os.ReadFile(cp.path)
 	if err != nil {
 		return nil, fmt.Errorf("read formatted copy: %w", err)
 	}
+	if bytes.Contains(out, []byte(cp.token)) && !bytes.Contains(req.Content, []byte(cp.token)) {
+		return nil, fmt.Errorf("%s wrote the temporary location into the file; result discarded", p.def.Name)
+	}
 	return out, nil
-}
-
-// tempCopy writes content next to file under a temporary name (same
-// directory, so that the tool applies the same configuration and the
-// copy is visible inside the container; the watcher ignores the prefix).
-func tempCopy(file string, content []byte) (string, error) {
-	var b [6]byte
-	_, _ = rand.Read(b[:])
-	dir, base := filepath.Split(file)
-	tmp := filepath.Join(dir, watch.TempFilePrefix+hex.EncodeToString(b[:])+"_"+base)
-	mode := os.FileMode(0o644)
-	if st, err := os.Stat(file); err == nil {
-		mode = st.Mode().Perm()
-	}
-	if err := os.WriteFile(tmp, content, mode); err != nil {
-		return "", fmt.Errorf("temporary copy: %w", err)
-	}
-	return tmp, nil
 }
 
 // toolError describes a failed run with the tail of its output.

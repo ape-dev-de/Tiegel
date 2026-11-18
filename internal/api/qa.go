@@ -230,6 +230,24 @@ type qaStore struct {
 	mu sync.Mutex
 	// diags: tool → absolute file → findings.
 	diags map[string]map[string][]QADiagnostic
+	// gen is the project generation: it changes when the project closes,
+	// so that runs started before discard their findings (storeQA).
+	gen uint64
+}
+
+// qaGen returns the current project generation of the findings.
+func (a *App) qaGen() uint64 {
+	a.qa.mu.Lock()
+	defer a.qa.mu.Unlock()
+	return a.qa.gen
+}
+
+// bumpQAGen starts a new project generation: findings of runs started
+// before are discarded.
+func (a *App) bumpQAGen() {
+	a.qa.mu.Lock()
+	a.qa.gen++
+	a.qa.mu.Unlock()
 }
 
 func (a *App) registerQA() {
@@ -290,6 +308,9 @@ func (a *App) qaList(ctx context.Context, _ struct{}) ([]QAToolInfo, error) {
 func (a *App) QARun(ctx context.Context, p QARunParams) (QARunResult, error) { return a.qaRun(ctx, p) }
 
 func (a *App) qaRun(ctx context.Context, p QARunParams) (QARunResult, error) {
+	// The generation is taken before the project check: a project closed
+	// in between has bumped it, so the findings of this run are dropped.
+	gen := a.qaGen()
 	root, err := a.RequireProject()
 	if err != nil {
 		return QARunResult{}, err
@@ -343,7 +364,10 @@ func (a *App) qaRun(ctx context.Context, p QARunParams) (QARunResult, error) {
 		if err != nil {
 			run.Error = err.Error()
 		} else {
-			files := a.storeQA(t.Plugin, paths, rep.Files)
+			files, ok := a.storeQA(gen, t.Plugin, paths, rep.Files)
+			if !ok {
+				run.Error = "the project was closed during the run; findings discarded"
+			}
 			for _, f := range files {
 				run.Count += len(f.Diagnostics)
 			}
@@ -366,8 +390,9 @@ func (a *App) qaRun(ctx context.Context, p QARunParams) (QARunResult, error) {
 
 // storeQA replaces the findings of tool within scope (all files when
 // scope is empty) by files, fills offsets and publishes the changes. It
-// returns the stored non-empty entries.
-func (a *App) storeQA(tool string, scope []string, files []QAFileDiagnostics) []QAFileDiagnostics {
+// returns the stored non-empty entries; ok is false (nothing stored)
+// when the project generation is no longer gen.
+func (a *App) storeQA(gen uint64, tool string, scope []string, files []QAFileDiagnostics) (_ []QAFileDiagnostics, ok bool) {
 	merged := map[string][]QADiagnostic{}
 	for _, f := range files {
 		if f.File == "" {
@@ -391,6 +416,10 @@ func (a *App) storeQA(tool string, scope []string, files []QAFileDiagnostics) []
 		out = append(out, QAFileDiagnostics{Path: a.displayPath(file), File: file, Diagnostics: ds})
 	}
 	a.qa.mu.Lock()
+	if a.qa.gen != gen {
+		a.qa.mu.Unlock()
+		return nil, false
+	}
 	if a.qa.diags == nil {
 		a.qa.diags = map[string]map[string][]QADiagnostic{}
 	}
@@ -427,7 +456,7 @@ func (a *App) storeQA(tool string, scope []string, files []QAFileDiagnostics) []
 			kept = append(kept, f)
 		}
 	}
-	return kept
+	return kept, true
 }
 
 // inScope reports whether file is one of the scope paths or below one

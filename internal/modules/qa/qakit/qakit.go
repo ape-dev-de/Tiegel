@@ -95,7 +95,7 @@ type Call struct {
 type FormatSpec struct {
 	// Stdin: the tool reads the content on stdin and writes the result to
 	// stdout (File names the real file). Otherwise the tool formats a
-	// temporary copy next to the file in place.
+	// temporary copy in place (same base name and relative path, D360).
 	Stdin bool
 	// Args builds the arguments (without the program).
 	Args func(c Call) []string
@@ -195,13 +195,23 @@ const (
 	KeyPaths          = "paths"
 )
 
-// DefaultTimeout is the default of the timeout setting (seconds).
-const DefaultTimeout = 60
+// DefaultTimeout is the default of the timeout setting (seconds),
+// MaxTimeout its maximum.
+const (
+	DefaultTimeout = 60
+	MaxTimeout     = 3600
+)
+
+// saveHookTimeout bounds the format-on-save filter. The hooks' default
+// (2 s) would cut off formatters in containers; the tool run itself ends
+// at the plugin's timeout setting (at most MaxTimeout), this only adds a
+// margin for stopping it (D361).
+const saveHookTimeout = MaxTimeout*time.Second + 30*time.Second
 
 // SettingSpecs implements module.SettingsProvider.
 func (p *Plugin) SettingSpecs() []settings.Spec {
 	n := p.def.Name
-	one, hour := 1, 3600
+	one, hour := 1, MaxTimeout
 	specs := []settings.Spec{
 		{Key: p.key(KeyPath), Kind: settings.KindPath, Default: "vendor/bin/" + p.def.Program, Scope: settings.ScopeProject, Label: n + " executable", Group: "Tool",
 			Help: "Relative paths are taken from the project root (also inside the interpreter); a bare name is looked up in PATH."},
@@ -261,12 +271,29 @@ func (p *Plugin) Start(ctx module.Context) error {
 	if p.def.Format != nil {
 		// Before the .editorconfig filter (priority 1000), which then has
 		// the last word on whitespace.
-		ctx.OnStop(autosave.BeforeSave.On(ctx.Hooks(), 500+p.def.Order, p.beforeSave, owner))
+		// The filter runs as long as the tool may (timeout setting), not
+		// for the hooks' default limit.
+		ctx.OnStop(autosave.BeforeSave.On(ctx.Hooks(), 500+p.def.Order, p.beforeSave, owner, hooks.WithTimeout(saveHookTimeout)))
 	}
 	if p.def.Analyze != nil {
 		ctx.OnStop(ctx.Bus().Subscribe(api.TopicFileSaved, p.onSaved))
+		ctx.OnStop(ctx.Bus().Subscribe(api.TopicProjectClosed, func(bus.Event) { p.cancelInspections() }))
 	}
 	return nil
+}
+
+// cancelInspections stops pending and running inspections on save (the
+// project closed: their findings would belong to it).
+func (p *Plugin) cancelInspections() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for f, t := range p.pending {
+		t.Stop()
+		delete(p.pending, f)
+	}
+	for _, c := range p.running {
+		c()
+	}
 }
 
 // Stop cancels pending inspections and clears the plugin's findings.
@@ -399,9 +426,6 @@ func (p *Plugin) resolve(key string) resolved {
 		r.Program = filepath.ToSlash(v)
 		if !p.useInterpreter() {
 			r.Program = host
-		}
-		if runtime.GOOS == "windows" && !p.useInterpreter() && isFile(host+".bat") {
-			r.Program = host + ".bat"
 		}
 		r.Found = isFile(host)
 		if !r.Found {

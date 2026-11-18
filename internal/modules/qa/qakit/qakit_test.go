@@ -264,15 +264,23 @@ func TestRunLaunch(t *testing.T) {
 	// Timeout: local tree killed, process inside the "container" stopped
 	// with the PID from the marker.
 	var stopped string
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	ctx, cancel := context.WithTimeoutCause(context.Background(), 1500*time.Millisecond, errToolTimeout)
 	defer cancel()
 	start := time.Now()
 	_, err = runLaunch(ctx, helperLaunch(t, "sleep", func(_ context.Context, pid string) error { stopped = pid; return nil }), nil, time.Second)
-	if err == nil || !strings.Contains(err.Error(), "timeout") || time.Since(start) > 10*time.Second {
+	if err == nil || !strings.Contains(err.Error(), "timeout of 1s") || time.Since(start) > 10*time.Second {
 		t.Fatalf("timeout: %v", err)
 	}
 	if stopped != "78" {
 		t.Fatalf("remote stop pid %q", stopped)
+	}
+	// The caller's deadline (e.g. a hook limit) is not reported as the
+	// timeout setting.
+	ctx3, cancel3 := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel3()
+	_, err = runLaunch(ctx3, helperLaunch(t, "sleep", nil), nil, time.Minute)
+	if err == nil || strings.Contains(err.Error(), "timeout of") || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("caller deadline: %v", err)
 	}
 	// Cancelled (not timed out).
 	ctx2, cancel2 := context.WithCancel(context.Background())
@@ -379,4 +387,33 @@ func TestSaveHooks(t *testing.T) {
 	}
 	p.onSaved(bus.Event{Payload: api.FileSavedEvent{File: filepath.Join(dir, "a.php")}})
 	p.inspectSaved(filepath.Join(dir, "a.php"))
+}
+
+// Closing the project cancels pending and running inspections on save.
+func TestProjectCloseCancelsInspections(t *testing.T) {
+	a, p := newApp(t, demo())
+	dir := modtest.Project(t, a, map[string]string{"a.php": "<?php\n"})
+	set(t, a, KeyInspectOnSave, true)
+	p.onSaved(bus.Event{Payload: api.FileSavedEvent{File: filepath.Join(dir, "a.php")}})
+	cancelled := make(chan struct{})
+	p.mu.Lock()
+	pending := len(p.pending)
+	p.running["b.php"] = func() { close(cancelled) }
+	p.mu.Unlock()
+	if pending != 1 {
+		t.Fatalf("pending %d", pending)
+	}
+	modtest.Call(t, a, "project.close", nil, nil)
+	select {
+	case <-cancelled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("running inspection not cancelled")
+	}
+	p.mu.Lock()
+	pending = len(p.pending)
+	delete(p.running, "b.php")
+	p.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("pending after close %d", pending)
+	}
 }

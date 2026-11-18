@@ -187,3 +187,49 @@ func TestMinimalChangesAndOffsets(t *testing.T) {
 		t.Fatal("no text")
 	}
 }
+
+// A run in flight while the project closes drops its findings: they
+// belong to the old project (review wave 7, #8).
+func TestQARunAcrossProjectClose(t *testing.T) {
+	a := newTestApp(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	HookQATools.On(a.Hooks(), 0, func(_ context.Context, l []QATool) ([]QATool, error) {
+		slow := QATool{Plugin: "qa-slow", Name: "Slow", Analyzer: true,
+			Analyze: func(_ context.Context, r QAAnalyzeRequest) (QAReport, error) {
+				close(entered)
+				<-release
+				return QAReport{Files: []QAFileDiagnostics{{File: r.Paths[0],
+					Diagnostics: []QADiagnostic{{Severity: "warning", Message: "late", Line: 1}}}}}, nil
+			}}
+		return append(slices.Clone(l), slow), nil
+	})
+	openProject(t, a, map[string]string{"a.php": "<?php\n"})
+	rec := make(chan QADiagnosticsEvent, 32)
+	unsub := a.Bus().Subscribe(TopicQADiagnostics, func(e bus.Event) { rec <- e.Payload.(QADiagnosticsEvent) })
+	defer unsub()
+	done := make(chan error, 1)
+	go func() { done <- tryCall(a, "qa.run", QARunParams{Tool: "qa-slow", Paths: []string{"a.php"}}, nil) }()
+	<-entered
+	call(t, a, "project.close", nil, nil)
+	close(release)
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "project was closed") {
+		t.Fatalf("run across close: %v", err)
+	}
+	var stored []QADiagnosticsResult
+	call(t, a, "qa.diagnostics", nil, &stored)
+	if len(stored) != 0 {
+		t.Fatalf("findings of the old project stored: %+v", stored)
+	}
+	// No event with findings of the old project (events are asynchronous).
+	deadline := time.After(300 * time.Millisecond)
+	for {
+		select {
+		case ev := <-rec:
+			if len(ev.Diagnostics) > 0 {
+				t.Fatalf("published %+v", ev)
+			}
+		case <-deadline:
+			return
+		}
+	}
+}
