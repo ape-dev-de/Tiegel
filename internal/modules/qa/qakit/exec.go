@@ -72,7 +72,7 @@ func (p *Plugin) execWith(ctx context.Context, program string, build func(t run.
 	}
 	pathEnv := p.pathEnv()
 	tc, err := toolCommand(runtime.GOOS, hostSide(t), root, program, append(args, p.listSetting(KeyArgs)...), hostFS{
-		look: func(name string) (string, error) { return lookPath(name, pathEnv) },
+		Look: func(name string) (string, error) { return lookPath(name, pathEnv) },
 	})
 	if err != nil {
 		return result{}, fmt.Errorf("%s: %w", p.def.Name, err)

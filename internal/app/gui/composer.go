@@ -5,9 +5,9 @@ import (
 
 	"gioui.org/layout"
 
+	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
-	"github.com/ape-dev-de/tiegel/internal/modules/composer"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
 )
@@ -90,7 +90,7 @@ func (d *composerDock) gutterClick(file string, ev editorview.GutterClickEvent) 
 }
 
 // scriptMenu are the run entries of a script.
-func (d *composerDock) scriptMenu(s composer.Script) []MenuItem {
+func (d *composerDock) scriptMenu(s api.ComposerScript) []MenuItem {
 	name := s.Name
 	return []MenuItem{
 		{Title: "Run '" + name + "'", Icon: "run", Run: func() { d.ctl().Run(name) }},
@@ -101,10 +101,12 @@ func (d *composerDock) scriptMenu(s composer.Script) []MenuItem {
 // modifyConfig opens the configuration editor with an unsaved
 // configuration of the script.
 func (d *composerDock) modifyConfig(script string) {
-	cfg := controller.ComposerConfigFor(script)
-	if t, ok := d.v.rund.typeOf(cfg.Type); ok {
-		d.v.rund.openEditor(cfg, t)
-		return
+	cfg, ok := d.ctl().ConfigFor(script)
+	if ok {
+		if t, ok := d.v.rund.typeOf(cfg.Type); ok {
+			d.v.rund.openEditor(cfg, t)
+			return
+		}
 	}
 	d.v.ctl.Run.LoadConfigs()
 	d.v.ctl.Status.Notice = "Loading run configuration types – try again (is the composer plugin enabled?)"

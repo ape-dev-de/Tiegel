@@ -155,7 +155,15 @@ func (e *runConfigEditor) save(andRun bool) {
 	}
 	cfg := run.Config{ID: e.cfg.ID, Name: strings.TrimSpace(e.name.Text()), Type: e.typ.ID, Values: vals}
 	r := e.d.runs()
+	tool := e.typ.Tool
 	r.SaveConfig(cfg, func(saved run.Config) {
+		if tool {
+			// Tools (External Tools) never become the selection.
+			if andRun {
+				r.RunTool(saved.ID, nil)
+			}
+			return
+		}
 		r.SelectConfig(saved.ID)
 		if andRun {
 			r.RunConfig(saved.ID)

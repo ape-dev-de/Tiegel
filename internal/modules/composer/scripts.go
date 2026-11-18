@@ -7,19 +7,13 @@ import (
 	"fmt"
 	"io"
 	"sort"
+
+	"github.com/ape-dev-de/tiegel/internal/api"
 )
 
-// Script is one entry of the "scripts" section of composer.json.
-type Script struct {
-	Name string `json:"name"`
-	// Commands are the script's commands (a string value is one command).
-	Commands []string `json:"commands"`
-	// Description comes from "scripts-descriptions".
-	Description string `json:"description,omitempty"`
-	// Line is the 1-based line of the script's key in composer.json (for
-	// the gutter run arrow; 0 if unknown).
-	Line int `json:"line,omitempty"`
-}
+// Script is one entry of the "scripts" section of composer.json (api
+// contract).
+type Script = api.ComposerScript
 
 // ParseScripts reads the scripts of a composer.json document, sorted by
 // name. A document without scripts yields none; invalid JSON is an error.

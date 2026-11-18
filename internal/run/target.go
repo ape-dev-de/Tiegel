@@ -206,20 +206,25 @@ func Prepare(ctx context.Context, spec Spec, t Target) (*Launch, error) {
 	if dir != "" && !filepath.IsAbs(dir) && t.ProjectDir != "" {
 		dir = filepath.Join(t.ProjectDir, dir)
 	}
+	// External Tools on a Windows host: no batch file gets arguments
+	// cmd.exe would interpret (D461).
+	spec, err := guardBatch(runtime.GOOS, spec, t, dir, BatchFS{Look: func(name string) (string, error) {
+		return lookPath(name, hostPathEnv(t))
+	}})
+	if err != nil {
+		return nil, err
+	}
 	// Commands outlive the request that prepared them: only the Manager
 	// ends them (process tree kill), never the request context.
 	bg := context.WithoutCancel(ctx)
 	x := Exec{Spec: spec, Program: spec.Program, Args: append([]string(nil), spec.Args...), Dir: dir, Env: append([]string(nil), spec.Env...)}
-	var (
-		l   *Launch
-		err error
-	)
+	var l *Launch
 	switch i := t.Interp.(type) {
 	case nil:
 		if spec.PHP {
 			x.Program = "php"
 		}
-		l, err = hostLaunch(ctx, x, t, "")
+		l, err = hostLaunch(ctx, x, t)
 		if l != nil {
 			l.Where = InterpreterHost
 		}
@@ -229,7 +234,7 @@ func Prepare(ctx context.Context, spec Spec, t Target) (*Launch, error) {
 		if spec.PHP {
 			x.Program = i.Path
 		}
-		l, err = hostLaunch(ctx, x, t, filepath.Dir(i.Path))
+		l, err = hostLaunch(ctx, x, t)
 		if l != nil {
 			l.Where = i.Label()
 		}
@@ -268,17 +273,11 @@ func cmdEnv(cmd *exec.Cmd) []string {
 	return os.Environ()
 }
 
-// hostLaunch runs x on the host. extraPath is prepended to PATH (the
-// directory of a local php, so that composer and scripts use it).
-func hostLaunch(_ context.Context, x Exec, t Target, extraPath string) (*Launch, error) {
+// hostLaunch runs x on the host with the PATH of hostPathEnv (a local
+// php's directory first, so that composer and scripts use it).
+func hostLaunch(_ context.Context, x Exec, t Target) (*Launch, error) {
 	env := os.Environ()
-	pathEnv := t.PathEnv
-	if pathEnv == "" {
-		pathEnv = os.Getenv("PATH")
-	}
-	if extraPath != "" && extraPath != "." {
-		pathEnv = extraPath + string(os.PathListSeparator) + pathEnv
-	}
+	pathEnv := hostPathEnv(t)
 	env = mergeEnv(env, []string{"PATH=" + pathEnv})
 	env = mergeEnv(env, x.Env)
 	prog := x.Program
@@ -293,6 +292,23 @@ func hostLaunch(_ context.Context, x Exec, t Target, extraPath string) (*Launch,
 	cmd.Dir = x.Dir
 	cmd.Env = env
 	return &Launch{Cmd: cmd, Display: QuoteWords(append([]string{x.Program}, x.Args...)), Mappings: t.Mappings}, nil
+}
+
+// hostPathEnv is the PATH hostLaunch gives processes of host-side target
+// t (with the directory of a local php first).
+func hostPathEnv(t Target) string {
+	extra := ""
+	if l, ok := t.Interp.(*interp.Local); ok {
+		extra = filepath.Dir(l.Path)
+	}
+	pathEnv := t.PathEnv
+	if pathEnv == "" {
+		pathEnv = os.Getenv("PATH")
+	}
+	if extra != "" && extra != "." {
+		pathEnv = extra + string(os.PathListSeparator) + pathEnv
+	}
+	return pathEnv
 }
 
 // lookPath finds name in the directories of pathEnv (PATHEXT on Windows).

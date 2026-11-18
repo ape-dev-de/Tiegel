@@ -294,7 +294,7 @@ func (r *Runs) start(p api.RunStartParams) {
 			// Quiet runs (external tools without console) stay in the
 			// background.
 			r.Started = !info.Spec.Quiet
-			if p.Config != "" {
+			if p.Config != "" && r.selectsOnStart(info.Spec.Type) {
 				// run.start selected it; replace lists loaded before.
 				r.LoadConfigs()
 				// The backend selected the configuration; a list loaded
@@ -330,10 +330,36 @@ func (r *Runs) RunSelected(file string) {
 	r.c.Status.Notice = "No run configuration – add one in the Run tool window or run the current file"
 }
 
-// RunConfig starts configuration id and makes it the one Ctrl+R runs.
+// RunConfig starts configuration id and makes it the one Ctrl+R runs
+// (unless it is a tool such as an External Tool, see SelectsOnStart).
 func (r *Runs) RunConfig(id string) {
 	r.start(api.RunStartParams{Config: id})
-	r.SelectConfig(id)
+	if r.SelectsOnStart(id) {
+		r.SelectConfig(id)
+	}
+}
+
+// SelectsOnStart reports whether starting or saving configuration id
+// makes it the selected one: tool types (run.ConfigType.Tool, External
+// Tools) never do, so Ctrl+R keeps its configuration.
+func (r *Runs) SelectsOnStart(id string) bool {
+	for _, c := range r.Configs {
+		if c.ID == id {
+			return r.selectsOnStart(c.Type)
+		}
+	}
+	return true
+}
+
+// selectsOnStart is SelectsOnStart by configuration type.
+func (r *Runs) selectsOnStart(typeID string) bool {
+	for _, t := range r.Types {
+		if t.ID == typeID {
+			return !t.Tool
+		}
+	}
+	// Types not loaded yet: the core tool type is known.
+	return typeID != run.TypeExternalTool
 }
 
 // applyChosen marks the configuration picked in this window as selected

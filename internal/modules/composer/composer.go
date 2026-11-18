@@ -122,25 +122,11 @@ func setting[T any](m *Module, key string, def T) T {
 	return def
 }
 
-// ScriptsResult is the result of composer.scripts.
-type ScriptsResult struct {
-	// File is the composer.json of the project; Exists tells whether it
-	// is there (no file: no scripts, no error).
-	File    string   `json:"file"`
-	Exists  bool     `json:"exists"`
-	Scripts []Script `json:"scripts"`
-	// Command is how Composer is started, e.g. "composer" or
-	// "php composer.phar".
-	Command string `json:"command"`
-}
+// ScriptsResult is the result of composer.scripts (api contract).
+type ScriptsResult = api.ComposerScriptsResult
 
-// RunParams are the params of composer.run.
-type RunParams struct {
-	Script string   `json:"script"`
-	Args   []string `json:"args,omitempty"`
-	// Interpreter overrides composer.interpreter (project, host, ID).
-	Interpreter string `json:"interpreter,omitempty"`
-}
+// RunParams are the params of composer.run (api contract).
+type RunParams = api.ComposerRunParams
 
 // Scripts reads the scripts of root's composer.json (nil without file).
 func Scripts(root string) ([]Script, error) {
@@ -161,7 +147,7 @@ func (m *Module) scripts(_ context.Context, _ struct{}) (ScriptsResult, error) {
 		return ScriptsResult{}, err
 	}
 	file := filepath.Join(root, "composer.json")
-	res := ScriptsResult{File: file, Scripts: []Script{}, Command: m.commandText(root)}
+	res := ScriptsResult{File: file, Scripts: []Script{}, Command: m.commandText(root), ConfigType: TypeScript, ScriptField: FieldScript}
 	if _, err := os.Stat(file); err != nil {
 		return res, nil
 	}

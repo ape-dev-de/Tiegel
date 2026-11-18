@@ -140,6 +140,11 @@ type ConfigType struct {
 	// Plugin is the contributing module ("" for the core types).
 	Plugin string  `json:"plugin,omitempty"`
 	Fields []Field `json:"fields"`
+	// Tool marks types started on demand rather than as "the" run
+	// configuration (External Tools): starting or saving one never
+	// changes the selected configuration (run.KeySelected), so Run keeps
+	// starting the previous one.
+	Tool bool `json:"tool,omitempty"`
 	// Suggest returns suggestions for fields marked Suggest (optional).
 	Suggest func(ctx context.Context, env BuildEnv, field string) []string `json:"-"`
 	// Build turns a validated configuration into a spec.

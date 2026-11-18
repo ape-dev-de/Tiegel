@@ -31,7 +31,7 @@ func TestToolCommandWindows(t *testing.T) {
 		known[norm(k)] = v
 	}
 	fsys := hostFS{
-		look: func(name string) (string, error) {
+		Look: func(name string) (string, error) {
 			switch name {
 			case "phpstan":
 				return `C:\composer\bin\phpstan.bat`, nil
@@ -42,8 +42,8 @@ func TestToolCommandWindows(t *testing.T) {
 			}
 			return "", errors.New("not found")
 		},
-		isFile: func(p string) bool { _, ok := known[norm(p)]; return ok },
-		isPHP:  func(p string) bool { return known[norm(p)] },
+		IsFile: func(p string) bool { _, ok := known[norm(p)]; return ok },
+		IsPHP:  func(p string) bool { return known[norm(p)] },
 	}
 	evil := "src/a&calc&.php"
 	cases := []struct {
@@ -93,36 +93,6 @@ func TestToolCommandWindows(t *testing.T) {
 	}
 	if got, _ := toolCommand("windows", false, "C:/proj", "fixer", []string{evil}, fsys); got.PHP || got.Program != "fixer" {
 		t.Errorf("container: %+v", got)
-	}
-}
-
-func TestIsPHPScript(t *testing.T) {
-	dir := t.TempDir()
-	for name, c := range map[string]struct {
-		text string
-		want bool
-	}{
-		"proxy": {"#!/usr/bin/env php\n<?php\n", true},
-		"tag":   {"<?php\ninclude 'x';\n", true},
-		"sh":    {"#!/usr/bin/env sh\necho <?php\n", false},
-		"bin":   {"MZ\x00\x01", false},
-	} {
-		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, []byte(c.text), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if isPHPScript(p) != c.want {
-			t.Errorf("%s: want %v", name, c.want)
-		}
-	}
-	if isPHPScript(filepath.Join(dir, "missing")) {
-		t.Error("missing file")
-	}
-	if extAny(`C:\a.b\c`) != "" || extAny("x/y.BAT") != ".BAT" || extAny(".hidden") != "" {
-		t.Error("extAny")
-	}
-	if !isAbsAny(`C:\x`) || !isAbsAny(`\\srv\x`) || isAbsAny("vendor/bin/x") {
-		t.Error("isAbsAny")
 	}
 }
 
