@@ -1,6 +1,7 @@
 package phpunit
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +31,8 @@ import (
 const (
 	fakeEnv     = "TIEGEL_FAKE_PHPUNIT"
 	fakeArgsEnv = "TIEGEL_FAKE_PHPUNIT_ARGS"
+	// fakeSpamEnv makes testAdd print that many lines of ~95 bytes.
+	fakeSpamEnv = "TIEGEL_FAKE_PHPUNIT_SPAM"
 )
 
 func TestMain(m *testing.M) {
@@ -78,6 +82,13 @@ func fakePHPUnit(args []string) int {
 			inPairs = true
 		}
 		fmt.Println(teamcity.Format("testStarted", "name", ft.name, "locationHint", hint+"::"+ft.name, "flowId", "7"))
+		if n, _ := strconv.Atoi(os.Getenv(fakeSpamEnv)); n > 0 && ft.name == "testAdd" {
+			w := bufio.NewWriter(os.Stdout)
+			for i := 0; i < n; i++ {
+				fmt.Fprintf(w, "spam %07d %s\n", i, strings.Repeat("x", 80))
+			}
+			_ = w.Flush()
+		}
 		switch {
 		case ft.line > 0:
 			failed = true
@@ -695,5 +706,103 @@ func TestStartedEventOrder(t *testing.T) {
 	})
 	if err := m.Stop(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A test printing megabytes: the events stay small, the results keep the
+// tail of the output within the limits (D380).
+func TestLargeOutputBounded(t *testing.T) {
+	t.Setenv(fakeSpamEnv, "4000") // ~380 KB, beyond the limit per test
+	a, _ := newApp(t)
+	root := modtest.Project(t, a, fixture())
+	useFake(t, a, root)
+	rec := modtest.Record(t, a, "test.*")
+	var r api.TestRun
+	modtest.Call(t, a, "test.run", api.TestRunParams{TestScope: api.TestScope{Path: "tests/CalcTest.php"}}, &r)
+	r = waitTests(t, a, r.RunID)
+	rec.Wait(t, api.TopicTestFinished, nil)
+	if r.Light || r.Project != root || r.Counts.Total != 5 {
+		t.Fatalf("results %+v", r.Counts)
+	}
+	for _, topic := range []string{api.TopicTestUpdated, api.TopicTestFinished} {
+		for _, e := range rec.Events(topic) {
+			b, err := json.Marshal(e.Payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(b) > 16<<10 {
+				t.Fatalf("%s payload has %d bytes", topic, len(b))
+			}
+			var ev api.TestRun
+			if json.Unmarshal(b, &ev) != nil || !ev.Light {
+				t.Fatalf("%s not light", topic)
+			}
+		}
+	}
+	add := nodes(r)[`Tests\CalcTest::testAdd`]
+	if add == nil || add.OutputTruncated == 0 || len(add.Output) > teamcity.DefaultMaxOutput+100 ||
+		!strings.HasSuffix(add.Output, "spam 0003999 "+strings.Repeat("x", 80)) {
+		t.Fatalf("testAdd output: %d bytes, %d truncated", len(add.Output), add.OutputTruncated)
+	}
+	// Failure details are in test.results and test.node, not in the events.
+	if fail := nodes(r)[`Tests\CalcTest::testFail`]; fail.Expected != "'foo'" || fail.Details == "" {
+		t.Fatalf("fail %+v", fail)
+	}
+	var n teamcity.Node
+	modtest.Call(t, a, "test.node", api.TestNodeParams{ID: `Tests\CalcTest::testAdd`}, &n)
+	if n.Output != add.Output || n.Status != teamcity.StatusPassed || len(n.Children) != 0 {
+		t.Fatalf("node %d bytes %s", len(n.Output), n.Status)
+	}
+	modtest.Call(t, a, "test.node", api.TestNodeParams{RunID: r.RunID, ID: `Tests\CalcTest::testFail`}, &n)
+	if n.Actual != "'bar'" || n.FailLine != 17 {
+		t.Fatalf("node %+v", n)
+	}
+	modtest.WantCode(t, a, "test.node", api.TestNodeParams{ID: "nope"}, api.CodeNotFound)
+	modtest.WantCode(t, a, "test.node", api.TestNodeParams{}, api.CodeInvalidParams)
+	modtest.WantCode(t, a, "test.node", api.TestNodeParams{RunID: "x", ID: "y"}, api.CodeNotFound)
+}
+
+// A run of the previous project that ends after a project switch does
+// not show up in the new project (D381).
+func TestRunOfPreviousProjectIgnored(t *testing.T) {
+	a, m := newApp(t)
+	old := modtest.Project(t, a, fixture())
+	rec := modtest.Record(t, a, "test.*")
+	info := run.Info{ID: "run-old", Name: "old", Type: ID, Project: old, State: run.StateRunning, Started: time.Now(),
+		Spec: run.Spec{Interpreter: run.InterpreterHost}}
+	m.onRun(bus.Event{Topic: api.TopicRunStarted, Payload: info})
+	if len(rec.Events(api.TopicTestStarted)) == 0 {
+		rec.Wait(t, api.TopicTestStarted, nil)
+	}
+	cur := modtest.Project(t, a, fixture())
+	modtest.Eventually(t, "reset", func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return len(m.sessions) == 0
+	})
+	info.State, info.ExitCode = run.StateExited, 1
+	m.onRun(bus.Event{Topic: api.TopicRunOutput, Payload: run.Output{RunID: info.ID}})
+	m.onRun(bus.Event{Topic: api.TopicRunExited, Payload: info})
+	var runs []api.TestRun
+	modtest.Call(t, a, "test.runs", nil, &runs)
+	if len(runs) != 0 {
+		t.Fatalf("run of the old project kept: %+v", runs)
+	}
+	// A run of the open project is followed.
+	info2 := run.Info{ID: "run-new", Name: "new", Type: ID, Project: cur, State: run.StateExited, Started: time.Now(),
+		Spec: run.Spec{Interpreter: run.InterpreterHost}}
+	m.onRun(bus.Event{Topic: api.TopicRunExited, Payload: info2})
+	modtest.Call(t, a, "test.runs", nil, &runs)
+	if len(runs) != 1 || runs[0].RunID != "run-new" || runs[0].Project != cur {
+		t.Fatalf("runs %+v", runs)
+	}
+	rec.Wait(t, api.TopicTestFinished, func(e bus.Event) bool { return e.Payload.(api.TestRun).RunID == "run-new" })
+	for _, e := range rec.Events(api.TopicTestFinished) {
+		if e.Payload.(api.TestRun).RunID == "run-old" {
+			t.Fatal("test.finished for the old project's run")
+		}
+	}
+	if !sameProject("", cur) || sameProject(old, "") || !sameProject(cur+string(filepath.Separator), cur) {
+		t.Fatal("sameProject")
 	}
 }

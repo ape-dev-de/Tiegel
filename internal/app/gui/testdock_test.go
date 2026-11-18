@@ -180,6 +180,12 @@ func TestTestDockRun(t *testing.T) {
 	if sel == nil || sel.ID != `Tests\CalcTest::testFail` || !sel.Comparison || sel.FailLine != 15 || sel.FailFile != file {
 		t.Fatalf("selected %+v", sel)
 	}
+	// The tree is light; the detail comes from test.node.
+	if sel.Expected != "" || sel.Details != "" {
+		t.Fatalf("light tree has details: %+v", sel)
+	}
+	e.waitFor("detail", func() bool { n := e.ctl.Tests.Detail(sel.ID); return n != nil && n.Expected != "" })
+	sel = e.ctl.Tests.Detail(sel.ID)
 	e.v.tstd.showDiff(sel)
 	e.waitFor("diff", func() bool {
 		for _, d := range e.ctl.Work.Diffs() {

@@ -27,8 +27,8 @@ func init() {
 	flagSpec["debug"] = false
 	register(&command{name: "test",
 		usage: "test [status | discover [PATH] | run [PATH] [--suite S] [--class C] [--method M] [--data-set D] [--filter F] [--config NAME] [--debug] [--interpreter I] | " +
-			"rerun-failed [RUN] [--debug] | results [RUN] | config [PATH] [--suite S] [--class C] [--method M] [--data-set D] | goto FILE | create FILE [--file TARGET] [--dry-run]]",
-		summary: "test framework status, discovery, runs with results (exit 1 on failures), rerun failed, go to/create test", maxArgs: 2, cwdProject: true, run: runTest})
+			"rerun-failed [RUN] [--debug] | results [RUN] | node ID [RUN] | config [PATH] [--suite S] [--class C] [--method M] [--data-set D] | goto FILE | create FILE [--file TARGET] [--dry-run]]",
+		summary: "test framework status, discovery, runs with results (exit 1 on failures), rerun failed, go to/create test", maxArgs: 3, cwdProject: true, run: runTest})
 }
 
 func runTest(c *cli) error {
@@ -113,6 +113,19 @@ func runTest(c *cli) error {
 			return err
 		}
 		return c.emit(r, func(w io.Writer) { printTestRun(w, c, r) })
+	case "node":
+		if arg == "" {
+			return usagef("usage: tiegel --headless test node ID [RUN]")
+		}
+		runID := ""
+		if len(c.p.args) > 2 {
+			runID = c.p.args[2]
+		}
+		var n teamcity.Node
+		if err := c.call("test.node", api.TestNodeParams{RunID: runID, ID: arg}, &n); err != nil {
+			return err
+		}
+		return c.emit(n, func(w io.Writer) { printTestNode(w, c, n) })
 	case "goto":
 		if arg == "" {
 			return usagef("usage: tiegel --headless test goto FILE")
@@ -298,6 +311,28 @@ func printTestRun(w io.Writer, c *cli, r api.TestRun) {
 	}
 	walk(roots, 0)
 	printSummary(w, r)
+}
+
+// printTestNode prints one result in full: status, message,
+// expected/actual, location, details and output.
+func printTestNode(w io.Writer, c *cli, n teamcity.Node) {
+	fmt.Fprintf(w, "%s  %s (%d ms)\n", strings.ToUpper(string(n.Status)), n.ID, n.DurationMs)
+	if n.Message != "" {
+		fmt.Fprintln(w, n.Message)
+	}
+	if n.Comparison {
+		fmt.Fprintf(w, "expected: %s\nactual:   %s\n", n.Expected, n.Actual)
+	}
+	if n.FailFile != "" {
+		fmt.Fprintf(w, "at %s:%d\n", c.app.DisplayPath(n.FailFile), n.FailLine)
+	}
+	if n.Details != "" {
+		fmt.Fprintln(w, n.Details)
+	}
+	if n.Output != "" {
+		fmt.Fprintln(w, "output:")
+		fmt.Fprintln(w, n.Output)
+	}
 }
 
 // waitShort pauses between polls of a finishing test run.

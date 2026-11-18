@@ -71,6 +71,12 @@ func TestTestCommandWithoutRunner(t *testing.T) {
 	if code, _, _ := run(t, "", "test", "results", "--project", dir); code != ExitError {
 		t.Fatalf("no results: %d", code)
 	}
+	if code, _, _ := run(t, "", "test", "node", "--project", dir); code != ExitUsage {
+		t.Fatalf("node usage: %d", code)
+	}
+	if code, _, errOut := run(t, "", "test", "node", `Tests\CalcTest::testAdd`, "--project", dir); code != ExitError || !strings.Contains(errOut, "no test run") {
+		t.Fatalf("node without run: %d %q", code, errOut)
+	}
 	code, out, _ = run(t, "", "test", "config", "tests/CalcTest.php", "--class", `Tests\CalcTest`, "--method", "testAdd", "--project", dir)
 	if code != 0 || !strings.Contains(out, `"method": "testAdd"`) || !strings.Contains(out, `"name": "CalcTest::testAdd"`) {
 		t.Fatalf("config: %d %q", code, out)

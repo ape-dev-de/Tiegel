@@ -477,6 +477,18 @@ func (d *testDock) layout(gtx layout.Context, th *tokens.Theme) layout.Dimension
 		d.v.lspd.openInstall(t.Status.Install)
 	}
 	sel := d.data[d.tree.sel]
+	if sel != nil {
+		// The tree is light (no output, details, expected/actual, D380):
+		// the selected node comes in full from test.node. Until then the
+		// comparison (empty here) is hidden.
+		if full := t.Detail(sel.ID); full != nil {
+			sel = full
+		} else if sel.Comparison {
+			light := *sel
+			light.Comparison = false
+			sel = &light
+		}
+	}
 	if sel != nil && d.diffBtn.Clicked(gtx) && sel.Comparison {
 		d.showDiff(sel)
 	}

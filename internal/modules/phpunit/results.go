@@ -39,7 +39,7 @@ func (m *Module) onRun(e bus.Event) {
 	switch e.Topic {
 	case api.TopicRunStarted:
 		if i, ok := e.Payload.(run.Info); ok && i.Type == ID {
-			m.ensure(i)
+			m.ensure(i) // nil for runs of another project
 		}
 	case api.TopicRunOutput:
 		o, ok := e.Payload.(run.Output)
@@ -72,7 +72,9 @@ func (m *Module) onRun(e bus.Event) {
 	}
 }
 
-// ensure returns the session of run i, creating it on first sight.
+// ensure returns the session of run i, creating it on first sight; nil
+// for a run of another project (one started before a project switch
+// that ends after it, D381).
 func (m *Module) ensure(i run.Info) *session {
 	m.mu.Lock()
 	if s := m.sessions[i.ID]; s != nil {
@@ -81,6 +83,9 @@ func (m *Module) ensure(i run.Info) *session {
 	}
 	app := m.app
 	m.mu.Unlock()
+	if app != nil && !sameProject(i.Project, app.ProjectRoot()) {
+		return nil
+	}
 	// The mapper may ask php-runtime (hook): outside the lock.
 	root := i.Project
 	tree := teamcity.NewTree()
@@ -92,7 +97,7 @@ func (m *Module) ensure(i run.Info) *session {
 	}
 	s := &session{tree: tree, run: api.TestRun{
 		RunID: i.ID, Name: i.Name, Framework: Framework, State: i.State, Started: i.Started,
-		Scope: scopeOfArgs(i.Spec.Args, root), Debug: i.Spec.Debug,
+		Scope: scopeOfArgs(i.Spec.Args, root), Debug: i.Spec.Debug, Project: root,
 	}}
 	m.sessions[i.ID] = s
 	m.order = append(m.order, i.ID)
@@ -110,6 +115,12 @@ func (m *Module) ensure(i run.Info) *session {
 		app.Bus().Publish(api.TopicTestStarted, started)
 	}
 	return s
+}
+
+// sameProject reports whether a run of project runRoot belongs to the
+// open project root (runs without project always do).
+func sameProject(runRoot, root string) bool {
+	return runRoot == "" || (root != "" && filepath.Clean(runRoot) == filepath.Clean(root))
 }
 
 // mapper maps reported (container) paths to host files: files that exist
@@ -181,7 +192,7 @@ func (m *Module) scheduleLocked(s *session) {
 			return
 		}
 		s.dirty = false
-		snap := m.snapshotLocked(s)
+		snap := m.snapshotLocked(s, true)
 		app := m.app
 		m.mu.Unlock()
 		if app != nil {
@@ -191,9 +202,14 @@ func (m *Module) scheduleLocked(s *session) {
 }
 
 // snapshotLocked copies the run with its tree and records the statuses.
-func (m *Module) snapshotLocked(s *session) api.TestRun {
+// A light snapshot (events) leaves out the bulky per-test fields (D380).
+func (m *Module) snapshotLocked(s *session, light bool) api.TestRun {
 	r := s.run
-	r.Tree = s.tree.Snapshot()
+	if light {
+		r.Tree, r.Light = s.tree.SnapshotLight(), true
+	} else {
+		r.Tree = s.tree.Snapshot()
+	}
 	r.Counts = s.tree.Counts()
 	if !s.done {
 		r.DurationMs = time.Since(r.Started).Milliseconds()
@@ -210,6 +226,9 @@ func (m *Module) snapshotLocked(s *session) api.TestRun {
 // finish ends the session of run i.
 func (m *Module) finish(i run.Info) {
 	s := m.ensure(i)
+	if s == nil {
+		return
+	}
 	m.mu.Lock()
 	if s.done {
 		m.mu.Unlock()
@@ -219,7 +238,7 @@ func (m *Module) finish(i run.Info) {
 	s.tree.Finish()
 	s.done = true
 	s.run.State, s.run.ExitCode, s.run.DurationMs, s.run.Error = i.State, i.ExitCode, i.DurationMs, i.Error
-	snap := m.snapshotLocked(s)
+	snap := m.snapshotLocked(s, true)
 	if snap.Counts.Total == 0 && snap.Error == "" && i.State == run.StateExited && i.ExitCode != 0 {
 		snap.Error = "The test run ended without results (exit code " + strconv.Itoa(i.ExitCode) + "); see its output in the Run tool window."
 		s.run.Error = snap.Error
@@ -253,7 +272,25 @@ func (m *Module) results(_ context.Context, p api.TestRunIDParams) (api.TestRun,
 	if err != nil {
 		return api.TestRun{}, err
 	}
-	return m.snapshotLocked(s), nil
+	return m.snapshotLocked(s, false), nil
+}
+
+// node returns one node of a test run in full (details, output).
+func (m *Module) node(_ context.Context, p api.TestNodeParams) (teamcity.Node, error) {
+	if p.ID == "" {
+		return teamcity.Node{}, api.Errorf(api.CodeInvalidParams, "id is required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, err := m.session(p.RunID)
+	if err != nil {
+		return teamcity.Node{}, err
+	}
+	n, ok := s.tree.SnapshotNode(p.ID)
+	if !ok {
+		return teamcity.Node{}, api.Errorf(api.CodeNotFound, "no test %q in test run %s", p.ID, s.run.RunID)
+	}
+	return n, nil
 }
 
 func (m *Module) runs(_ context.Context, _ struct{}) ([]api.TestRun, error) {
@@ -319,6 +356,9 @@ func (m *Module) runTests(ctx context.Context, p api.TestRunParams) (api.TestRun
 		return api.TestRun{}, api.Errorf(api.CodeInvalidParams, "run configuration %q is not a %s configuration (type %s)", p.Config, Framework, info.Type)
 	}
 	s := m.ensure(info)
+	if s == nil {
+		return api.TestRun{}, api.Errorf(api.CodeFailed, "the test run %s belongs to another project", info.ID)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if p.Config == "" {
