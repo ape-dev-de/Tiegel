@@ -443,7 +443,9 @@ func outputLine(th *tokens.Theme, l run.Line) layout.Widget {
 
 // confirmClose asks before closing the project or quitting while runs
 // are active (setting run.confirmClose); proceed runs when closing may
-// go on.
+// go on. The decision is sent for the project the check was made for and
+// acknowledged by the backend before proceed runs (which may switch the
+// project or quit).
 func (d *runDock) confirmClose(proceed func()) {
 	r := d.runs()
 	r.CloseCheck(func(res api.RunCloseCheck) {
@@ -453,8 +455,7 @@ func (d *runDock) confirmClose(proceed func()) {
 			return
 		}
 		if res.Policy == run.CloseTerminate {
-			r.StopAll()
-			proceed()
+			r.StopAll(res.Project, proceed)
 			return
 		}
 		what := "1 process is"
@@ -464,8 +465,8 @@ func (d *runDock) confirmClose(proceed func()) {
 		d.v.OpenPopup(&Popup{Title: what + " still running", Centered: true,
 			Detail: "Terminate them, or keep them running in the background? (Settings › Run decides without asking.)",
 			Buttons: []*PopupButton{
-				{Text: "Terminate", Kind: atoms.Primary, OnClick: func() { r.StopAll(); proceed() }},
-				{Text: "Keep Running", Kind: atoms.Secondary, OnClick: proceed},
+				{Text: "Terminate", Kind: atoms.Primary, OnClick: func() { r.StopAll(res.Project, proceed) }},
+				{Text: "Keep Running", Kind: atoms.Secondary, OnClick: func() { r.KeepAll(res.Project, proceed) }},
 				{Text: "Cancel", Kind: atoms.Ghost},
 			}})
 	})

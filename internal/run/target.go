@@ -106,6 +106,11 @@ type Launch struct {
 	Display string
 	// Where describes the target ("host", an interpreter label).
 	Where string
+	// Dir is the host working directory of the program: relative paths
+	// in the output are resolved against it (empty: Cmd.Dir). It differs
+	// from Cmd.Dir when docker runs in the compose directory while the
+	// program works in a mapped project directory.
+	Dir string
 	// Mappings map container paths of the output back to the host.
 	Mappings compose.Mappings
 	// PIDMarker is the prefix of a stderr line announcing the PID of the
@@ -141,6 +146,24 @@ type Exec struct {
 
 // pidMarker prefixes the PID line of the compose exec stop helper.
 const pidMarker = "__TIEGEL_RUN_PID__ "
+
+// wrapScript is the stop helper (`sh -c wrapScript sh program args…`)
+// for processes inside a container or WSL: it prints its PID and execs
+// the program, which keeps that PID. The program leads its own process
+// group so that stopScript reaches its children too: `docker exec`
+// already starts a group leader, otherwise setsid makes one (setsid
+// would fork in a group leader, hence the look at /proc).
+const wrapScript = `echo "` + pidMarker + `$$" >&2; pg=; read -r _ _ _ _ pg _ 2>/dev/null </proc/$$/stat; ` +
+	`if [ "$pg" != "$$" ] && command -v setsid >/dev/null 2>&1; then exec setsid "$@"; fi; exec "$@"`
+
+// stopScript (`sh -c stopScript sh PID`) ends the process PID and its
+// process group: TERM, up to 5 s grace, then KILL. It uses the shell's
+// kill builtin (Debian images have no kill program) and no "--" (dash
+// rejects it).
+const stopScript = `s() { kill -"$1" -"$2" 2>/dev/null || kill -"$1" "$2"; }; ` +
+	`a() { kill -0 -"$1" 2>/dev/null || kill -0 "$1" 2>/dev/null; }; ` +
+	`s TERM "$1" || exit 1; i=0; while a "$1" && [ "$i" -lt 25 ]; do sleep 0.2; i=$((i+1)); done; ` +
+	`if a "$1"; then s KILL "$1"; fi; exit 0`
 
 // Prepare builds the command of spec on target t.
 func Prepare(ctx context.Context, spec Spec, t Target) (*Launch, error) {
@@ -201,6 +224,9 @@ func Prepare(ctx context.Context, spec Spec, t Target) (*Launch, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if l.Dir == "" {
+		l.Dir = dir
 	}
 	return l, nil
 }
@@ -359,7 +385,7 @@ func composeLaunch(ctx, bg context.Context, c *compose.Interpreter, x Exec, t Ta
 			// The helper prints its PID and execs the program, so the
 			// PID is the program's: Stop can end it inside the container
 			// (killing the docker client does not).
-			a = append(a, "sh", "-c", `echo "`+pidMarker+`$$" >&2; exec "$@"`, "sh", prog)
+			a = append(a, "sh", "-c", wrapScript, "sh", prog)
 			l.PIDMarker = pidMarker
 			base := c.BaseArgs()
 			service := c.Service
@@ -367,7 +393,7 @@ func composeLaunch(ctx, bg context.Context, c *compose.Interpreter, x Exec, t Ta
 				if pid == "" {
 					return nil
 				}
-				kill := append(append([]string(nil), base...), "exec", "-T", service, "kill", "-TERM", pid)
+				kill := append(append([]string(nil), base...), "exec", "-T", service, "sh", "-c", stopScript, "sh", pid)
 				_, err := client.Output(ctx, kill...)
 				return err
 			}
@@ -466,6 +492,11 @@ func wslLaunch(w *interp.WSL, x Exec, t Target) (*Launch, error) {
 	if len(x.Env) > 0 {
 		a = append(append(a, "env"), x.Env...)
 	}
+	if !t.Plain {
+		// Killing wsl.exe does not end the Linux process: the stop
+		// helper reports its PID for StopRemote (as for compose exec).
+		a = append(a, "sh", "-c", wrapScript, "sh")
+	}
 	a = append(a, prog)
 	a = append(a, remoteArgs(x.Args, m)...)
 	exe := w.Program
@@ -474,5 +505,29 @@ func wslLaunch(w *interp.WSL, x Exec, t Target) (*Launch, error) {
 	}
 	cmd := exec.Command(exe, a...)
 	cmd.Dir = x.Dir
-	return &Launch{Cmd: cmd, Display: QuoteWords(append([]string{exe}, a...)), Where: w.Label(), Mappings: m}, nil
+	l := &Launch{Cmd: cmd, Display: QuoteWords(append([]string{exe}, a...)), Where: w.Label(), Mappings: m}
+	if !t.Plain {
+		l.PIDMarker = pidMarker
+		distro := w.Distro
+		l.StopRemote = func(ctx context.Context, pid string) error {
+			if pid == "" {
+				return nil
+			}
+			out, err := exec.CommandContext(ctx, exe, "-d", distro, "--", "sh", "-c", stopScript, "sh", pid).CombinedOutput()
+			if err != nil {
+				if msg := strings.TrimSpace(string(out)); msg != "" {
+					return fmt.Errorf("run: stopping %s in WSL: %w: %s", pid, err, firstLine(msg))
+				}
+				return fmt.Errorf("run: stopping %s in WSL: %w", pid, err)
+			}
+			return nil
+		}
+	}
+	return l, nil
+}
+
+// firstLine returns the first line of s.
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return strings.TrimSpace(line)
 }

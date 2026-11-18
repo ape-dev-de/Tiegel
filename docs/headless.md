@@ -478,7 +478,8 @@ Nach `install.done` sucht lang-php den Server neu und startet ihn ohne Neustart 
 | `run.stop` / `run.rerun` / `run.wait` / `run.remove` | `runId` | Lauf; `rerun` stoppt einen aktiven Lauf, startet neu (`replaces` = alte ID) und vergisst den alten; `remove` nur für beendete Läufe (`-32004` sonst) |
 | `run.list` | `active?` | Läufe, älteste zuerst (höchstens 30 beendete) |
 | `run.output` | `runId`, `since?` (Sequenznummer), `limit?` | `{runId, state, lines: [{seq, stream: stdout\|stderr\|system, text, links?: [{start, end, path, file, line, column?}]}], last, dropped?}` (Puffer 10 000 Zeilen) |
-| `run.closeCheck` / `run.stopAll` | – | `{policy: ask\|terminate\|keep, active: [Lauf]}` (Einstellung `run.confirmClose`) bzw. IDs der gestoppten Läufe des Projekts |
+| `run.closeCheck` | – | `{policy: ask\|terminate\|keep, active: [Lauf], project?}` (Einstellung `run.confirmClose`; `project` = Wurzel, für die geprüft wurde) |
+| `run.stopAll` / `run.keepAll` | `project?` (Wurzel, Standard: offenes Projekt, ohne Projekt alle), `wait?` (nur `stopAll`: erst antworten, wenn die Läufe beendet sind, höchstens 15 s) | IDs der gestoppten bzw. beim Beenden von Tiegel weiterlaufenden Läufe (`keep: true` im Lauf, D301) |
 | `run.configs.list` | – | `[{id, name, type, values, typeLabel, available, display?, error?, selected?}]` |
 | `run.configs.save` | `{id?, name, type, values}` | gespeicherte Konfiguration (geprüft gegen die Felder des Typs; neuer Name doppelt `-32004`) |
 | `run.configs.delete` / `run.configs.select` | `id` (ID oder Name) | – bzw. Konfiguration |

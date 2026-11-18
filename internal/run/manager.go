@@ -65,7 +65,10 @@ type Info struct {
 	Lines int `json:"lines"`
 	// Replaces is the run this one reruns (its tab is reused).
 	Replaces string `json:"replaces,omitempty"`
-	Spec     Spec   `json:"spec"`
+	// Keep tells that the run stays when the application closes (the
+	// user chose to keep it running, see Manager.Keep).
+	Keep bool `json:"keep,omitempty"`
+	Spec Spec `json:"spec"`
 }
 
 // Active reports whether the run has not finished.
@@ -137,6 +140,16 @@ type Manager struct {
 	mu   sync.Mutex
 	seq  int
 	runs map[string]*proc
+	// afterWait is a test hook called right after cmd.Wait returned.
+	afterWait func(*proc)
+}
+
+// rerunCall is a Rerun of a run; concurrent Reruns of the same run wait
+// for the first one and return its result.
+type rerunCall struct {
+	done chan struct{}
+	info Info
+	err  error
 }
 
 type proc struct {
@@ -145,12 +158,17 @@ type proc struct {
 	linker   Linker
 	done     chan struct{}
 
-	mu       sync.Mutex
-	info     Info
-	lines    []Line
-	pending  []Line
-	dropped  bool
-	stopping bool
+	mu      sync.Mutex
+	info    Info
+	lines   []Line
+	pending []Line
+	dropped bool
+	// reaped is set when cmd.Wait returned; killed when a stop signalled
+	// the process before that (the run is "stopped", not "exited").
+	reaped bool
+	killed bool
+	// rerun is the Rerun in progress or done (concurrent calls share it).
+	rerun    *rerunCall
 	pid      string
 	pidSet   chan struct{} // closed when pid arrived (PIDMarker launches)
 	tree     *proctree.Tree
@@ -210,11 +228,17 @@ func (m *Manager) Start(ctx context.Context, spec Spec, launcher Launcher, opts 
 	if exists == nil {
 		exists = FileExists
 	}
-	dirs := append([]string{cmd.Dir}, opts.LinkDirs...)
+	// Relative paths are relative to the program's working directory,
+	// not to where the (docker) client runs.
+	workDir := l.Dir
+	if workDir == "" {
+		workDir = cmd.Dir
+	}
+	dirs := append([]string{workDir}, opts.LinkDirs...)
 	p := &proc{id: id, launcher: launcher, done: make(chan struct{}), pidSet: make(chan struct{}), launch: l,
 		linker: Linker{Mappings: l.Mappings, Dirs: dirs, Exists: exists},
 		info: Info{ID: id, Name: spec.Name, Config: spec.Config, Type: spec.Type, Display: l.Display, Where: l.Where,
-			Dir: cmd.Dir, Project: opts.Project, State: StateRunning, ExitCode: -1, Started: m.now(), Replaces: opts.Replaces, Spec: spec}}
+			Dir: workDir, Project: opts.Project, State: StateRunning, ExitCode: -1, Started: m.now(), Replaces: opts.Replaces, Spec: spec}}
 	if p.info.Name == "" {
 		p.info.Name = spec.Display()
 	}
@@ -296,6 +320,12 @@ func (m *Manager) wait(p *proc, cmd *exec.Cmd, stdout, stderr io.Reader, outW, e
 		}
 	}()
 	err := cmd.Wait()
+	p.mu.Lock()
+	p.reaped = true
+	p.mu.Unlock()
+	if m.afterWait != nil {
+		m.afterWait(p)
+	}
 	p.tree.Release()
 	_ = outW.Close()
 	_ = errW.Close()
@@ -308,7 +338,9 @@ func (m *Manager) wait(p *proc, cmd *exec.Cmd, stdout, stderr io.Reader, outW, e
 		code = cmd.ProcessState.ExitCode()
 	}
 	p.mu.Lock()
-	stopped := p.stopping
+	// Only a stop that signalled the process before it ended makes it
+	// "stopped"; a stop racing with a normal exit does not.
+	stopped := p.killed
 	p.info.ExitCode = code
 	p.info.Finished = m.now()
 	p.info.State = StateExited
@@ -323,7 +355,7 @@ func (m *Manager) wait(p *proc, cmd *exec.Cmd, stdout, stderr io.Reader, outW, e
 	if stopped {
 		msg = "Process stopped"
 	}
-	p.appendLocked(m, StreamSystem, msg)
+	p.appendLocked(m, StreamSystem, msg, nil)
 	p.mu.Unlock()
 	m.flush(p)
 	m.mu.Lock()
@@ -367,29 +399,40 @@ func (m *Manager) addLine(p *proc, stream, raw string) {
 		raw = raw[i+1:]
 	}
 	text := StripANSI(strings.TrimRight(raw, "\r"))
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if stream == StreamStderr && p.launch.PIDMarker != "" && p.pid == "" {
-		if pid, ok := strings.CutPrefix(text, p.launch.PIDMarker); ok {
-			p.pid = strings.TrimSpace(pid)
-			select {
-			case <-p.pidSet: // an earlier marker without a PID
-			default:
-				close(p.pidSet)
-			}
+	if marker := p.launch.PIDMarker; stream == StreamStderr && marker != "" {
+		if pid, ok := strings.CutPrefix(text, marker); ok && p.takePID(pid) {
 			return
 		}
 	}
-	p.appendLocked(m, stream, text)
+	// Link detection checks files on disk: outside p.mu, so that state
+	// queries never wait for the file system (the linker is immutable).
+	links := p.linker.Links(text)
+	p.mu.Lock()
+	p.appendLocked(m, stream, text, links)
+	p.mu.Unlock()
 }
 
-// appendLocked adds a line (p.mu held).
-func (p *proc) appendLocked(m *Manager, stream, text string) {
-	p.info.Lines++
-	ln := Line{Seq: p.info.Lines, Stream: stream, Text: text}
-	if stream != StreamSystem {
-		ln.Links = p.linker.Links(text)
+// takePID records the PID of the first marker line; false if a PID is
+// already known (the line is ordinary output then).
+func (p *proc) takePID(pid string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.pid != "" {
+		return false
 	}
+	p.pid = strings.TrimSpace(pid)
+	select {
+	case <-p.pidSet: // an earlier marker without a PID
+	default:
+		close(p.pidSet)
+	}
+	return true
+}
+
+// appendLocked adds a line with its links (p.mu held).
+func (p *proc) appendLocked(m *Manager, stream, text string, links []Link) {
+	p.info.Lines++
+	ln := Line{Seq: p.info.Lines, Stream: stream, Text: text, Links: links}
 	p.lines = append(p.lines, ln)
 	if max := m.maxLines(); len(p.lines) > max {
 		p.lines = append(p.lines[:0:0], p.lines[len(p.lines)-max:]...)
@@ -508,16 +551,21 @@ func (m *Manager) stop(p *proc) {
 	default:
 	}
 	p.stopOnce.Do(func() {
-		p.mu.Lock()
-		p.stopping = true
 		remote, marker := p.launch.StopRemote, p.launch.PIDMarker
-		p.mu.Unlock()
 		go func() {
 			if remote != nil {
 				pid := p.waitPID(marker)
+				if !p.markKilled() {
+					return // ended by itself meanwhile
+				}
 				ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
-				_ = remote(ctx, pid)
+				err := remote(ctx, pid)
 				cancel()
+				if err != nil {
+					// The local kill below does not reach the process in
+					// the container: say so in the output.
+					p.note(m, "Stopping the process in the container failed: "+err.Error())
+				}
 				// The client usually ends with the remote process; give it
 				// a moment before killing it.
 				select {
@@ -526,9 +574,33 @@ func (m *Manager) stop(p *proc) {
 				case <-time.After(time.Second):
 				}
 			}
-			_ = p.tree.Kill()
+			if p.markKilled() {
+				_ = p.tree.Kill()
+			}
 		}()
 	})
+}
+
+// markKilled records that a stop is about to signal the process; false
+// if the process already ended (cmd.Wait returned).
+func (p *proc) markKilled() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.reaped {
+		return false
+	}
+	p.killed = true
+	return true
+}
+
+// note adds a line of Tiegel to an active run (dropped once it ended, so
+// that all output precedes OnExit).
+func (p *proc) note(m *Manager, text string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.reaped {
+		p.appendLocked(m, StreamSystem, text, nil)
+	}
 }
 
 // pidWait bounds how long a stop waits for the PID marker line.
@@ -585,12 +657,39 @@ func (m *Manager) Wait(ctx context.Context, id string) (Info, error) {
 
 // Rerun starts the spec of run id again with the same launcher (which
 // resolves the target anew). An active run is stopped first; the old run
-// is forgotten and the new one reports it in Replaces.
+// is forgotten and the new one reports it in Replaces. Concurrent Reruns
+// of the same run (a double click) start one process: the later calls
+// return the run the first one started.
 func (m *Manager) Rerun(ctx context.Context, id string) (Info, error) {
 	p, err := m.get(id)
 	if err != nil {
 		return Info{}, err
 	}
+	p.mu.Lock()
+	if c := p.rerun; c != nil {
+		p.mu.Unlock()
+		select {
+		case <-c.done:
+			return c.info, c.err
+		case <-ctx.Done():
+			return Info{}, fmt.Errorf("run: waiting for the rerun of %s: %w", id, ctx.Err())
+		}
+	}
+	c := &rerunCall{done: make(chan struct{})}
+	p.rerun = c
+	p.mu.Unlock()
+	c.info, c.err = m.rerun(ctx, p, id)
+	if c.err != nil {
+		// A failed rerun may be tried again.
+		p.mu.Lock()
+		p.rerun = nil
+		p.mu.Unlock()
+	}
+	close(c.done)
+	return c.info, c.err
+}
+
+func (m *Manager) rerun(ctx context.Context, p *proc, id string) (Info, error) {
 	m.stop(p)
 	select {
 	case <-p.done:
@@ -606,6 +705,19 @@ func (m *Manager) Rerun(ctx context.Context, id string) (Info, error) {
 	delete(m.runs, id)
 	m.mu.Unlock()
 	return info, nil
+}
+
+// Keep marks an active run to be kept running when the application
+// closes (the user chose "Keep Running"); see Info.Keep.
+func (m *Manager) Keep(id string) error {
+	p, err := m.get(id)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	p.info.Keep = true
+	p.mu.Unlock()
+	return nil
 }
 
 // Remove forgets a finished run (its tab was closed).

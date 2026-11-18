@@ -42,6 +42,7 @@ func TestRunsUI(t *testing.T) {
 	f.answer("run.stop", run.Info{})
 	f.answer("run.remove", struct{}{})
 	f.answer("run.stopAll", []string{})
+	f.answer("run.keepAll", []string{})
 	f.answer("run.rerun", run.Info{ID: "run-9", Name: "x", State: run.StateRunning, Project: root, Replaces: "run-1"})
 	f.answer("run.closeCheck", api.RunCloseCheck{Policy: run.CloseAsk, Active: []run.Info{{ID: "run-9"}}})
 	c := started(t, f)
@@ -127,7 +128,20 @@ func TestRunsUI(t *testing.T) {
 		}
 	})
 	r.DeleteConfig("a")
-	r.StopAll()
+	stopped, kept := false, false
+	r.StopAll("/old", func() { stopped = true })
+	c.Settle(time.Second)
+	var sp api.RunStopAllParams
+	lastParams(t, f, "run.stopAll", &sp)
+	if !stopped || sp.Project != "/old" {
+		t.Fatalf("stopAll %v %+v", stopped, sp)
+	}
+	r.KeepAll("/old", func() { kept = true })
+	c.Settle(time.Second)
+	lastParams(t, f, "run.keepAll", &sp)
+	if !kept || sp.Project != "/old" {
+		t.Fatalf("keepAll %v %+v", kept, sp)
+	}
 	var check api.RunCloseCheck
 	r.CloseCheck(func(res api.RunCloseCheck) { check = res })
 	c.Settle(time.Second)
@@ -175,6 +189,31 @@ func TestRunsUI(t *testing.T) {
 	r.ProjectChanged()
 	if r.Configs != nil {
 		t.Fatal("configs without project")
+	}
+}
+
+// TestRunReplyAfterExit: a start/rerun reply that arrives after
+// run.exited does not make the finished run look active again.
+func TestRunReplyAfterExit(t *testing.T) {
+	f := projectFake()
+	running := run.Info{ID: "run-1", Name: "x", State: run.StateRunning, Project: root}
+	release := make(chan struct{})
+	f.on("run.start", func(json.RawMessage) (any, error) { <-release; return running, nil })
+	c := started(t, f)
+	r := c.Run
+	r.RunFile("/proj/a.php")
+	f.emit(api.TopicRunStarted, running)
+	exited := running
+	exited.State, exited.ExitCode, exited.Finished = run.StateExited, 0, time.Now()
+	f.emit(api.TopicRunExited, exited)
+	c.Settle(time.Second)
+	if tab := r.Tab("run-1"); tab == nil || tab.Active() {
+		t.Fatalf("exit not applied: %+v", tab)
+	}
+	close(release)
+	c.Settle(time.Second)
+	if tab := r.Tab("run-1"); tab == nil || tab.Active() || tab.Info.Finished.IsZero() {
+		t.Fatalf("reply after exit revived the run: %+v", tab.Info)
 	}
 }
 
