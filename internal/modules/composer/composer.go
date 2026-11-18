@@ -206,7 +206,10 @@ func (m *Module) buildSpec(root, script string, args []string, interp string, en
 	if script == "" {
 		return run.Spec{}, fmt.Errorf("%w: script is required", run.ErrInvalidConfig)
 	}
-	if strings.HasPrefix(script, "-") || strings.ContainsAny(script, " \t\n") {
+	// Script names come from the repository's composer.json; on Windows
+	// composer.bat passes them through cmd.exe, so its metacharacters are
+	// refused on every system (no real script name uses them, D463).
+	if strings.HasPrefix(script, "-") || strings.ContainsAny(script, " \t\r\n\"%!^&|<>()") {
 		return run.Spec{}, fmt.Errorf("%w: invalid script name %q", run.ErrInvalidConfig, script)
 	}
 	if interp == "" {

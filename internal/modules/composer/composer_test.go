@@ -124,6 +124,10 @@ func TestModule(t *testing.T) {
 	// composer.run runs the fake with run-script, -- and the arguments.
 	setSetting(t, a, SettingPath, fake)
 	modtest.WantCode(t, a, "composer.run", RunParams{Script: "--version"}, api.CodeInvalidParams)
+	// Names from composer.json with cmd.exe metacharacters (Windows: composer.bat).
+	for _, bad := range []string{"a&calc", "x|y", "%PATH%", "a^b", "q\"r"} {
+		modtest.WantCode(t, a, "composer.run", RunParams{Script: bad}, api.CodeInvalidParams)
+	}
 	modtest.WantCode(t, a, "composer.run", RunParams{}, api.CodeInvalidParams)
 	var info run.Info
 	modtest.Call(t, a, "composer.run", RunParams{Script: "test", Args: []string{"--filter", "a b"}, Interpreter: run.InterpreterHost}, &info)
