@@ -192,10 +192,12 @@ func (rn *Runner) finish(r *run, state string, code int, err error) {
 	}
 	r.mu.Unlock()
 	r.cancel()
-	close(r.done)
+	// OnDone runs before done closes, so a returned Wait implies the
+	// callback has run.
 	if rn.OnDone != nil {
 		rn.OnDone(r.snapshot())
 	}
+	close(r.done)
 }
 
 func (rn *Runner) get(id string) (*run, error) {
