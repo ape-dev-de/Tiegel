@@ -60,3 +60,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-18: Welle 8 gemergt (D390–D430): Einstellungs-Import aus der Referenz-IDE (M16), Composer-Plugin + External Tools (M17.2), Live Templates, Datei-Vorlagen, Generate, Inlay Hints (M17.3). Offen: Review Welle 8.
 
 - 2026-11-18: Review-Fixes Welle 8 gemergt (D440–D463): Import-Vertrauensgrenze (.idea darf nichts Globales, keine Repo-Programme ohne Opt-in), Projekt-Angebot nur Projekt + Backup, Surround-With-Absturz, Panic-Recovery in der API, Tool-Läufe ohne Auswahlwechsel, gemeinsamer Windows-Batch-Schutz.
+- 2026-11-18: CI komplett grün nach Welle 8 + Review-Fixes (macOS, Linux, Windows, Cross). M11–M17 umgesetzt.
