@@ -134,7 +134,7 @@ func (p *Plugin) keyInitOptions() string { return p.ID() + ".initOptions" }
 func (p *Plugin) SettingSpecs() []settings.Spec {
 	name := p.def.Name
 	specs := []settings.Spec{
-		{Key: p.keyPath(), Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Label: name + " executable",
+		{Key: p.keyPath(), Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Label: name + " executable", Executable: true,
 			Help: "Path of the " + name + " executable; empty searches vendor/bin, PATH, the login shell PATH and the usual package manager directories."},
 		{Key: p.keyArgs(), Kind: settings.KindList, Default: append([]string{}, p.def.Args...), Scope: settings.ScopeProject, Label: "Arguments",
 			Help: "Arguments that start " + name + " on stdio."},

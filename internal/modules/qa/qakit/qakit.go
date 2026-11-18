@@ -218,12 +218,12 @@ func (p *Plugin) SettingSpecs() []settings.Spec {
 	n := p.def.Name
 	one, hour := 1, MaxTimeout
 	specs := []settings.Spec{
-		{Key: p.key(KeyPath), Kind: settings.KindPath, Default: "vendor/bin/" + p.def.Program, Scope: settings.ScopeProject, Label: n + " executable", Group: "Tool",
+		{Key: p.key(KeyPath), Kind: settings.KindPath, Default: "vendor/bin/" + p.def.Program, Scope: settings.ScopeProject, Label: n + " executable", Group: "Tool", Executable: true,
 			Help: "Relative paths are taken from the project root (also inside the interpreter); a bare name is looked up in PATH."},
 	}
 	if p.def.FormatProgram != "" {
 		specs = append(specs, settings.Spec{Key: p.key(KeyFormatPath), Kind: settings.KindPath, Default: "vendor/bin/" + p.def.FormatProgram,
-			Scope: settings.ScopeProject, Label: "Fixer executable", Group: "Tool", Help: "The program that fixes files (Reformat Code, format on save)."})
+			Scope: settings.ScopeProject, Label: "Fixer executable", Group: "Tool", Executable: true, Help: "The program that fixes files (Reformat Code, format on save)."})
 	}
 	specs = append(specs,
 		settings.Spec{Key: p.key(KeyConfig), Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Label: "Configuration file", Group: "Tool",

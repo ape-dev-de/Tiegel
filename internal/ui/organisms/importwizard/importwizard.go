@@ -37,6 +37,9 @@ type Area struct {
 // Item is a report row.
 type Item struct {
 	Area, Name, Status, Detail, Source string
+	// Executable is the program from the repository the item would run
+	// (it is imported only with the opt-in).
+	Executable string
 }
 
 // Event is reported by View.Update.
@@ -54,9 +57,14 @@ type ImportEvent struct{ Areas []string }
 // CloseEvent: the user closed the wizard.
 type CloseEvent struct{}
 
-func (ToggleEvent) isImportEvent() {}
-func (ImportEvent) isImportEvent() {}
-func (CloseEvent) isImportEvent()  {}
+// AllowExecutablesEvent: the user changed the opt-in for programs from
+// the repository.
+type AllowExecutablesEvent struct{ Allowed bool }
+
+func (ToggleEvent) isImportEvent()           {}
+func (ImportEvent) isImportEvent()           {}
+func (CloseEvent) isImportEvent()            {}
+func (AllowExecutablesEvent) isImportEvent() {}
 
 // View is the wizard body.
 type View struct {
@@ -72,8 +80,14 @@ type View struct {
 	// Busy shows a progress text and disables Import.
 	Busy  bool
 	Error string
+	// Executables counts the items that run a program from the
+	// repository; with one or more an extra, unchecked opt-in box is
+	// shown. AllowExecutables is its state.
+	Executables      int
+	AllowExecutables bool
 
 	checks []*atoms.Checkbox
+	allow  atoms.Checkbox
 	list   molecules.ScrollList
 	ok     atoms.Button
 	close  atoms.Button
@@ -105,6 +119,11 @@ func (v *View) Update(gtx layout.Context) []Event {
 			out = append(out, ToggleEvent{ID: a.ID, Selected: a.Selected})
 		}
 	}
+	v.allow.Disabled = v.Done || v.Busy || v.Executables == 0
+	if v.allow.Update(gtx) {
+		v.AllowExecutables = v.allow.Checked()
+		out = append(out, AllowExecutablesEvent{Allowed: v.AllowExecutables})
+	}
 	if v.ok.Clicked(gtx) && !v.Done && !v.Busy && len(v.selected()) > 0 {
 		out = append(out, ImportEvent{Areas: v.selected()})
 	}
@@ -130,6 +149,15 @@ func badge(status string, done bool) atoms.Badge {
 		return atoms.Badge{Text: "failed", Kind: atoms.BadgeDanger}
 	}
 	return atoms.Badge{Text: "skipped", Kind: atoms.BadgeNeutral}
+}
+
+// itemBadge is the badge of it: an item that would run a program from
+// the repository shows "needs opt-in" until the opt-in is checked.
+func itemBadge(it Item, done, allow bool) atoms.Badge {
+	if it.Executable != "" && it.Status == StatusReady && !done && !allow {
+		return atoms.Badge{Text: "needs opt-in", Kind: atoms.BadgeWarning}
+	}
+	return badge(it.Status, done)
 }
 
 // Layout draws the wizard body; it fills the given height.
@@ -189,6 +217,18 @@ func (v *View) areas(th *tokens.Theme) layout.Widget {
 				})
 			}))
 		}
+		if v.Executables > 0 {
+			v.allow.Label = fmt.Sprintf("Allow programs from the repository  (%d) – they run when Tiegel uses these settings", v.Executables)
+			v.allow.State = atoms.Unchecked
+			if v.AllowExecutables {
+				v.allow.State = atoms.Checked
+			}
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: th.Space.S, Bottom: th.Space.XXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return v.allow.Layout(gtx, th)
+				})
+			}))
+		}
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	}
 }
@@ -205,7 +245,7 @@ func (v *View) report(th *tokens.Theme) layout.Widget {
 				return layout.Flex{Alignment: layout.Start}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						gtx.Constraints.Min.X = gtx.Dp(unit.Dp(96))
-						return badge(it.Status, v.Done).Layout(gtx, th)
+						return itemBadge(it, v.Done, v.AllowExecutables).Layout(gtx, th)
 					}),
 					layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {

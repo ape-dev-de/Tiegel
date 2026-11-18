@@ -83,7 +83,7 @@ func TestIDEImportMergeErrors(t *testing.T) {
 		{Key: "ui.x", Scope: "elsewhere", Value: 1},
 		{RunConfig: &run.Config{Name: "x", Type: run.TypeCommand}},
 	} {
-		if _, err := a.ideCheckChange(context.Background(), c); err == nil {
+		if _, _, err := a.ideCheckChange(context.Background(), c); err == nil {
 			t.Errorf("%+v accepted", c)
 		}
 	}
@@ -214,14 +214,14 @@ func TestIDEImportApp(t *testing.T) {
 		t.Errorf("overrides = %q", lines)
 	}
 	// Recent projects are opt-in; plugin components without plugins are
-	// quiet (application options) or unsupported (external tools).
+	// quiet (application options); external tools need a project.
 	if it := reportItem(t, rep, "Recent projects"); it.Status != ideimport.StatusSkipped || !strings.Contains(it.Detail, "area not selected") {
 		t.Errorf("recent = %+v", it)
 	}
 	if v := settings.Get(a.Settings(), "ui.recentProjects", []string(nil)); !reflect.DeepEqual(v, []string{"/kept"}) {
 		t.Errorf("recent changed: %v", v)
 	}
-	if it := reportItem(t, rep, "External tool Make Docs"); it.Status != ideimport.StatusUnsupported || !strings.Contains(it.Detail, "make docs") {
+	if it := reportItem(t, rep, "External tool Make Docs"); it.Status != ideimport.StatusSkipped || !strings.Contains(it.Detail, "open the project") {
 		t.Errorf("external tool = %+v", it)
 	}
 	for _, it := range rep.Items {

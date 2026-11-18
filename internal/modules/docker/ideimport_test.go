@@ -56,3 +56,31 @@ func TestImportDockerComponents(t *testing.T) {
 		t.Error("external tool taken")
 	}
 }
+
+// A project's .idea (a cloned repository) must not set the global docker
+// binary or connection (review wave 8, finding 1).
+func TestImportDockerFromProjectIgnored(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "tools", "docker")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, xml := range map[string]string{
+		refDockerTools:     `<component><option name="DOCKER_PATH" value="$PROJECT_DIR$/tools/docker"/></component>`,
+		refDockerComponent: `<component><S uri="unix://$USER_HOME$/.orbstack/run/docker.sock"/></component>`,
+	} {
+		el, err := ideimport.Parse(strings.NewReader(xml))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := ideimport.Component{Kind: ideimport.KindComponent, Name: name, Scope: ideimport.ScopeProject, Element: el,
+			Macros: ideimport.Macros{ProjectDir: dir, UserHome: "/home/u"}}
+		items, ok := importComponent(c)
+		if !ok || len(items) != 1 || len(items[0].Changes) != 0 || items[0].Status != ideimport.StatusSkipped {
+			t.Errorf("%s from the project = %+v", name, items)
+		}
+	}
+}

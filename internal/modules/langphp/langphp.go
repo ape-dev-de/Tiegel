@@ -172,7 +172,7 @@ func (m *Module) SettingSpecs() []settings.Spec {
 			Options: append([]string{SelectAuto, SelectNone}, knownServerIDs...), Label: "Language server",
 			Help:  "auto uses the first installed server of the enabled plugins; none switches the language server off (navigation then uses the index).",
 			Group: "Language server"},
-		{Key: SettingCommand, Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Label: "Custom server command",
+		{Key: SettingCommand, Kind: settings.KindPath, Default: "", Scope: settings.ScopeProject, Label: "Custom server command", Executable: true,
 			Help: "Runs this executable instead of a plugin's server (advanced).", Group: "Language server"},
 		{Key: SettingArgs, Kind: settings.KindList, Default: []string{}, Scope: settings.ScopeProject, Label: "Custom server arguments",
 			Group: "Language server"},
