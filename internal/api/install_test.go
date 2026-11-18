@@ -23,7 +23,8 @@ func fakeComposer(t *testing.T) (binDir, logFile string) {
 		t.Skip("shell script fake")
 	}
 	binDir, logFile = t.TempDir(), filepath.Join(t.TempDir(), "calls")
-	script := "#!/bin/sh\necho \"$@\" >> " + logFile + "\npwd >> " + logFile + "\necho \"Installing $3$4\"\n" +
+	// The install PATH may hold only binDir: the fake finds sleep itself.
+	script := "#!/bin/sh\nPATH=/usr/bin:/bin:$PATH\necho \"$@\" >> " + logFile + "\npwd >> " + logFile + "\necho \"Installing $3$4\"\n" +
 		"case \"$*\" in *acme/slow*) sleep 30;; esac\n"
 	if err := os.WriteFile(filepath.Join(binDir, "composer"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
