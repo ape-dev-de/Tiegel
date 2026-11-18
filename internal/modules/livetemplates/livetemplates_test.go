@@ -312,3 +312,66 @@ func TestExpandKeywordAbbreviation(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 }
+
+func TestCaseHelpersInvalidUTF8(t *testing.T) {
+	for _, tc := range []struct{ in, up, low string }{
+		{"", "", ""}, {"\xff", "\xff", "\xff"}, {"\xffab", "\xffab", "\xffab"}, {"\xe4ab", "\xe4ab", "\xe4ab"},
+		{"äb", "Äb", "äb"}, {"Äb", "Äb", "äb"}, {"x", "X", "x"}, {"�a", "�a", "�a"},
+	} {
+		if got := upperFirst(tc.in); got != tc.up {
+			t.Errorf("upperFirst(%q) = %q, want %q", tc.in, got, tc.up)
+		}
+		if got := lowerFirst(tc.in); got != tc.low {
+			t.Errorf("lowerFirst(%q) = %q, want %q", tc.in, got, tc.low)
+		}
+	}
+}
+
+// TestSurroundSelectionRanges surrounds every selection of a few texts
+// (indentation, blank and whitespace-only lines, CRLF, multi-byte runes):
+// no call fails internally and the replaced range stays in the text.
+func TestSurroundSelectionRanges(t *testing.T) {
+	a, _ := newApp(t)
+	setSetting(t, a, SettingUser, []string{`sw | any | wrap |  | <$SELECTION$>`})
+	texts := map[string]string{
+		"indent.php": "<?php\nfunction f() {\n        foo();\n}\n",
+		"blank.php":  "<?php\n\n    \n\t\n  x();\n\n",
+		"crlf.php":   "<?php\r\nif (1) {\r\n    a();\r\n    \r\n}\r\n",
+		"utf8.php":   "<?php\n  $ä = 'ö';\n    // ü \n",
+	}
+	modtest.Project(t, a, texts)
+	f := false
+	expand := func(name string, s, e int) (ExpandResult, error) {
+		var res ExpandResult
+		err := modtest.TryCall(a, "templates.expand", ExpandParams{Path: name, Pos: api.Pos{Offset: s}, End: &api.Pos{Offset: e}, Abbreviation: "sw", Apply: &f}, &res)
+		return res, err
+	}
+	for name, src := range texts {
+		for s := 0; s <= len(src); s++ {
+			for e := s + 1; e <= len(src); e++ {
+				res, err := expand(name, s, e)
+				if err != nil {
+					if api.ErrorCode(err) == api.CodeInternal {
+						t.Fatalf("%s [%d:%d]: %v", name, s, e, err)
+					}
+					continue
+				}
+				if res.Start < 0 || res.Start > res.End || res.End > len(src) {
+					t.Fatalf("%s [%d:%d]: range %d..%d", name, s, e, res.Start, res.End)
+				}
+			}
+		}
+	}
+	// The case from the review: a few spaces of the indentation selected.
+	res, err := expand("indent.php", 22, 25)
+	if err != nil || res.Start != 22 || res.End != 22 || res.Text != "<>" {
+		t.Fatalf("indentation selection: %+v %v", res, err)
+	}
+	// A whole CRLF line: the line break stays outside the selection.
+	src := texts["crlf.php"]
+	s := strings.Index(src, "    a();")
+	res, err = expand("crlf.php", s, s+len("    a();\r\n"))
+	if err != nil || res.Start != s+4 || res.End != s+len("    a();") || res.Text != "<a();>" {
+		t.Fatalf("crlf line: %+v %v", res, err)
+	}
+}
