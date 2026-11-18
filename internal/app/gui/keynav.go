@@ -138,10 +138,10 @@ func (s *editorSession) placeAt(off int, edit bool) controller.Place {
 	buf := s.doc.Buffer()
 	off = min(max(off, 0), buf.Len())
 	line := buf.OffsetToPos(off).Line
-	return controller.Place{Location: controller.At(s.file, off), Line: line + 1, Snippet: snippet(buf.Line(line)), Edit: edit}
+	return controller.Place{Location: controller.At(s.file, off), Line: line + 1, Snippet: lineSnippet(buf.Line(line)), Edit: edit}
 }
 
-func snippet(line []byte) string {
+func lineSnippet(line []byte) string {
 	s := strings.TrimSpace(string(line))
 	if r := []rune(s); len(r) > 80 {
 		s = string(r[:79]) + "…"
@@ -354,7 +354,7 @@ func (v *View) openPasteHistory(s *editorSession) {
 		if n := strings.Count(t, "\n"); n > 0 {
 			detail = fmt.Sprintf("%d lines", n+1)
 		}
-		items[i] = palette.Item{Label: snippet([]byte(first)), Detail: detail, Glyph: atoms.GlyphCopy}
+		items[i] = palette.Item{Label: lineSnippet([]byte(first)), Detail: detail, Glyph: atoms.GlyphCopy}
 	}
 	v.OpenChooser(ChooserSpec{Title: "Paste from History", Hint: "Filter", Items: items,
 		OnQuery: func(q string) []palette.Item {

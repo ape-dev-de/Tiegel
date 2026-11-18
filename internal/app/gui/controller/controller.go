@@ -123,6 +123,8 @@ type Controller struct {
 	Prefs Prefs
 	// Status feeds the status bar.
 	Status Status
+	// Templates is the live templates integration (templates.go).
+	Templates LiveTemplates
 	// Tree is the lazily loaded project tree.
 	Tree *Tree
 	// Git maps project-relative paths to their git state.

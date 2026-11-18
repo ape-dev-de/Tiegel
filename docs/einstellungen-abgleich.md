@@ -53,10 +53,10 @@ Tiegel-Stand (M13 abgeschlossen): ein Katalog aller belegbaren Aktionen (`intern
 | Next/Previous Highlighted Error (F2/Shift+F2) | ✅ | M13 |
 | Go to Test / Create Test (Cmd+Shift+T) | ❌ (Fixture: später) | M15 |
 | Run/Debug (Ctrl+R/Ctrl+D), Run Context Configuration (Ctrl+Shift+R), Rerun (Cmd+R im Run-Fenster) | 🟡 Run, Run Current File, Rerun, Run-Fenster Cmd+4 (D269); Debug fehlt | M15 |
-| Generate (Cmd+N), Surround With (Cmd+Alt+T), Live Templates (Cmd+J) | ❌ (Fixture: später) | M17 |
+| Generate (Cmd+N), Surround With (Cmd+Alt+T), Live Templates (Cmd+J) | ✅ Surround With (Cmd+Alt+T/J), Insert Live Template (Cmd+J) (D424); Generate siehe D430 | M17 |
 | Join Lines (Ctrl+Shift+J), Toggle Case (Cmd+Shift+U), Paste from History (Cmd+Shift+V) | ✅ | M13 |
 | Complete Statement (Cmd+Shift+Enter) | ❌ (Fixture: später) | M17 |
-| Extract Variable/Method (Cmd+Alt+V/M) | ❌ (LSP-Code-Actions) | M17 |
+| Extract Variable/Method (Cmd+Alt+V/M) | ✅ Code-Actions `refactor.extract` des Language Servers (D425) | M17 |
 | Tool-Fenster Cmd+0…9 | 🟡 0/1/3/5/6/7/9 (D228); 2/4/8 folgen mit ihren Fenstern | M14/M15/M17 |
 | Terminal (Alt+F12) | ❌ | M15 |
 | Debug: F8/F7/Shift+F8/F9, Cmd+F8 | ✅ | – |
@@ -82,7 +82,7 @@ Tiegel-Stand (M13 abgeschlossen): ein Katalog aller belegbaren Aktionen (`intern
 | Code Style PHP (umfangreich) | ⛔ (Projekt-Formatter, siehe Plugins Pint/CS-Fixer) | – | – | – |
 | Inspektionen | ⛔ (Diagnosen kommen aus LSP + Plugins) | – | – | – |
 | Datei- und Code-Vorlagen | 🟡 nur „New PHP Class“ | Kern | ~ (`fileTemplates/`) | M17 |
-| Live Templates | ❌ | Plugin `snippets` | ~ | M17 |
+| Live Templates | ✅ Plugin `live-templates` (D420–D424): Tab, Cmd+J, Surround With, Tab-Stopps mit verknüpftem Bearbeiten; eigene Vorlagen als Liste `live-templates.user` | Plugin `live-templates` | ~ | M17 |
 | Dateitypen/Zuordnungen | ✅ `files.associations` (D213) | Kern | ✔ (`filetypes.xml`) | M12 |
 | Inlay Hints | ❌ | Plugin `lang-php` | – | M17 |
 

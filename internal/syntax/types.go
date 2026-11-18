@@ -221,3 +221,11 @@ type Symbol struct {
 // on the build: without cgo, NewDocument fails for these languages with
 // ErrNoTreeSitter.
 func (l Language) HasTree() bool { return treeLanguages[l] }
+
+// Node is a syntax node reported by Document.NodesAt.
+type Node struct {
+	Kind  string // e.g. "compound_statement"
+	Start int    // byte offsets
+	End   int
+	Named bool
+}

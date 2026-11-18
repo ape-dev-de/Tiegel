@@ -20,6 +20,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/editor/highlight/tshighlight"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 	"github.com/ape-dev-de/tiegel/internal/editor/search"
+	"github.com/ape-dev-de/tiegel/internal/editor/snippet"
 	"github.com/ape-dev-de/tiegel/internal/editor/wrap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
@@ -66,6 +67,11 @@ type editorSession struct {
 	// wrapToggle overrides the soft wrap setting for this editor (View ›
 	// Soft-Wrap): 0 follows the setting, 1 on, -1 off.
 	wrapToggle int8
+
+	// snip is the tab-stop session of an expanded live template
+	// (templatedock.go); snipOff removes its buffer listener.
+	snip    *snippet.Session
+	snipOff func()
 }
 
 // softWrap reports whether the editor wraps lines: the per-editor toggle,
@@ -165,6 +171,7 @@ func (v *View) closeStaleEditors() {
 
 func (v *View) closeSession(k sessionKey, s *editorSession) {
 	s.doc.Lock()
+	s.endSnippet()
 	s.ed.Close()
 	s.hl.Close()
 	s.doc.Unlock()
@@ -238,6 +245,8 @@ func (v *View) layoutEditor(gtx layout.Context, s *editorSession, active bool) l
 	// The window handles popup navigation and editor shortcuts before the
 	// widget sees the keys.
 	if active {
+		v.startSnippet(s)
+		v.templateKeys(gtx, s)
 		v.popupKeys(gtx, s)
 		v.editorKeys.process(gtx, v)
 		v.hoverInput(gtx, s)
