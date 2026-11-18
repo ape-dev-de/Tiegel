@@ -47,6 +47,29 @@ type Spec struct {
 	// interpreter ID (empty: InterpreterHost for programs,
 	// InterpreterProject for PHP).
 	Interpreter string `json:"interpreter,omitempty"`
+	// Debug marks a run under the debugger: the kernel makes the
+	// debugger listen before every start and rerun and sets the Xdebug
+	// trigger (DebugEnv, DebugPHPArgs).
+	Debug bool `json:"debug,omitempty"`
+}
+
+// DebugSession is the value of XDEBUG_SESSION of debugged runs.
+const DebugSession = "tiegel"
+
+// DebugEnv returns the environment entries that make Xdebug connect.
+func DebugEnv() []string {
+	return []string{"XDEBUG_TRIGGER=1", "XDEBUG_SESSION=" + DebugSession}
+}
+
+// DebugPHPArgs returns php options that enable step debugging for one run
+// (prepended to the arguments of PHP specs); port is the listener port
+// (0: keep the interpreter's xdebug.client_port).
+func DebugPHPArgs(port int) []string {
+	out := []string{"-dxdebug.mode=debug", "-dxdebug.start_with_request=trigger"}
+	if port > 0 {
+		out = append(out, fmt.Sprintf("-dxdebug.client_port=%d", port))
+	}
+	return out
 }
 
 // Validate checks that the spec names something to run.
