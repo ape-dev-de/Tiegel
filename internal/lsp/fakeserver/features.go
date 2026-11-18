@@ -450,9 +450,7 @@ func (s *Server) inlayHint(_ context.Context, req *jsonrpc2.Request) (any, error
 	if err := req.UnmarshalParams(&p); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	text := s.state.Docs[p.TextDocument.URI]
-	s.mu.Unlock()
+	text, _ := s.doc(p.TextDocument.URI) // may overtake didOpen
 	out := []protocol.InlayHint{}
 	for i, line := range strings.Split(text, "\n") {
 		if i < p.Range.Start.Line || i > p.Range.End.Line {

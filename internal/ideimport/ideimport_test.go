@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -220,7 +221,12 @@ func TestScanApp(t *testing.T) {
 		t.Errorf("code style = %+v", cs)
 	}
 	shell := item(t, items, "Terminal shell")
-	if change(t, shell, terminal.KeyShell).Value != "/bin/sh" || !reflect.DeepEqual(change(t, shell, terminal.KeyShellArgs).Value, []string{"-l"}) {
+	if runtime.GOOS == "windows" {
+		// "/bin/sh" does not exist there: the shell is skipped.
+		if shell.Status != StatusSkipped {
+			t.Errorf("shell on windows = %+v", shell)
+		}
+	} else if change(t, shell, terminal.KeyShell).Value != "/bin/sh" || !reflect.DeepEqual(change(t, shell, terminal.KeyShellArgs).Value, []string{"-l"}) {
 		t.Errorf("shell = %+v", shell)
 	}
 	if change(t, item(t, items, "Terminal keys override IDE shortcuts"), terminal.KeyOverrideKeys).Value != false ||
