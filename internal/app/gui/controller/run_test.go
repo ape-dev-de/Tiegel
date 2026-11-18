@@ -145,8 +145,8 @@ func TestRunsUI(t *testing.T) {
 	var check api.RunCloseCheck
 	r.CloseCheck(func(res api.RunCloseCheck) { check = res })
 	c.Settle(time.Second)
-	if check.Policy != run.CloseAsk || len(check.Active) != 1 || f.called("run.configs.select") != 1 || f.called("run.stopAll") != 1 {
-		t.Fatalf("close check %+v", check)
+	if check.Policy != run.CloseAsk || len(check.Active) != 1 || f.called("run.configs.select") != 2 || f.called("run.stopAll") != 1 {
+		t.Fatalf("close check %+v select %d stopAll %d", check, f.called("run.configs.select"), f.called("run.stopAll"))
 	}
 	// Errors become notices.
 	f.on("run.start", func(json.RawMessage) (any, error) { return nil, api.Errorf(api.CodeUnavailable, "no php") })
@@ -227,5 +227,45 @@ func TestRunTabLineLimit(t *testing.T) {
 	r.appendLines(tab, lines)
 	if len(tab.Lines) != maxRunLines || !tab.Dropped || tab.Lines[0].Seq != 6 {
 		t.Fatalf("limit %d %v %d", len(tab.Lines), tab.Dropped, tab.Lines[0].Seq)
+	}
+}
+
+// A configuration started from the menu becomes the one Ctrl+R runs, even
+// if a configuration list read before the selection arrives later.
+func TestRunConfigSelectsAgainstStaleList(t *testing.T) {
+	f := projectFake()
+	var mu sync.Mutex
+	var selected []string
+	f.on("run.configs.select", func(raw json.RawMessage) (any, error) {
+		var p api.RunConfigIDParams
+		_ = json.Unmarshal(raw, &p)
+		mu.Lock()
+		defer mu.Unlock()
+		selected = append(selected, p.ID)
+		return api.RunConfigInfo{}, nil
+	})
+	f.answer("run.start", run.Info{ID: "run-1", State: run.StateRunning, Project: root})
+	// The backend list still reports "b" as selected (stale read).
+	f.answer("run.configs.list", []api.RunConfigInfo{
+		{Config: run.Config{ID: "a", Name: "Sleep", Type: run.TypeCommand}, Available: true},
+		{Config: run.Config{ID: "b", Name: "Helper", Type: run.TypeCommand}, Available: true, Selected: true},
+	})
+	f.answer("run.configTypes", []api.RunConfigTypeInfo{})
+	f.answer("run.list", []run.Info{})
+	c := started(t, f)
+	r := c.Run
+	r.ProjectChanged()
+	c.Settle(time.Second)
+
+	r.RunConfig("a")
+	r.LoadConfigs()
+	c.Settle(time.Second)
+	mu.Lock()
+	defer mu.Unlock()
+	if got := r.SelectedConfig(); got == nil || got.ID != "a" {
+		t.Fatalf("selected %+v", got)
+	}
+	if len(selected) != 1 || selected[0] != "a" {
+		t.Fatalf("select calls %v", selected)
 	}
 }

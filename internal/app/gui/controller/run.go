@@ -49,6 +49,10 @@ type Runs struct {
 	// shows the tool window); the view clears it.
 	Started bool
 	project string
+	// chosen is the configuration the user picked last in this window; a
+	// configuration list read before the selection reached the backend
+	// must not undo it.
+	chosen string
 }
 
 func newRuns(c *Controller) *Runs { return &Runs{c: c} }
@@ -208,6 +212,7 @@ func (r *Runs) ProjectChanged() {
 	}
 	r.project = root
 	r.Configs, r.Types = nil, nil
+	r.chosen = ""
 	// Finished runs of another project go; active ones stay visible.
 	r.Tabs = slices.DeleteFunc(r.Tabs, func(t *RunTab) bool { return !t.Active() && t.Info.Project != root })
 	r.Version++
@@ -257,6 +262,7 @@ func (r *Runs) LoadConfigs() {
 		return func() {
 			if err == nil {
 				r.Configs = list
+				r.applyChosen()
 			}
 			if terr == nil {
 				r.Types = types
@@ -296,13 +302,21 @@ func (r *Runs) RunSelected(file string) {
 	r.c.Status.Notice = "No run configuration – add one in the Run tool window or run the current file"
 }
 
-// RunConfig starts configuration id.
+// RunConfig starts configuration id and makes it the one Ctrl+R runs.
 func (r *Runs) RunConfig(id string) {
 	r.start(api.RunStartParams{Config: id})
-	for i := range r.Configs {
-		r.Configs[i].Selected = r.Configs[i].ID == id
+	r.SelectConfig(id)
+}
+
+// applyChosen marks the configuration picked in this window as selected
+// if the list contains it.
+func (r *Runs) applyChosen() {
+	if r.chosen == "" || !slices.ContainsFunc(r.Configs, func(c api.RunConfigInfo) bool { return c.ID == r.chosen }) {
+		return
 	}
-	r.Version++
+	for i := range r.Configs {
+		r.Configs[i].Selected = r.Configs[i].ID == r.chosen
+	}
 }
 
 // RunFile runs file as PHP script with the project interpreter.
@@ -316,9 +330,8 @@ func (r *Runs) RunFile(file string) {
 
 // SelectConfig makes configuration id the one Ctrl+R runs.
 func (r *Runs) SelectConfig(id string) {
-	for i := range r.Configs {
-		r.Configs[i].Selected = r.Configs[i].ID == id
-	}
+	r.chosen = id
+	r.applyChosen()
 	r.Version++
 	r.c.Go(func(ctx context.Context) func() {
 		err := r.c.call(ctx, "run.configs.select", api.RunConfigIDParams{ID: id}, nil)

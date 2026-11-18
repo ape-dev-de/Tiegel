@@ -331,10 +331,19 @@ func (c *Client) Err() error {
 func (c *Client) Close() error {
 	var err error
 	c.closeOnce.Do(func() {
-		_ = c.conn.Close()
 		if c.cmd == nil {
+			_ = c.conn.Close()
 			return
 		}
+		// On Windows closing a pipe blocks while another goroutine reads
+		// from it, i.e. until the server exits; close in the background so
+		// the kill path below still runs.
+		closed := make(chan struct{})
+		go func() {
+			_ = c.conn.Close()
+			close(closed)
+		}()
+		defer func() { <-closed }()
 		select {
 		case <-c.exited:
 		case <-time.After(c.opts.wait):
