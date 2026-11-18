@@ -148,6 +148,10 @@ func (r *Runs) handleEvent(topic string, payload json.RawMessage) {
 // run it replaces.
 func (r *Runs) upsert(info run.Info) {
 	if t := r.Tab(info.ID); t != nil {
+		if !t.Info.Finished.IsZero() && info.Finished.IsZero() {
+			// The start/rerun reply came after run.exited: keep the end.
+			return
+		}
 		t.Info = info
 		t.Version++
 		r.Version++
@@ -395,11 +399,28 @@ func (r *Runs) CloseTab(id string) {
 	})
 }
 
-// StopAll stops the active runs of the project.
-func (r *Runs) StopAll() {
+// StopAll stops the active runs of project root (the one a close check
+// was made for, see api.RunCloseCheck.Project); done (optional) runs on
+// the UI goroutine once the backend stopped them.
+func (r *Runs) StopAll(project string, done func()) {
+	r.closeDecision("run.stopAll", project, done)
+}
+
+// KeepAll marks the active runs of project root to keep running when
+// Tiegel closes ("Keep Running"); done (optional) runs afterwards.
+func (r *Runs) KeepAll(project string, done func()) {
+	r.closeDecision("run.keepAll", project, done)
+}
+
+func (r *Runs) closeDecision(method, project string, done func()) {
 	r.c.Go(func(ctx context.Context) func() {
-		err := r.c.call(ctx, "run.stopAll", nil, nil)
-		return func() { r.c.notice(err) }
+		err := r.c.call(ctx, method, api.RunStopAllParams{Project: project}, nil)
+		return func() {
+			r.c.notice(err)
+			if done != nil {
+				done()
+			}
+		}
 	})
 }
 

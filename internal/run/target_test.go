@@ -107,12 +107,17 @@ func TestPrepareCompose(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"/usr/bin/docker", "--context", "orbstack", "compose", "--project-directory", root, "-p", "demo", "-f", "compose.yaml",
-		"exec", "-T", "-e", "APP_ENV=test", "-w", "/var/www/bin", "php", "sh", "-c", `echo "` + pidMarker + `$$" >&2; exec "$@"`, "sh", "php", "/var/www/bin/x.php", "-v"}
+		"exec", "-T", "-e", "APP_ENV=test", "-w", "/var/www/bin", "php", "sh", "-c", wrapScript, "sh", "php", "/var/www/bin/x.php", "-v"}
 	if !slices.Equal(l.Cmd.Args, want) {
 		t.Fatalf("exec args\n got %q\nwant %q", l.Cmd.Args, want)
 	}
 	if l.PIDMarker != pidMarker || l.StopRemote == nil || l.Cmd.Dir != root || len(l.Mappings) != 1 {
 		t.Fatalf("exec launch %+v", l)
+	}
+	// docker runs in the compose directory; the program's working
+	// directory (for relative paths in the output) is the mapped one.
+	if l.Dir != filepath.Join(root, "bin") {
+		t.Fatalf("launch dir %q", l.Dir)
 	}
 	if err := l.StopRemote(context.Background(), ""); err != nil {
 		t.Fatalf("stop without pid: %v", err)
@@ -163,9 +168,27 @@ func TestPrepareImageAndWSL(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(l.Cmd.Args, " ")
-	if !strings.HasPrefix(got, "wsl.exe -d Ubuntu ") || !strings.HasSuffix(got, " -- env A=1 /usr/bin/php x.php") ||
+	if !strings.HasPrefix(got, "wsl.exe -d Ubuntu ") || !strings.HasSuffix(got, " -- env A=1 sh -c "+wrapScript+" sh /usr/bin/php x.php") ||
 		runtime.GOOS == "windows" && !strings.Contains(got, " --cd /mnt/c/proj ") {
 		t.Fatalf("wsl %q", l.Cmd.Args)
+	}
+	if l.PIDMarker != pidMarker || l.StopRemote == nil {
+		t.Fatalf("wsl without remote stop %+v", l)
+	}
+	if err := l.StopRemote(context.Background(), ""); err != nil {
+		t.Fatalf("wsl stop without pid: %v", err)
+	}
+	l, err = Prepare(context.Background(), Spec{PHP: true, Args: []string{"x.php"}}, Target{Interp: w, ProjectDir: `C:\proj`, Plain: true})
+	if err != nil || !strings.HasSuffix(strings.Join(l.Cmd.Args, " "), " -- /usr/bin/php x.php") || l.StopRemote != nil {
+		t.Fatalf("plain wsl %q %v", l.Cmd.Args, err)
+	}
+	// A failing stop reports the error.
+	bad := &interp.WSL{Distro: "Ubuntu", Program: filepath.Join(t.TempDir(), "no-wsl")}
+	if l, err = Prepare(context.Background(), Spec{PHP: true}, Target{Interp: bad}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.StopRemote(context.Background(), "42"); err == nil {
+		t.Fatal("stop with missing wsl.exe succeeded")
 	}
 	if _, err := Prepare(context.Background(), Spec{PHP: true}, Target{Interp: &interp.WSL{}}); err == nil {
 		t.Fatal("wsl without distro")

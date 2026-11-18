@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/compose"
@@ -89,7 +90,33 @@ type RunCloseCheck struct {
 	Policy string `json:"policy"`
 	// Active are the runs of the open project that have not finished.
 	Active []run.Info `json:"active"`
+	// Project is the project root the check was made for ("" without a
+	// project: all runs). Pass it to run.stopAll / run.keepAll so that
+	// the decision applies to these runs even if the project changed
+	// meanwhile.
+	Project string `json:"project,omitempty"`
 }
+
+// RunStopAllParams are the params of "run.stopAll" and "run.keepAll".
+type RunStopAllParams struct {
+	// Project is the project root whose runs are meant ("": the open
+	// project; without an open project all runs).
+	Project string `json:"project,omitempty"`
+	// Wait (run.stopAll) returns only when the stopped runs ended (or
+	// after stopAllWait).
+	Wait bool `json:"wait,omitempty"`
+}
+
+// stopAllWait bounds run.stopAll with wait; closeWait the stop on App
+// close (covers the grace period of a stop inside a container).
+const (
+	stopAllWait = 15 * time.Second
+	closeWait   = 8 * time.Second
+)
+
+// runConfigsMu serialises the read-modify-write of the run
+// configurations (API calls run concurrently).
+var runConfigsMu sync.Mutex
 
 func (a *App) registerRun() {
 	a.runs.OnStart = func(i run.Info) { a.bus.Publish(TopicRunStarted, i) }
@@ -106,7 +133,8 @@ func (a *App) registerRun() {
 	mustHandle(a, "run.wait", "Wait until a run finished and return its state", a.runWait)
 	mustHandle(a, "run.remove", "Forget a finished run", a.runRemove)
 	mustHandle(a, "run.closeCheck", "Active runs of the project and the close policy (run.confirmClose)", a.runCloseCheck)
-	mustHandle(a, "run.stopAll", "Stop all active runs of the project", a.runStopAll)
+	mustHandle(a, "run.stopAll", "Stop all active runs of a project (default: the open one; wait: until they ended)", a.runStopAll)
+	mustHandle(a, "run.keepAll", "Keep the active runs of a project running when Tiegel closes (close confirmation: Keep Running)", a.runKeepAll)
 	mustHandle(a, "run.configs.list", "Run configurations of the project", a.runConfigsList)
 	mustHandle(a, "run.configs.save", "Create or update a run configuration (validated against its type)", a.runConfigsSave)
 	mustHandle(a, "run.configs.delete", "Delete a run configuration", a.runConfigsDelete)
@@ -132,17 +160,32 @@ func (a *App) runClosePolicy() string {
 }
 
 // closeRuns ends the active runs when the App closes, unless the policy
-// keeps them; it waits briefly so containers are stopped too.
+// keeps them or the user chose to keep them (run.keepAll); it waits
+// briefly so containers are stopped too.
 func (a *App) closeRuns() {
 	if a.runClosePolicy() == run.CloseKeep {
 		return
 	}
-	ids := a.runs.StopAll(nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ids := a.runs.StopAll(func(i run.Info) bool { return !i.Keep })
+	ctx, cancel := context.WithTimeout(context.Background(), closeWait)
 	defer cancel()
+	a.waitRuns(ctx, ids)
+}
+
+// waitRuns waits until the runs ids ended or ctx ends.
+func (a *App) waitRuns(ctx context.Context, ids []string) {
 	for _, id := range ids {
 		_, _ = a.runs.Wait(ctx, id)
 	}
+}
+
+// runsOf returns a match for the runs of project root p ("": the open
+// project; with none, all runs).
+func (a *App) runsOf(p string) (string, func(run.Info) bool) {
+	if p == "" {
+		p = a.ProjectRoot()
+	}
+	return p, func(i run.Info) bool { return p == "" || i.Project == p }
 }
 
 // RunTarget resolves where a spec with interpreter choice id runs (see
@@ -395,21 +438,37 @@ func (a *App) runRemove(_ context.Context, p RunIDParams) (struct{}, error) {
 }
 
 func (a *App) runCloseCheck(_ context.Context, _ struct{}) (RunCloseCheck, error) {
-	root := a.ProjectRoot()
-	res := RunCloseCheck{Policy: a.runClosePolicy(), Active: []run.Info{}}
+	root, match := a.runsOf("")
+	res := RunCloseCheck{Policy: a.runClosePolicy(), Active: []run.Info{}, Project: root}
 	for _, i := range a.runs.Active() {
-		if root == "" || i.Project == root {
+		if match(i) {
 			res.Active = append(res.Active, i)
 		}
 	}
 	return res, nil
 }
 
-func (a *App) runStopAll(_ context.Context, _ struct{}) ([]string, error) {
-	root := a.ProjectRoot()
-	ids := a.runs.StopAll(func(i run.Info) bool { return root == "" || i.Project == root })
+func (a *App) runStopAll(ctx context.Context, p RunStopAllParams) ([]string, error) {
+	_, match := a.runsOf(p.Project)
+	ids := a.runs.StopAll(match)
 	if ids == nil {
 		ids = []string{}
+	}
+	if p.Wait {
+		wctx, cancel := context.WithTimeout(ctx, stopAllWait)
+		defer cancel()
+		a.waitRuns(wctx, ids)
+	}
+	return ids, nil
+}
+
+func (a *App) runKeepAll(_ context.Context, p RunStopAllParams) ([]string, error) {
+	_, match := a.runsOf(p.Project)
+	ids := []string{}
+	for _, i := range a.runs.Active() {
+		if match(i) && a.runs.Keep(i.ID) == nil {
+			ids = append(ids, i.ID)
+		}
 	}
 	return ids, nil
 }
@@ -551,10 +610,6 @@ func (a *App) publishRunConfigs(ctx context.Context) {
 }
 
 func (a *App) runConfigsSave(ctx context.Context, c run.Config) (run.Config, error) {
-	list, err := a.storedRunConfigs()
-	if err != nil {
-		return run.Config{}, err
-	}
 	t, ok := a.configType(ctx, c.Type)
 	if !ok {
 		return run.Config{}, Errorf(CodeInvalidParams, "unknown run configuration type %q (see run.configTypes)", c.Type)
@@ -562,6 +617,22 @@ func (a *App) runConfigsSave(ctx context.Context, c run.Config) (run.Config, err
 	checked, err := t.Check(c)
 	if err != nil {
 		return run.Config{}, Errorf(CodeInvalidParams, "%w", err)
+	}
+	if checked, err = a.storeRunConfig(checked); err != nil {
+		return run.Config{}, err
+	}
+	a.publishRunConfigs(ctx)
+	return checked, nil
+}
+
+// storeRunConfig adds or replaces checked in the stored list (under
+// runConfigsMu, so concurrent changes are not lost).
+func (a *App) storeRunConfig(checked run.Config) (run.Config, error) {
+	runConfigsMu.Lock()
+	defer runConfigsMu.Unlock()
+	list, err := a.storedRunConfigs()
+	if err != nil {
+		return run.Config{}, err
 	}
 	for _, o := range list {
 		if o.ID != checked.ID && strings.EqualFold(o.Name, checked.Name) {
@@ -583,34 +654,43 @@ func (a *App) runConfigsSave(ctx context.Context, c run.Config) (run.Config, err
 	if settings.Get(a.ProjectSettings(), run.KeySelected, "") == "" {
 		_ = settings.Set(a.ProjectSettings(), run.KeySelected, checked.ID)
 	}
-	a.publishRunConfigs(ctx)
 	return checked, nil
 }
 
 func (a *App) runConfigsDelete(ctx context.Context, p RunConfigIDParams) (struct{}, error) {
-	cfg, err := a.findRunConfig(p.ID)
-	if err != nil {
+	if err := a.deleteRunConfig(p.ID); err != nil {
 		return struct{}{}, err
-	}
-	list, _ := a.storedRunConfigs()
-	list = slices.DeleteFunc(list, func(o run.Config) bool { return o.ID == cfg.ID })
-	if err := settings.Set(a.ProjectSettings(), run.KeyConfigurations, list); err != nil {
-		return struct{}{}, Errorf(CodeFailed, "run configurations: %w", err)
-	}
-	if settings.Get(a.ProjectSettings(), run.KeySelected, "") == cfg.ID {
-		_ = a.ProjectSettings().Delete(run.KeySelected)
 	}
 	a.publishRunConfigs(ctx)
 	return struct{}{}, nil
 }
 
+// deleteRunConfig removes configuration idOrName (under runConfigsMu).
+func (a *App) deleteRunConfig(idOrName string) error {
+	runConfigsMu.Lock()
+	defer runConfigsMu.Unlock()
+	cfg, err := a.findRunConfig(idOrName)
+	if err != nil {
+		return err
+	}
+	list, err := a.storedRunConfigs()
+	if err != nil {
+		return err
+	}
+	list = slices.DeleteFunc(list, func(o run.Config) bool { return o.ID == cfg.ID })
+	if err := settings.Set(a.ProjectSettings(), run.KeyConfigurations, list); err != nil {
+		return Errorf(CodeFailed, "run configurations: %w", err)
+	}
+	if settings.Get(a.ProjectSettings(), run.KeySelected, "") == cfg.ID {
+		_ = a.ProjectSettings().Delete(run.KeySelected)
+	}
+	return nil
+}
+
 func (a *App) runConfigsSelect(ctx context.Context, p RunConfigIDParams) (RunConfigInfo, error) {
-	cfg, err := a.findRunConfig(p.ID)
+	cfg, err := a.selectRunConfig(p.ID)
 	if err != nil {
 		return RunConfigInfo{}, err
-	}
-	if err := settings.Set(a.ProjectSettings(), run.KeySelected, cfg.ID); err != nil {
-		return RunConfigInfo{}, Errorf(CodeFailed, "run configurations: %w", err)
 	}
 	a.publishRunConfigs(ctx)
 	list, _ := a.runConfigsList(ctx, struct{}{})
@@ -620,6 +700,21 @@ func (a *App) runConfigsSelect(ctx context.Context, p RunConfigIDParams) (RunCon
 		}
 	}
 	return RunConfigInfo{Config: cfg, Selected: true}, nil
+}
+
+// selectRunConfig selects configuration idOrName (under runConfigsMu, so
+// that it cannot select one a concurrent delete just removed).
+func (a *App) selectRunConfig(idOrName string) (run.Config, error) {
+	runConfigsMu.Lock()
+	defer runConfigsMu.Unlock()
+	cfg, err := a.findRunConfig(idOrName)
+	if err != nil {
+		return run.Config{}, err
+	}
+	if err := settings.Set(a.ProjectSettings(), run.KeySelected, cfg.ID); err != nil {
+		return run.Config{}, Errorf(CodeFailed, "run configurations: %w", err)
+	}
+	return cfg, nil
 }
 
 // runMappings converts api mappings for the run package.

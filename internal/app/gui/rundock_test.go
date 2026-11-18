@@ -157,11 +157,27 @@ func TestRunDock(t *testing.T) {
 		t.Fatalf("popup %+v", e.v.popup)
 	}
 	e.v.popup.Buttons[0].OnClick() // Terminate
-	e.waitFor("stopped", func() bool { i := lastRun(e); return i != nil && i.State == run.StateStopped })
-	if !proceeded {
-		t.Fatal("close did not proceed")
+	if proceeded {
+		t.Fatal("proceeded before the backend stopped the runs")
+	}
+	e.waitFor("stopped", func() bool { i := lastRun(e); return proceeded && i != nil && i.State == run.StateStopped })
+	e.v.closeOverlay()
+	// Keep Running: the backend keeps the run when Tiegel closes.
+	e.v.RunAction(ActRun)
+	e.waitFor("sleeper to keep", func() bool { i := lastRun(e); return i != nil && i.Active() })
+	keptID := lastRun(e).ID
+	proceeded = false
+	e.v.rund.confirmClose(func() { proceeded = true })
+	e.waitFor("keep popup", e.v.PopupOpen)
+	e.v.popup.Buttons[1].OnClick() // Keep Running
+	e.waitFor("kept", func() bool { return proceeded })
+	if i, err := e.app.CallJSON(context.Background(), "run.list", api.RunListParams{Active: true}); err != nil ||
+		len(i.([]run.Info)) != 1 || i.([]run.Info)[0].ID != keptID || !i.([]run.Info)[0].Keep {
+		t.Fatalf("kept run %v %v", i, err)
 	}
 	e.v.closeOverlay()
+	e.ctl.Run.Stop(keptID)
+	e.waitFor("kept stopped", func() bool { t := e.ctl.Run.Tab(keptID); return t != nil && !t.Active() })
 	// Policy keep: no question.
 	if err := settings.Set(e.app.Settings(), run.KeyConfirmClose, run.CloseKeep); err != nil {
 		t.Fatal(err)
