@@ -2,6 +2,7 @@ package gui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +47,28 @@ func lastRun(e *env) *run.Info {
 		return &t.Info
 	}
 	return nil
+}
+
+// waitRunActive waits until the current run is active; on timeout it
+// reports all run tabs and the backend's run list.
+func waitRunActive(e *env, what string) {
+	e.t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if i := lastRun(e); i != nil && i.Active() {
+			return
+		}
+		if time.Now().After(deadline) {
+			var tabs []string
+			for _, t := range e.ctl.Run.Tabs {
+				tabs = append(tabs, fmt.Sprintf("%s/%s/%s/keep=%v", t.Info.ID, t.Info.Name, t.Info.State, t.Info.Keep))
+			}
+			list, err := e.app.CallJSON(context.Background(), "run.list", api.RunListParams{})
+			e.t.Fatalf("timeout waiting for %s (notice %q) tabs %v backend %+v %v", what, e.ctl.Status.Notice, tabs, list, err)
+		}
+		e.ctl.Settle(200 * time.Millisecond)
+		e.frame()
+	}
 }
 
 func TestRunDock(t *testing.T) {
@@ -164,7 +187,7 @@ func TestRunDock(t *testing.T) {
 	e.v.closeOverlay()
 	// Keep Running: the backend keeps the run when Tiegel closes.
 	e.v.RunAction(ActRun)
-	e.waitFor("sleeper to keep", func() bool { i := lastRun(e); return i != nil && i.Active() })
+	waitRunActive(e, "sleeper to keep")
 	keptID := lastRun(e).ID
 	proceeded = false
 	e.v.rund.confirmClose(func() { proceeded = true })
