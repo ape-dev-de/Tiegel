@@ -71,6 +71,10 @@ func TestTestCommandWithoutRunner(t *testing.T) {
 	if code, _, _ := run(t, "", "test", "results", "--project", dir); code != ExitError {
 		t.Fatalf("no results: %d", code)
 	}
+	code, out, _ = run(t, "", "test", "config", "tests/CalcTest.php", "--class", `Tests\CalcTest`, "--method", "testAdd", "--project", dir)
+	if code != 0 || !strings.Contains(out, `"method": "testAdd"`) || !strings.Contains(out, `"name": "CalcTest::testAdd"`) {
+		t.Fatalf("config: %d %q", code, out)
+	}
 	if !index.TreeSitter {
 		return
 	}

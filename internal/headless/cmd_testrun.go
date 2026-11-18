@@ -27,7 +27,7 @@ func init() {
 	flagSpec["debug"] = false
 	register(&command{name: "test",
 		usage: "test [status | discover [PATH] | run [PATH] [--suite S] [--class C] [--method M] [--data-set D] [--filter F] [--config NAME] [--debug] [--interpreter I] | " +
-			"rerun-failed [RUN] [--debug] | results [RUN] | goto FILE | create FILE [--file TARGET] [--dry-run]]",
+			"rerun-failed [RUN] [--debug] | results [RUN] | config [PATH] [--suite S] [--class C] [--method M] [--data-set D] | goto FILE | create FILE [--file TARGET] [--dry-run]]",
 		summary: "test framework status, discovery, runs with results (exit 1 on failures), rerun failed, go to/create test", maxArgs: 2, cwdProject: true, run: runTest})
 }
 
@@ -96,6 +96,15 @@ func runTest(c *cli) error {
 			Debug: c.p.has("debug"), Interpreter: c.p.value("interpreter"), Config: c.p.value("config"),
 		}
 		return c.testRun("test.run", p)
+	case "config":
+		sc := api.TestScope{Path: arg, Suite: c.p.value("suite"), Class: c.p.value("class"), Method: c.p.value("method"),
+			DataSet: c.p.value("data-set"), Filter: c.p.value("filter")}
+		var cfg runsvc.Config
+		if err := c.call("test.configFor", sc, &cfg); err != nil {
+			return err
+		}
+		// Always JSON: ready for "run-configs save -".
+		return writeJSON(c.env.Stdout, cfg)
 	case "rerun-failed":
 		return c.testRun("test.rerunFailed", api.TestRunIDParams{RunID: arg, Debug: c.p.has("debug")})
 	case "results":
