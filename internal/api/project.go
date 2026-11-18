@@ -147,6 +147,7 @@ func (a *App) projectClose(_ context.Context, _ struct{}) (ProjectInfo, error) {
 		a.bus.Publish(TopicDocClosed, DocCloseResult{Path: d.path, Discarded: d.buf.Modified()})
 		d.mu.Unlock()
 	}
+	a.bumpQAGen()     // runs still in flight belong to the old project
 	a.clearQA("", "") // findings of the quality tools belong to the project
 	if pr != nil {
 		a.bus.Publish(TopicProjectClosed, ProjectEvent{Root: pr.root, Name: filepath.Base(pr.root)})

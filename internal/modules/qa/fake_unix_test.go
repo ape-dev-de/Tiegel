@@ -330,3 +330,62 @@ func TestTimeout(t *testing.T) {
 		t.Fatalf("%v after %v", err, time.Since(start))
 	}
 }
+
+// fakeFixer behaves like PHP-CS-Fixer's psr_autoloading rule: it renames
+// the class after the file it is given and notes the directory.
+const fakeFixer = `#!/bin/sh
+for a in "$@"; do f="$a"; done
+name=$(basename "$f" .php)
+dir=$(basename "$(dirname "$f")")
+sed "s/^final class [A-Za-z0-9_]*/final class $name/" "$f" > "$f.out" && mv "$f.out" "$f"
+echo "// in $dir" >> "$f"
+if [ -f fail ]; then echo broken >&2; exit 4; fi
+`
+
+// noCopies fails if a temporary copy of a formatter is left in dir.
+func noCopies(t *testing.T, dir string) {
+	t.Helper()
+	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err == nil && (strings.Contains(d.Name(), ".tiegel-") || strings.HasPrefix(d.Name(), "__tiegel_")) {
+			t.Errorf("temporary copy left: %s", p)
+		}
+		return nil
+	})
+}
+
+// The formatter sees the file under its real name and directory, so
+// file-name dependent rules keep the class name (review wave 7, #1).
+func TestFormatKeepsFileName(t *testing.T) {
+	a, dir := newApp(t)
+	src := "<?php\nnamespace App\\Service;\n\nfinal class UserService\n{\n}\n"
+	modtest.WriteFile(t, filepath.Join(dir, "src", "Service", "UserService.php"), src)
+	modtest.WriteFile(t, filepath.Join(dir, "vendor", "bin", "php-cs-fixer"), fakeFixer)
+	if err := os.Chmod(filepath.Join(dir, "vendor", "bin", "php-cs-fixer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var r api.QAFormatResult
+	modtest.Call(t, a, "qa.format", api.QAFormatParams{Tool: PHPCSFixerID, Path: "src/Service/UserService.php", Apply: new(bool)}, &r)
+	if want := src + "// in Service\n"; r.Text != want {
+		t.Fatalf("formatted %q, want %q", r.Text, want)
+	}
+	noCopies(t, dir)
+	// A failing run leaves nothing behind either.
+	modtest.WriteFile(t, filepath.Join(dir, "fail"), "")
+	modtest.WantCode(t, a, "qa.format", api.QAFormatParams{Tool: PHPCSFixerID, Path: "src/Service/UserService.php"}, api.CodeFailed)
+	noCopies(t, dir)
+}
+
+// Format on save runs under the plugin's timeout, not the hooks' default
+// of 2 s (review wave 7, #2).
+func TestFormatOnSaveSlowTool(t *testing.T) {
+	a, dir := newApp(t)
+	modtest.WriteFile(t, filepath.Join(dir, "vendor", "bin", "pint"), "#!/bin/sh\nsleep 3\n"+strings.TrimPrefix(fakePint, "#!/bin/sh\n"))
+	_ = os.Chmod(filepath.Join(dir, "vendor", "bin", "pint"), 0o755)
+	set(t, a, PintID+".formatOnSave", true)
+	modtest.Call(t, a, "doc.open", api.DocOpenParams{Path: "a.php"}, nil)
+	modtest.Call(t, a, "doc.insert", map[string]any{"path": "a.php", "at": map[string]int{"offset": 0}, "text": "\n"}, nil)
+	modtest.Call(t, a, "doc.save", api.DocSaveParams{Path: "a.php"}, nil)
+	if b, _ := os.ReadFile(filepath.Join(dir, "a.php")); string(b) != "\n<?php\n$x = [1, 2];\n" {
+		t.Fatalf("saved %q", b)
+	}
+}
