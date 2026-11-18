@@ -1,0 +1,5 @@
+<application>
+  <component name="PropertiesComponent">
+    <property name="some.ui.state" value="1" />
+  </component>
+</application>

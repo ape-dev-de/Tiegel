@@ -17,6 +17,8 @@
 //	history.*  list, content, restore
 //	search.*   inDoc, replaceInDoc, inProject, cancel, replaceInProject
 //	modules.*  list, enable, disable
+//	import.ide.* status, sources, scan, apply (settings of the reference
+//	           IDE; plugins map their parts through import.ide.component)
 //
 // and the compiled-in modules (internal/modules) add theirs while they run:
 //

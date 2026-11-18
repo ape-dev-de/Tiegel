@@ -1,0 +1,5 @@
+<application>
+  <component name="DockerSettings">
+    <DockerServerSettings name="Docker" uri="unix://$USER_HOME$/.orbstack/run/docker.sock" />
+  </component>
+</application>

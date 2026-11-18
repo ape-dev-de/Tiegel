@@ -1,0 +1,8 @@
+<application>
+  <component name="PhpInterpreters">
+    <interpreters>
+      <interpreter id="00000000-0000-0000-0000-000000000001" name="Local PHP" home="/nonexistent/bin/php" debugger_id="php.debugger.XDebug" />
+    </interpreters>
+  </component>
+  <component name="PhpDebugGeneral" xdebug_debug_port="9005,9003" break_at_first_line="true" />
+</application>

@@ -57,6 +57,7 @@ func (m *Module) Start(ctx module.Context) error {
 		return errors.New("git: needs an api.App context")
 	}
 	m.app = app
+	ctx.OnStop(api.OnIDEComponent(ctx, importComponent))
 	p := api.NewProvider(ctx)
 	api.Add(p, "git.status", "Branch and changed files (porcelain v2)", m.gitStatus)
 	api.Add(p, "git.diff", "Diff of work tree, index or revisions", m.gitDiff)

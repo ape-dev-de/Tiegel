@@ -50,6 +50,8 @@ func testEnv(t *testing.T, in io.Reader, out, errw io.Writer) Env {
 			Interp:     interp.DiscoverOptions{Dirs: []string{}},
 			LSP:        servers.DetectOptions{HomeDir: home, NoSystemDirs: true},
 			GOOS:       "darwin",
+			// The settings import never looks at the real home.
+			IDEImport: api.IDEImportOptions{Home: home},
 			// Terminal sessions never ask the login shell.
 			TerminalPath: func(context.Context) string { return os.Getenv("PATH") },
 		},

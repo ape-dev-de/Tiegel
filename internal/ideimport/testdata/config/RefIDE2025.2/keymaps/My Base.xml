@@ -1,0 +1,9 @@
+<keymap version="1" name="My Base" parent="Mac OS X 10.5+">
+  <action id="EditorDuplicate">
+    <keyboard-shortcut first-keystroke="meta shift D" />
+  </action>
+  <action id="ActivateTerminalToolWindow">
+    <keyboard-shortcut first-keystroke="alt F12" />
+    <keyboard-shortcut first-keystroke="meta BACK_QUOTE" />
+  </action>
+</keymap>

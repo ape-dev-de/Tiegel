@@ -39,6 +39,7 @@ func (c *Controller) closeBackendProject(ctx context.Context) error {
 // projectClosed resets the window to the welcome state (UI goroutine).
 func (c *Controller) projectClosed() {
 	c.Project = ProjectInfo{}
+	c.IDEImport.Offer = false
 	c.resetGroups()
 	c.diags = map[string]*fileDiags{}
 	c.DiagVersion++

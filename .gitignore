@@ -5,3 +5,5 @@
 .DS_Store
 .idea/
 /.claude/
+# synthetic fixture of the settings import (M16)
+!/internal/ideimport/testdata/project/.idea/

@@ -222,6 +222,8 @@ type Controller struct {
 	Run *Runs
 	// QA is the state of the quality tool plugins (AP17.1).
 	QA QAState
+	// IDEImport is the settings import wizard (M16).
+	IDEImport IDEImportState
 	// Tests is the test state: gutter tests, results (tests.go).
 	Tests *Tests
 	// Composer holds the scripts of composer.json (plugin composer).
@@ -576,6 +578,7 @@ func (c *Controller) projectOpened(info ProjectInfo) {
 	c.refreshGit()
 	c.refreshRuntime()
 	c.RefreshQA()
+	c.checkIDEImportOffer()
 	c.Vcs.reset()
 	c.Debug.reset()
 	c.Debug.refresh()

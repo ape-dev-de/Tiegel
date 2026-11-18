@@ -33,6 +33,8 @@ func Options(t testing.TB) api.Options {
 		ComposeEnv: map[string]string{},
 		GOOS:       "linux",
 		AppVersion: "test",
+		// The settings import never looks at the real home.
+		IDEImport: api.IDEImportOptions{Home: home},
 	}
 }
 

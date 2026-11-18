@@ -1,0 +1,9 @@
+<toolSet name="External Tools">
+  <tool name="Make Docs" description="Builds the docs" showInMainMenu="true">
+    <exec>
+      <option name="COMMAND" value="make" />
+      <option name="PARAMETERS" value="docs" />
+      <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
+    </exec>
+  </tool>
+</toolSet>

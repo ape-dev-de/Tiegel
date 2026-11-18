@@ -16,7 +16,7 @@ import (
 // none of them may name a quality tool (AP17.1, D190).
 var corePackages = []string{
 	"../../api", "../../core", "../../run", "../../install", "../../actions",
-	"../../app", "../../headless", "../../ui", "qakit",
+	"../../app", "../../headless", "../../ui", "../../ideimport", "qakit",
 }
 
 // splitCamel inserts a space at lower→upper case changes ("fooBar" →

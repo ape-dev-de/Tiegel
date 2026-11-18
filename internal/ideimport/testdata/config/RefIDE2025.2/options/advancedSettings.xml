@@ -1,0 +1,10 @@
+<application>
+  <component name="AdvancedSettings">
+    <option name="settings">
+      <map>
+        <entry key="terminal.use.option.as.meta.key" value="true" />
+        <entry key="ide.some.other.setting" value="42" />
+      </map>
+    </option>
+  </component>
+</application>
