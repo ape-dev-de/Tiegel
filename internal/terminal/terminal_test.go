@@ -262,6 +262,100 @@ func TestCloseRunningSession(t *testing.T) {
 	}
 }
 
+// TestCloseExitedSessionKills: closing a session whose program already
+// exited still kills what is left of its process groups (D334).
+func TestCloseExitedSessionKills(t *testing.T) {
+	f := newFake()
+	m := newManager(f, &events{})
+	info, err := m.Open(Options{Command: Command{Program: "sh"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.finish(0)
+	s, _ := m.Get(info.ID)
+	<-s.Done()
+	if err := m.Close(info.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.hangups != 0 || f.kills != 1 {
+		t.Fatalf("hangups %d kills %d", f.hangups, f.kills)
+	}
+}
+
+// TestStopRemote: a remote session reports its PID in a hidden OSC; Close
+// stops the remote side with it before the local client is ended.
+func TestStopRemote(t *testing.T) {
+	f := newFake()
+	f.ignoreHangup = true
+	ev := &events{}
+	m := newManager(f, ev)
+	var (
+		mu    sync.Mutex
+		pids  []int
+		order []string
+	)
+	stop := func(_ context.Context, pid int) error {
+		mu.Lock()
+		defer mu.Unlock()
+		f.mu.Lock()
+		order = append(order, "remote@"+strconv.Itoa(f.hangups))
+		f.mu.Unlock()
+		pids = append(pids, pid)
+		return errors.New("container gone")
+	}
+	info, err := m.Open(Options{Command: Command{Program: "docker"}, Kind: "x.kind", Target: "app", StopRemote: stop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the first report counts; a later one (a program in the shell)
+	// cannot redirect the stop.
+	_, _ = f.outW.Write([]byte("\x1b]7716;tiegel-pid=321\x07$ \x1b]7716;tiegel-pid=999\x07"))
+	s, _ := m.Get(info.ID)
+	eventually(t, "pid", func() bool { return s.Info().RemotePID == 321 })
+	if got := s.ScreenText(); !strings.HasPrefix(got, "$") {
+		t.Fatalf("report visible: %q", got)
+	}
+	err = m.Close(info.ID)
+	if err == nil || !strings.Contains(err.Error(), "container gone") {
+		t.Fatalf("close error %v", err)
+	}
+	mu.Lock()
+	if len(pids) != 1 || pids[0] != 321 || order[0] != "remote@0" {
+		t.Fatalf("stop calls %v order %v", pids, order)
+	}
+	mu.Unlock()
+	if _, err := m.Get(info.ID); err == nil {
+		t.Fatal("session kept after a failed remote stop")
+	}
+
+	// Without a report (or without StopRemote) nothing remote runs, and
+	// an exited program does not report the remote error.
+	f2 := newFake()
+	m.Start = func(Command) (Process, error) { return f2, nil }
+	info, _ = m.Open(Options{Command: Command{Program: "docker"}, StopRemote: stop})
+	if err := m.Close(info.ID); err != nil {
+		t.Fatal(err)
+	}
+	f3 := newFake()
+	m.Start = func(Command) (Process, error) { return f3, nil }
+	info, _ = m.Open(Options{Command: Command{Program: "docker"}, StopRemote: stop})
+	_, _ = f3.outW.Write([]byte("\x1b]7716;tiegel-pid=55\x07"))
+	s, _ = m.Get(info.ID)
+	eventually(t, "pid", func() bool { return s.Info().RemotePID == 55 })
+	f3.finish(0)
+	<-s.Done()
+	if err := m.Close(info.ID); err != nil {
+		t.Fatalf("exited: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(pids) != 2 || pids[1] != 55 {
+		t.Fatalf("stop calls %v", pids)
+	}
+}
+
 func TestOpenErrors(t *testing.T) {
 	m := &Manager{Start: func(Command) (Process, error) { return nil, errors.New("boom") }}
 	if _, err := m.Open(Options{}); err == nil {

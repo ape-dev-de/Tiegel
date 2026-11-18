@@ -16,6 +16,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/compose"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	dk "github.com/ape-dev-de/tiegel/internal/docker"
+	"github.com/ape-dev-de/tiegel/internal/terminal"
 )
 
 // Services window backend (AP14.3): compose projects of the open project
@@ -895,25 +896,79 @@ const (
 	TerminalKindContainer = "docker.container"
 )
 
+// terminalKinds lists the docker kinds for terminal.kinds.
+func terminalKinds(l []api.TerminalKind) []api.TerminalKind {
+	return append(l,
+		api.TerminalKind{Kind: TerminalKindService, Label: "Shell in Compose Service", Target: api.TerminalTargetService},
+		api.TerminalKind{Kind: TerminalKindContainer, Label: "Shell in Container", Target: api.TerminalTargetContainer})
+}
+
 // terminalLaunch answers the terminal.launch filter for the docker
-// kinds: `docker compose exec SERVICE SHELL` or `docker exec -it
-// CONTAINER SHELL`, run by the embedded terminal (a real TTY).
+// kinds: `docker compose exec SERVICE …` or `docker exec -it CONTAINER
+// …`, run by the embedded terminal (a real TTY). The shell starts
+// through terminal.ReportPIDArgs; Stop ends its session inside the
+// container on close (`exec -T … sh -c STOP sh PID`, D370), because
+// ending the docker client leaves it running (moby#9098).
 func (m *Module) terminalLaunch(ctx context.Context, q api.TerminalLaunch) api.TerminalLaunch {
-	p := ShellParams{Shell: q.Shell}
-	switch q.Kind {
-	case TerminalKindService:
-		p.Service = q.Target
-	case TerminalKindContainer:
-		p.Container = q.Target
-	default:
+	if q.Kind != TerminalKindService && q.Kind != TerminalKindContainer {
 		return q
 	}
-	argv, c, err := m.shellCommand(ctx, p)
-	if err != nil {
+	fail := func(err error) api.TerminalLaunch {
 		q.Err = err.Error()
 		return q
 	}
-	q.Program, q.Args, q.Env, q.Name = argv[0], argv[1:], c.Env, q.Target
+	sh := q.Shell
+	if sh == "" {
+		sh = "sh"
+	}
+	if err := compose.CheckShell(sh); err != nil {
+		return fail(api.Errorf(api.CodeInvalidParams, "%w", err))
+	}
+	remote := terminal.ReportPIDArgs(sh)
+	var (
+		c    dk.Client
+		args []string
+		stop func(pid int) ([]string, error)
+	)
+	switch q.Kind {
+	case TerminalKindService:
+		st, err := m.stack(ctx)
+		if err != nil {
+			return fail(err)
+		}
+		if args, err = st.ExecArgs(q.Target, true, remote...); err != nil {
+			return fail(api.Errorf(api.CodeInvalidParams, "%w", err))
+		}
+		c = st.Client
+		service := q.Target
+		stop = func(pid int) ([]string, error) { return st.ExecArgs(service, false, terminal.RemoteStopArgs(pid)...) }
+	default:
+		if err := checkContainer(q.Target); err != nil {
+			return fail(err)
+		}
+		cl, _, err := m.client(ctx, "")
+		if err != nil {
+			return fail(m.unavailable(err))
+		}
+		c = cl
+		container := q.Target
+		args = append([]string{"exec", "-it", container}, remote...)
+		stop = func(pid int) ([]string, error) {
+			return append([]string{"exec", container}, terminal.RemoteStopArgs(pid)...), nil
+		}
+	}
+	q.Program, q.Args, q.Env, q.Name = c.Bin(), c.Args(args...), c.Env, q.Target
+	q.Stop = func(ctx context.Context, pid int) error {
+		if pid <= 0 {
+			return nil
+		}
+		a, err := stop(pid)
+		if err != nil {
+			return err
+		}
+		_, err = c.Output(ctx, a...)
+		return err
+	}
 	return q
 }
 

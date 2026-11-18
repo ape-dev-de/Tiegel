@@ -14,6 +14,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/docker/dockertest"
 	"github.com/ape-dev-de/tiegel/internal/modules/modtest"
+	"github.com/ape-dev-de/tiegel/internal/terminal"
 )
 
 const shopCompose = "name: shop\nservices:\n  web:\n    image: nginx\n    ports: [\"8080:80\"]\n  app:\n    image: php:8.3-fpm\n"
@@ -468,13 +469,39 @@ func TestTerminalLaunch(t *testing.T) {
 		}
 		return got
 	}
+	// The shell reports its PID (terminal.ReportPIDArgs) so that closing
+	// the tab can end it inside the container (D370).
+	report := strings.Join(terminal.ReportPIDArgs("sh"), " ")
 	q := apply(api.TerminalLaunch{Kind: TerminalKindService, Target: "app"})
-	if q.Err != "" || q.Program != f.Binary || q.Name != "app" || strings.Join(q.Args[len(q.Args)-3:], " ") != "exec app sh" || len(q.Env) == 0 {
+	if q.Err != "" || q.Program != f.Binary || q.Name != "app" || !strings.HasSuffix(strings.Join(q.Args, " "), " exec app "+report) || len(q.Env) == 0 || q.Stop == nil {
 		t.Fatalf("service launch %+v", q)
 	}
+	ctx := context.Background()
+	if err := q.Stop(ctx, 0); err != nil || f.Called("exec -T app") {
+		t.Fatalf("stop without pid: %v", err)
+	}
+	if err := q.Stop(ctx, 4711); err != nil {
+		t.Fatal(err)
+	}
+	stop := strings.Join(terminal.RemoteStopArgs(4711), " ")
+	if !f.Called("compose", "exec -T app "+stop) {
+		t.Fatalf("no stop in the service: %q", f.Calls())
+	}
 	q = apply(api.TerminalLaunch{Kind: TerminalKindContainer, Target: "adminer", Shell: "bash"})
-	if q.Err != "" || strings.Join(q.Args[len(q.Args)-4:], " ") != "exec -it adminer bash" {
+	if q.Err != "" || !strings.HasSuffix(strings.Join(q.Args, " "), "exec -it adminer "+strings.Join(terminal.ReportPIDArgs("bash"), " ")) {
 		t.Fatalf("container launch %+v", q)
+	}
+	if err := q.Stop(ctx, 99); err != nil || !f.Called("exec adminer "+strings.Join(terminal.RemoteStopArgs(99), " ")) {
+		t.Fatalf("no stop in the container: %v %q", err, f.Calls())
+	}
+	if q = apply(api.TerminalLaunch{Kind: TerminalKindContainer, Target: "adminer", Shell: "a;b"}); q.Err == "" {
+		t.Fatalf("bad shell %+v", q)
+	}
+	var kinds []api.TerminalKind
+	modtest.Call(t, a, "terminal.kinds", nil, &kinds)
+	if len(kinds) != 2 || kinds[0].Kind != TerminalKindService || kinds[0].Target != api.TerminalTargetService ||
+		kinds[1].Kind != TerminalKindContainer || kinds[1].Target != api.TerminalTargetContainer {
+		t.Fatalf("kinds %+v", kinds)
 	}
 	if q = apply(api.TerminalLaunch{Kind: TerminalKindService, Target: "a;b"}); q.Err == "" || q.Program != "" {
 		t.Fatalf("bad service %+v", q)

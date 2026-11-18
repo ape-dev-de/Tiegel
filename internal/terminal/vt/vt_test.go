@@ -364,6 +364,32 @@ func TestResize(t *testing.T) {
 	}
 }
 
+// Resizing while a full-screen program (1049) runs keeps the main
+// screen and its saved cursor consistent: the prompt continues right
+// below the earlier output after the program exits.
+func TestResizeAltScreen(t *testing.T) {
+	term := New(10, 5, 10)
+	feed(term, "1\r\n2\r\n3\r\n")
+	feed(term, "\x1b[?1049h\x1b[5;1Hvim")
+	term.Resize(10, 3)
+	feed(term, "\x1b[?1049lX")
+	if got := term.ScreenText(); got != "2\n3\nX" {
+		t.Fatalf("after alt screen %q", got)
+	}
+	if term.History() != 1 || term.LineText(0) != "1" || term.Cursor().Row != 2 {
+		t.Fatalf("history %d %q cursor %+v", term.History(), term.LineText(0), term.Cursor())
+	}
+	// Growing pulls lines back and moves the saved cursor with them.
+	term = New(10, 3, 10)
+	feed(term, "1\r\n2\r\n3\r\n4\r\n")
+	feed(term, "\x1b7\x1b[1;1H")
+	term.Resize(10, 5)
+	feed(term, "\x1b8Y")
+	if got := term.ScreenText(); got != "1\n2\n3\n4\nY" {
+		t.Fatalf("grown %q", got)
+	}
+}
+
 func TestResizeWide(t *testing.T) {
 	term := New(4, 1, 0)
 	feed(term, "ab世")
@@ -452,6 +478,14 @@ func TestEncodePaste(t *testing.T) {
 	}
 	if got := string(EncodePaste("x\x1b[201~y", Modes{BracketedPaste: true})); got != "\x1b[200~xy\x1b[201~" {
 		t.Fatalf("bracketed %q", got)
+	}
+	// Nested markers must not rebuild an end marker (pastejacking).
+	got := string(EncodePaste("x\x1b[20\x1b[201~1~echo pwned\n", Modes{BracketedPaste: true}))
+	if got != "\x1b[200~xecho pwned\r\x1b[201~" {
+		t.Fatalf("nested %q", got)
+	}
+	if strings.Count(got, "\x1b[201~") != 1 {
+		t.Fatalf("end marker inside the paste: %q", got)
 	}
 }
 

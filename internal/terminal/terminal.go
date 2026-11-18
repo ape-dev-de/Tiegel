@@ -42,7 +42,10 @@ type Info struct {
 	Cols    int    `json:"cols"`
 	Rows    int    `json:"rows"`
 	PID     int    `json:"pid,omitempty"`
-	Running bool   `json:"running"`
+	// RemotePID is the PID the program reported from the remote side
+	// (ReportPIDArgs), for sessions with Options.StopRemote.
+	RemotePID int  `json:"remotePid,omitempty"`
+	Running   bool `json:"running"`
 	// ExitCode is valid when Running is false (-1: killed by a signal).
 	ExitCode int        `json:"exitCode"`
 	Error    string     `json:"error,omitempty"`
@@ -57,6 +60,11 @@ type Options struct {
 	// Scrollback is the number of lines kept above the screen (0: none,
 	// negative: vt.DefaultScrollback).
 	Scrollback int
+	// StopRemote ends the processes on the remote side (a shell inside a
+	// container) on Close, which killing the local client does not. It
+	// gets the PID reported through ReportPIDArgs and is not called
+	// without one.
+	StopRemote StopRemoteFunc
 }
 
 // Output is a batch of program output of a session (event payload).
@@ -74,6 +82,9 @@ var (
 	ErrNotFound = errors.New("terminal: no such session")
 	ErrExited   = errors.New("terminal: the program has exited")
 )
+
+// RemoteStopTimeout bounds Options.StopRemote on Close.
+const RemoteStopTimeout = 15 * time.Second
 
 // Default sizes of a session opened without a size.
 const (
@@ -104,8 +115,9 @@ type Manager struct {
 
 // Session is one running (or exited) program.
 type Session struct {
-	m    *Manager
-	proc Process
+	m          *Manager
+	proc       Process
+	stopRemote StopRemoteFunc
 
 	mu      sync.Mutex
 	info    Info
@@ -161,7 +173,7 @@ func (m *Manager) Open(o Options) (Info, error) {
 			name += " (" + strconv.Itoa(n+1) + ")"
 		}
 	}
-	s := &Session{m: m, proc: proc,
+	s := &Session{m: m, proc: proc, stopRemote: o.StopRemote,
 		info: Info{ID: id, Name: name, Kind: o.Kind, Target: o.Target, Command: append([]string{o.Program}, o.Args...),
 			Dir: o.Dir, Project: o.Project, Cols: o.Cols, Rows: o.Rows, PID: proc.Pid(), Running: true, Started: time.Now()},
 		term:     vt.New(o.Cols, o.Rows, o.Scrollback),
@@ -172,6 +184,7 @@ func (m *Manager) Open(o Options) (Info, error) {
 		stop:     make(chan struct{}),
 	}
 	s.term.Reply = s.reply
+	s.term.OSC = s.osc
 	m.sessions[id] = s
 	m.order = append(m.order, id)
 	info := s.info
@@ -228,14 +241,15 @@ func (m *Manager) List() []Info {
 	return out
 }
 
-// Close ends session id (hangup, then kill of the process tree) and
-// forgets it.
+// Close ends session id (hangup, then kill of the process tree; remote
+// processes through Options.StopRemote) and forgets it. The session is
+// gone also when the error reports a failed remote stop.
 func (m *Manager) Close(id string) error {
 	s, err := m.Get(id)
 	if err != nil {
 		return err
 	}
-	s.shutdown()
+	stopErr := s.shutdown()
 	m.mu.Lock()
 	_, ok := m.sessions[id]
 	delete(m.sessions, id)
@@ -249,14 +263,37 @@ func (m *Manager) Close(id string) error {
 	if ok && m.OnClose != nil {
 		m.OnClose(id)
 	}
+	if stopErr != nil {
+		return fmt.Errorf("terminal: stop remote processes: %w", stopErr)
+	}
 	return nil
 }
 
 // CloseAll closes every session.
 func (m *Manager) CloseAll() {
+	m.CloseMatching(func(Info) bool { return true })
+}
+
+// CloseMatching closes the sessions match selects, in parallel, and
+// returns their IDs.
+func (m *Manager) CloseMatching(match func(Info) bool) []string {
+	var (
+		ids []string
+		wg  sync.WaitGroup
+	)
 	for _, i := range m.List() {
-		_ = m.Close(i.ID)
+		if !match(i) {
+			continue
+		}
+		ids = append(ids, i.ID)
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			_ = m.Close(id)
+		}(i.ID)
 	}
+	wg.Wait()
+	return ids
 }
 
 // ---- session ---------------------------------------------------------------
@@ -316,6 +353,18 @@ func (s *Session) reply(b []byte) {
 	select {
 	case s.input <- append([]byte(nil), b...):
 	default:
+	}
+}
+
+// osc receives operating system commands the emulator does not handle
+// (called with s.mu held): the first PID report of a remote session.
+func (s *Session) osc(num, text string) {
+	if num != pidOSC || s.stopRemote == nil || s.info.RemotePID != 0 {
+		return
+	}
+	if pid := parsePIDReport(text); pid > 0 {
+		s.info.RemotePID = pid
+		s.changed = true
 	}
 }
 
@@ -397,7 +446,6 @@ func (s *Session) wait() {
 	case <-s.readDone:
 	case <-time.After(500 * time.Millisecond):
 	}
-	_ = s.proc.Close()
 	now := time.Now()
 	s.mu.Lock()
 	s.info.Running = false
@@ -409,6 +457,9 @@ func (s *Session) wait() {
 	info := s.infoLocked()
 	closing := s.closing
 	s.mu.Unlock()
+	// Closed after Running is false: Resize no longer reaches it (on
+	// Windows the pseudo console handle is freed here).
+	_ = s.proc.Close()
 	s.signal()
 	close(s.done)
 	if s.m.OnExit != nil && !closing {
@@ -416,13 +467,37 @@ func (s *Session) wait() {
 	}
 }
 
-// shutdown ends the program and the goroutines.
-func (s *Session) shutdown() {
+// shutdown ends the program and the goroutines; it returns the error of
+// a remote stop of a running program.
+func (s *Session) shutdown() error {
 	s.mu.Lock()
 	s.closing = true
+	pid := s.info.RemotePID
 	s.mu.Unlock()
+	exited := false
 	select {
 	case <-s.done:
+		exited = true
+	default:
+	}
+	var stopErr error
+	if s.stopRemote != nil && pid > 0 {
+		// First on the remote side: the client keeps no process there
+		// alive, but once it is gone the remote shell is out of reach.
+		ctx, cancel := context.WithTimeout(context.Background(), RemoteStopTimeout)
+		stopErr = s.stopRemote(ctx, pid)
+		cancel()
+		if exited {
+			// The container may be gone with the program: nothing to
+			// report.
+			stopErr = nil
+		}
+	}
+	select {
+	case <-s.done:
+		// The program exited; members of its process groups may be
+		// left (D334): kill them.
+		_ = s.proc.Kill()
 	default:
 		// Hangup first (shells save their history), then kill what is
 		// left: the shell if it did not end, and jobs ignoring SIGHUP.
@@ -445,6 +520,7 @@ func (s *Session) shutdown() {
 	case <-ch:
 	case <-time.After(2 * time.Second):
 	}
+	return stopErr
 }
 
 // Input sends raw bytes to the program.
@@ -507,6 +583,10 @@ func (s *Session) Resize(cols, rows int) error {
 		return nil
 	}
 	if err := s.proc.Resize(cols, rows); err != nil {
+		if !s.Info().Running {
+			// The program exited meanwhile (the terminal is closed).
+			return nil
+		}
 		return fmt.Errorf("terminal: resize: %w", err)
 	}
 	return nil

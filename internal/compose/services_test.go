@@ -67,6 +67,19 @@ func TestStackArgs(t *testing.T) {
 	if _, err := s.LogsArgs(LogOptions{Services: []string{"-x"}}); err == nil {
 		t.Fatal("bad service in logs")
 	}
+	ex, err := s.ExecArgs("app", false, "sh", "-c", "x")
+	if err != nil || !reflect.DeepEqual(ex[len(base):], []string{"exec", "-T", "app", "sh", "-c", "x"}) {
+		t.Fatalf("exec %v %v", ex, err)
+	}
+	if ex, _ = s.ExecArgs("app", true, "sh"); !reflect.DeepEqual(ex[len(base):], []string{"exec", "app", "sh"}) {
+		t.Fatalf("exec tty %v", ex)
+	}
+	if _, err := s.ExecArgs("-x", true, "sh"); err == nil {
+		t.Fatal("bad exec service")
+	}
+	if _, err := s.ExecArgs("app", true); err == nil {
+		t.Fatal("exec without command")
+	}
 	sh, err := s.ShellArgs("app", "")
 	if err != nil || sh[0] != "/bin/docker" || !reflect.DeepEqual(sh[1:3], []string{"--context", "orb"}) || !reflect.DeepEqual(sh[len(sh)-3:], []string{"exec", "app", "sh"}) {
 		t.Fatalf("shell %v %v", sh, err)

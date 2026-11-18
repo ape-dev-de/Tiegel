@@ -37,6 +37,11 @@ func TestTerminalCommand(t *testing.T) {
 			t.Errorf("%v: exit %d, want 2", bad, code)
 		}
 	}
+	// The docker plugin lists its kinds.
+	code, out, errOut = run(t, "", "terminal", "--kinds", "--project", dir)
+	if code != 0 || !strings.Contains(out, "docker.service\tservice\t") || !strings.Contains(out, "docker.container\tcontainer\t") {
+		t.Fatalf("kinds: %d %q %q", code, out, errOut)
+	}
 	// A plugin kind without a provider (docker missing or no compose file).
 	if code, _, _ := run(t, "", "terminal", "--project", dir, "--kind", "nope.kind", "--target", "x"); code == 0 {
 		t.Error("unknown kind accepted")

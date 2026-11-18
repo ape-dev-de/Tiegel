@@ -29,9 +29,10 @@ func init() {
 	flagSpec["service"] = true
 	flagSpec["target"] = true
 	flagSpec["scrollback"] = false
+	flagSpec["kinds"] = false
 	register(&command{name: "terminal",
-		usage:   "terminal [--shell SH] [--arg A]... [--dir DIR] [--service S | --kind K --target T] [--send TEXT]... [--idle 300ms] [--timeout 10s] [--cols N] [--rows N] [--scrollback] [--env K=V]...",
-		summary: "open a terminal session (project shell or a shell in a compose service), send input (\\n, \\r, \\t, \\e, \\xHH escapes), print the screen, close it",
+		usage:   "terminal --kinds | terminal [--shell SH] [--arg A]... [--dir DIR] [--service S | --kind K --target T] [--send TEXT]... [--idle 300ms] [--timeout 10s] [--cols N] [--rows N] [--scrollback] [--env K=V]...",
+		summary: "open a terminal session (project shell or a shell in a compose service), send input (\\n, \\r, \\t, \\e, \\xHH escapes), print the screen, close it; --kinds lists the session kinds of the plugins",
 		maxArgs: 0, cwdProject: true, run: runTerminal})
 }
 
@@ -115,6 +116,17 @@ func intFlag(c *cli, name string) (int, error) {
 }
 
 func runTerminal(c *cli) error {
+	if c.p.has("kinds") {
+		var kinds []api.TerminalKind
+		if err := c.call("terminal.kinds", nil, &kinds); err != nil {
+			return err
+		}
+		return c.emit(kinds, func(w io.Writer) {
+			for _, k := range kinds {
+				fmt.Fprintf(w, "%s\t%s\t%s\n", k.Kind, k.Target, k.Label)
+			}
+		})
+	}
 	p := api.TerminalOpenParams{Shell: c.p.value("shell"), Args: c.p.flags["arg"], Dir: c.p.value("dir"), Env: c.p.flags["env"],
 		Kind: c.p.value("kind"), Target: c.p.value("target")}
 	if s := c.p.value("service"); s != "" {
