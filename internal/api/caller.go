@@ -100,11 +100,12 @@ func convert(v, result any) error {
 }
 
 // callValue implements Caller.Call for a context that may carry a session.
-func (a *App) callValue(ctx context.Context, method string, params, result any) error {
+func (a *App) callValue(ctx context.Context, method string, params, result any) (err error) {
 	m, err := a.lookup(method)
 	if err != nil {
 		return err
 	}
+	defer a.recoverCall(method, &err)
 	if _, raw := params.(json.RawMessage); !raw && m.direct != nil {
 		if handled, err := m.direct(ctx, params, result); handled {
 			return err

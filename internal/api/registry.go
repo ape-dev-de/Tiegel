@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -175,12 +176,28 @@ func (a *App) Methods() []MethodInfo { return a.methods.list() }
 
 // Call invokes method with raw JSON params outside of any session (no event
 // subscriptions). Use a Session for clients that want notifications.
-func (a *App) Call(ctx context.Context, method string, params json.RawMessage) (any, error) {
+//
+// A panic in the handler (or in code it runs on the calling goroutine) does
+// not end the process: it is logged with its stack and reported as an
+// error with CodeInternal.
+func (a *App) Call(ctx context.Context, method string, params json.RawMessage) (res any, err error) {
 	m, err := a.lookup(method)
 	if err != nil {
 		return nil, err
 	}
+	defer a.recoverCall(method, &err)
 	return m.Handler(ctx, params)
+}
+
+// recoverCall turns a panic of the handler of method into an internal
+// error stored in *err. It must be deferred directly.
+func (a *App) recoverCall(method string, err *error) {
+	p := recover()
+	if p == nil {
+		return
+	}
+	a.log.Error("method panicked", "method", method, "panic", p, "stack", string(debug.Stack()))
+	*err = Errorf(CodeInternal, "internal error in %s: %v", method, p)
 }
 
 // lookup returns the callable entry of method or the error a call reports.

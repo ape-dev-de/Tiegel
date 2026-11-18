@@ -183,3 +183,67 @@ func TestApplyOneLineBodyAndTabs(t *testing.T) {
 		t.Fatalf("untyped %q", b)
 	}
 }
+
+// A constructor for a class written on one line (or with members sharing
+// a line) goes inside the class body, before the methods.
+func TestApplyConstructorOneLineClass(t *testing.T) {
+	a := newApp(t)
+	const ctorXY = "\n    public function __construct(int $x, int $y)\n    {\n        $this->x = $x;\n        $this->y = $y;\n    }\n"
+	const ctorX = "\n    public function __construct(int $x)\n    {\n        $this->x = $x;\n    }\n"
+	cases := []struct{ name, src, want string }{
+		{"Point.php", "<?php\nfinal class Point { private int $x; private int $y; }\n",
+			"<?php\nfinal class Point { private int $x; private int $y; " + ctorXY + "}\n"},
+		{"Abs.php", "<?php\nabstract class Abs { protected int $x; }\n",
+			"<?php\nabstract class Abs { protected int $x; " + ctorX + "}\n"},
+		{"Ro.php", "<?php\nreadonly class Ro { public int $x; }\n",
+			"<?php\nreadonly class Ro { public int $x; " + ctorX + "}\n"},
+		{"Tr.php", "<?php\ntrait Tr { private int $x; }\n",
+			"<?php\ntrait Tr { private int $x; " + ctorX + "}\n"},
+		{"Ns.php", "<?php\nnamespace N {\n    class Ns { private int $x; }\n}\n",
+			"<?php\nnamespace N {\n    class Ns { private int $x; \n        public function __construct(int $x)\n        {\n            $this->x = $x;\n        }\n    }\n}\n"},
+		// A method on the same line: the constructor goes before it.
+		{"M.php", "<?php\nclass M { private int $x; public function f(): int { return 1; } }\n",
+			"<?php\nclass M { private int $x; " + ctorX + "public function f(): int { return 1; } }\n"},
+		// A multi-line method starting on the property's line.
+		{"ML.php", "<?php\nclass ML\n{\n    private int $x; public function f(): int {\n        return 1;\n    }\n}\n",
+			"<?php\nclass ML\n{\n    private int $x; " + ctorX + "public function f(): int {\n        return 1;\n    }\n}\n"},
+		// Properties only after a method on the class line.
+		{"After.php", "<?php\nclass After { public function f() {} private int $x; }\n",
+			"<?php\nclass After { " + ctorX + "public function f() {} private int $x; }\n"},
+	}
+	files := map[string]string{"En.php": "<?php\nenum En { case A; }\n"}
+	for _, c := range cases {
+		files[c.name] = c.src
+	}
+	root := modtest.Project(t, a, files)
+	for _, c := range cases {
+		line := 2
+		if c.name == "Ns.php" {
+			line = 3
+		}
+		var res ApplyResult
+		modtest.Call(t, a, "generate.apply", ApplyParams{Path: c.name, Pos: api.Pos{Line: line, Col: 10}, Kind: KindConstructor}, &res)
+		b, _ := os.ReadFile(filepath.Join(root, c.name))
+		if string(b) != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.name, b, c.want)
+			continue
+		}
+		// The index sees the constructor inside the class.
+		err := modtest.WantCode(t, a, "generate.apply", ApplyParams{Path: c.name, Pos: api.Pos{Line: line, Col: 10}, Kind: KindConstructor}, api.CodeNotFound)
+		if !strings.Contains(err.Error(), "has a constructor") {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+	modtest.WantCode(t, a, "generate.apply", ApplyParams{Path: "En.php", Pos: api.Pos{Line: 2, Col: 8}, Kind: KindConstructor}, api.CodeNotFound)
+}
+
+func TestUpperFirstInvalidUTF8(t *testing.T) {
+	for in, want := range map[string]string{"": "", "x": "X", "äb": "Äb", "\xff": "\xff", "\xe4b": "\xe4b"} {
+		if got := upperFirst(in); got != want {
+			t.Errorf("upperFirst(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := getterName(Property{Name: "\xe4"}); got != "get\xe4" {
+		t.Errorf("getterName = %q", got)
+	}
+}

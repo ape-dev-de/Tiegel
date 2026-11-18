@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/index"
@@ -139,13 +140,38 @@ func insertion(cls classInfo, ctor bool, methods []string) (int, string) {
 			}
 			after = max(after, mem.Range.End.Offset)
 		}
+		// inline breaks the line at p (before the next code on it) when
+		// the end of p's line is no safe place: it lies behind the
+		// closing brace ("class A { private $x; }") or inside a member
+		// that starts on the same line.
+		inline := func(p int) (int, string, bool) {
+			eol := lineEnd(text, p)
+			unsafe := eol > closing
+			for _, mem := range cls.c.Members {
+				if s := mem.Range.Start.Offset; s >= p && s < eol {
+					unsafe = true
+				}
+			}
+			if !unsafe {
+				return 0, "", false
+			}
+			for p < closing && (text[p] == ' ' || text[p] == '\t') {
+				p++
+			}
+			return p, "\n" + body + "\n" + lineIndent(text, cls.c.Range.Start.Offset), true
+		}
 		if after > 0 {
+			if off, s, ok := inline(after); ok {
+				return off, s
+			}
 			// After the member's line; a blank line before the
 			// constructor, the following code keeps its own.
-			eol := lineEnd(text, after)
-			return eol, "\n\n" + body
+			return lineEnd(text, after), "\n\n" + body
 		}
 		if len(cls.c.Members) > 0 || strings.TrimSpace(string(text[bodyStart:closing])) != "" {
+			if off, s, ok := inline(bodyStart); ok {
+				return off, s
+			}
 			return lineEnd(text, bodyStart), "\n" + body + "\n"
 		}
 	}
@@ -183,11 +209,14 @@ func lineIndent(text []byte, off int) string {
 	return string(text[ls:i])
 }
 
+// upperFirst upper-cases the first rune of s. Invalid UTF-8 at the start
+// is left unchanged.
 func upperFirst(s string) string {
-	for i, r := range s {
-		return string(unicode.ToUpper(r)) + s[i+len(string(r)):]
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError {
+		return s
 	}
-	return s
+	return string(unicode.ToUpper(r)) + s[size:]
 }
 
 // getterName is isX for bool properties, getX otherwise.

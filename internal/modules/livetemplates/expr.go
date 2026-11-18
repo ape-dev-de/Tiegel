@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Expressions computes the initial value of a variable:
@@ -200,18 +201,24 @@ func phpDate(t time.Time, f string) string {
 	return b.String()
 }
 
+// upperFirst upper-cases the first rune of s. Invalid UTF-8 at the start
+// is left unchanged.
 func upperFirst(s string) string {
-	for i, r := range s {
-		return string(unicode.ToUpper(r)) + s[i+len(string(r)):]
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError {
+		return s
 	}
-	return s
+	return string(unicode.ToUpper(r)) + s[size:]
 }
 
+// lowerFirst lower-cases the first rune of s. Invalid UTF-8 at the start
+// is left unchanged.
 func lowerFirst(s string) string {
-	for i, r := range s {
-		return string(unicode.ToLower(r)) + s[i+len(string(r)):]
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError {
+		return s
 	}
-	return s
+	return string(unicode.ToLower(r)) + s[size:]
 }
 
 // words splits s at '_', '-', spaces and lower→upper case changes.

@@ -325,11 +325,22 @@ func (m *Module) compute(ctx context.Context, abs string, text []byte, p ExpandP
 	ls := lineStart(text, start)
 	indent := leadingSpace(text[ls:])
 	if selection != "" && strings.TrimSpace(string(text[ls:start])) == "" {
-		start = ls + len(indent)
-		if strings.HasSuffix(selection, "\n") {
-			end--
+		bs, be := ls+len(indent), end
+		switch {
+		case strings.HasSuffix(selection, "\r\n"):
+			be -= 2
+		case strings.HasSuffix(selection, "\n"):
+			be--
 		}
-		selection = dedent(string(text[start:end]), indent)
+		if be < bs {
+			// Only (part of) the indentation, maybe with the line
+			// break, is selected: nothing to surround, the template
+			// goes to the selection start and the whitespace stays.
+			end, selection = start, ""
+		} else {
+			start, end = bs, be
+			selection = dedent(string(text[start:end]), indent)
+		}
 	}
 	var t *TemplateInfo
 	for i := range all {

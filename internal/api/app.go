@@ -160,9 +160,7 @@ func New(opts Options) (*App, error) {
 	if _, err := watch.ParseBackend(opts.WatchBackend); err != nil {
 		return nil, fmt.Errorf("api: %w", err)
 	}
-	a.hooks = hooks.New(hooks.WithErrorHandler(func(e *hooks.HookError) {
-		log.Warn("hook failed", "hook", e.Hook, "owner", e.Owner, "err", e.Err)
-	}))
+	a.hooks = hooks.New(hooks.WithErrorHandler(a.logHookError))
 	global := opts.GlobalSettings
 	if global != nil {
 		a.detachGlobal = global.AttachBus(b)
@@ -276,6 +274,16 @@ func (a *App) Modules() *module.Registry { return a.modules }
 
 // Logger returns the App's logger.
 func (a *App) Logger() *slog.Logger { return a.log }
+
+// logHookError logs a failed hook; a panic is logged with its stack.
+func (a *App) logHookError(e *hooks.HookError) {
+	var pe *hooks.PanicError
+	if errors.As(e.Err, &pe) {
+		a.log.Error("hook panicked", "hook", e.Hook, "owner", e.Owner, "panic", pe.Value, "stack", string(pe.Stack))
+		return
+	}
+	a.log.Warn("hook failed", "hook", e.Hook, "owner", e.Owner, "err", e.Err)
+}
 
 // ConfigDir returns the base directory for settings and project data.
 func (a *App) ConfigDir() string { return a.opts.ConfigDir }
