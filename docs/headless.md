@@ -23,7 +23,7 @@ Flags dürfen vor oder nach dem Befehl stehen (`--name wert` oder `--name=wert`)
 | Flag | Bedeutung |
 |---|---|
 | `--json` | maschinenlesbare Ausgabe (eingerücktes JSON auf stdout) |
-| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `lsp-status`, `lsp-restart`, `lsp-doctor`, `lsp-select`, `install`, `run`, `run-configs`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`, `interp-*`, `docker`) nehmen ohne Angabe das Arbeitsverzeichnis. |
+| `--project DIR` | Projektverzeichnis. Projektbefehle (`info`, `files`, `interpreters`, `compose`, `lsp-servers`, `lsp-check`, `lsp-status`, `lsp-restart`, `lsp-doctor`, `lsp-select`, `install`, `qa`, `run`, `run-configs`, `history`, `git-*`, `php-*`, `runtime-diagnose`, `mappings`, `breakpoints`, `symbols`, `definition`, `implementations`, `super`, `hierarchy`, `gutter`, `index-status`, `interp-*`, `docker`) nehmen ohne Angabe das Arbeitsverzeichnis. |
 | `--config-dir DIR` | Einstellungsverzeichnis statt `<UserConfigDir>/Tiegel`; alternativ Umgebungsvariable `TIEGEL_CONFIG_DIR` (Tests, CI, portable Nutzung) |
 | `--help`, `-h` | Hilfe |
 | `--version` | Version (auch `tiegel --version` ohne `--headless`) |
@@ -83,6 +83,7 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `lsp-doctor` | warum ein Server läuft oder nicht: Auswahl und Herkunft (Projekt/global/Standard), welcher Server gestartet würde, Befund je Server (Pfad oder Fehler), durchsuchte Orte in Reihenfolge, Installationsvorschlag | `lsp.doctor` |
 | `lsp-select auto\|none\|ID [--global]` | wählt den Language Server fürs Projekt (bzw. global) und wendet die Wahl an; `none` schaltet ihn ab (Navigation über den Index) | `lsp.select` |
 | `install PLUGIN [--scope global\|project] [--dry-run] [--yes]` | installiert das Werkzeug eines Plugins über seinen Paketmanager (D194): zeigt Befehl, Ziel, ob `composer.json` sich ändert; ausgeführt wird nur mit `--yes` (Ausgabe gestreamt, Strg+C bricht ab); `--dry-run` zeigt nur den Plan; fehlt der Paketmanager oder gibt es nur einen Hinweis (PHPantom): Hinweis, Exit 1 | `install.plan`, `install.run`, `install.wait`, Event `install.output` |
+| `qa [list \| run [PFAD...] \| format DATEI... [--preview] \| diagnostics [PFAD] \| clear [PFAD]] [--tool PLUGIN]` | Qualitäts-Tool-Plugins (AP17.1): `list` zeigt Plugin-ID, Name, Art (format/inspect), Befehl und ob vorhanden (fehlt es: Hinweis `tiegel --headless install PLUGIN`); `run` prüft Pfade (ohne: das Projekt laut Tool-Konfiguration bzw. `<plugin>.paths`) mit allen vorhandenen Analyse-Plugins oder `--tool`, Ausgabe `pfad:zeile:spalte: schwere: meldung [code] (plugin)`, **Exit 1 bei Funden** oder Tool-Fehler; `format` formatiert mit dem ersten Formatter-Plugin für „Reformat Code“ (oder `--tool`) und schreibt die Datei (Local History), `--preview` zeigt nur das Ergebnis; `diagnostics`/`clear` lesen bzw. löschen gespeicherte Funde (nur in `serve` sinnvoll, ein Einzelaufruf hat keine) | `qa.list`, `qa.run`, `qa.format`, `qa.diagnostics`, `qa.clear` |
 | `run KONFIG` / `run --file DATEI [ARGS...]` / `run --cmd -- BEFEHL [ARGS...]` `[--interpreter project\|host\|ID] [--env K=V]... [--dir DIR]` | startet eine Run-Konfiguration (ID oder Name), eine PHP-Datei mit dem Projekt-Interpreter oder einen beliebigen Befehl (`--cmd`, Standard auf dem Host; `--interpreter project` im Interpreter, z.B. per `docker compose exec`). Vorher wird gespeichert (Guard `run.before`). Ausgabe gestreamt (stdout/stderr getrennt), **Exit-Code des Prozesses wird durchgereicht**, Strg+C stoppt den Prozessbaum (auch im Container) und endet mit 130. `--json`: `{run, output}` am Ende | `run.start`, `run.wait`, `run.output`, `run.stop`, Event `run.output` |
 | `run-configs [list \| types \| save JSON\|- \| delete ID \| select ID]` | Run-Konfigurationen des Projekts (`*` = ausgewählt, mit Befehlsvorschau oder Fehler); `types` zeigt die Typen (Kern: `php-script`, `command`, `composer-script`; dazu Plugin-Typen) mit Feldern und Vorschlägen (z.B. Composer-Skripte); `save` nimmt `{id?, name, type, values}` (auch von stdin mit `-`) | `run.configs.*`, `run.configTypes` |
 | `modules [enable ID \| disable ID]` | Module anzeigen/schalten | `modules.*` |
@@ -289,6 +290,7 @@ Von den Modulen veröffentlichte Topics:
 | git | `git.changed` (`{op, paths}` nach jeder Änderung über die API; `op` u.a. `fetch`, `pull`, `update`, `stash`, `stashApply`, `stashPop`, `stashDrop`), `git.committed` |
 | php-index | `index.progress` (`{phase: scanning\|indexing\|ready, done, total}`, höchstens alle 100 ms), `index.updated` (`{files, truncated, generation, reason: sync\|file\|doc\|cache}`) |
 | docker | `docker.contextChanged` (`{context, scope, previous}`), `docker.servicesChanged` (Stand wie `docker.services` plus `refresh: events\|poll`; nur während einer Beobachtung per `docker.watchStart`), `docker.log` (`{id, lines: [{container, text, stream}], done?, error?}`; gebündelt alle 100 ms) |
+| Kern (qa) | `qa.diagnostics` (`{path, file, source, diagnostics}` – aktuelle Funde eines Plugins für eine Datei, leere Liste = gelöscht), `qa.started`/`qa.finished` (`{tool, kind: format\|inspect, paths, trigger: manual\|save, count, error?, messages?, millis}`) |
 | debug-xdebug | `debug.listening`, `debug.stopped`, `debug.sessionStarted`, `debug.sessionEnded`, `debug.break` (gemappte Host-Datei/Zeile), `debug.breakpointHit`, `debug.breakpoints.changed`, `debug.status`, `debug.output`, `debug.notification`, `debug.breakpoint.resolved` |
 
 ## Module
@@ -301,6 +303,7 @@ Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`,
 | `php-features` | `php-runtime` | `php.check`, `php.diagnostics`, `php.setVersionOverride` | nutzt `php.resolveVersion` |
 | `lang-php` | (`php-runtime` optional) | `lsp.*` | nutzt `php.resolveVersion` und `lsp.servers`, stellt `nav.lsp` (Filter) bereit |
 | `lsp-phpactor`, `lsp-phpantom`, `lsp-intelephense` | – | – | stellen `lsp.servers` und `install.recipes` (Filter) bereit; `lsp-intelephense` ist proprietär und standardmäßig aus |
+| `qa-pint`, `qa-php-cs-fixer`, `qa-phpcs`, `qa-phpstan`, `qa-psalm`, `qa-phpmd` | – | – | stellen `qa.tools` und `install.recipes` (Filter) bereit; Formatter hängen sich an `file.beforeSave`, Analyse-Plugins folgen `file.saved` (beides per Einstellung); einzeln abschaltbar |
 | `git` | – | `git.*` | ruft Guard `commit.before` (Kern: Autosave) und Filter `commit.message` |
 | `syntax` | – | `syntax.*` | – (folgt `doc.edited`) |
 | `php-index` | – | `index.*`, `nav.*` | ruft Filter `nav.lsp` (Anbieter: lang-php) |
@@ -325,6 +328,7 @@ Einstellungen werden deklariert (D190, D210–D212): der Kern in `internal/core/
 | Plugin `debug-xdebug` | `debug-xdebug.port` (Projekt, Standard 9003) |
 | Plugin `php-features` | `php-features.background` (offene Dateien prüfen, Projekt) |
 | Plugin `syntax` | `syntax.maxFileKB` (größere Dateien als Klartext) |
+| Plugins `qa-*` | `<plugin>.path` (Standard `vendor/bin/<tool>`), `.config`, `.args`, `.useInterpreter` (Standard an), `.timeout` (Sekunden, 60); Formatter: `.reformat` (für „Reformat Code“, an), `.formatOnSave` (aus); `qa-phpcs` zusätzlich `.formatPath` (`vendor/bin/phpcbf`); Analyse: `.inspectOnSave` (aus), `.severity` (`auto`/error/warning/info/hint), `.paths` (alle Projekt) |
 | Plugin `php-index` | `php-index.libraries`, `php-index.includeIgnored`, `php-index.exclude` (Projekt) |
 
 ## Methoden
@@ -469,6 +473,15 @@ Workspace-Änderungen des Servers (Code Actions, Rename, `workspace/applyEdit`) 
 | `install.status` / `install.wait` / `install.cancel` | `runId` | `{runId, plugin, tool, state: running\|succeeded\|failed\|cancelled, display, exitCode, error, output, started, finished}` |
 
 Nach `install.done` sucht lang-php den Server neu und startet ihn ohne Neustart von Tiegel.
+
+**qa** (Kern, AP17.1, D350–D359) – Qualitäts-Tools sind Plugins (`qa-*`); sie liefern ihr Werkzeug über den Filter `qa.tools`, der Kern kennt nur Plugin-IDs. Ausgeführt wird über die Run-Infrastruktur im Projekt-Interpreter (lokal, Compose `exec`/`run`, Image, WSL) mit Pfad-Mapping; Funde werden auf Host-Dateien zurückgemappt.
+
+| Methode | Parameter | Ergebnis |
+|---|---|---|
+| `qa.list` | – | `[{plugin, name, formatter, analyzer, available, command?, where?, reason?, reformat?, formatOnSave?, inspectOnSave?, install}]` (`install`: Rezept vorhanden, `install.plan`) |
+| `qa.run` | `tool?` (Plugin-ID; ohne: alle vorhandenen Analyse-Plugins), `paths?` (Dateien/Verzeichnisse; ohne: Projekt), `trigger?` | `{tools: [{tool, count, error?, messages?, millis}], files: [{path, file, diagnostics: [{severity, message, source, code?, line, col, endLine?, endCol?, start, end}]}], count}`; ersetzt die gespeicherten Funde des Plugins im geprüften Bereich und veröffentlicht `qa.diagnostics`; Tool fehlt `-32005` (`data.reason: missing`, `plugin`), kein Analyse-Plugin `-32005` (`noAnalyzer`), Tool-Fehler `-32000` |
+| `qa.format` | `path`, `tool?` (ohne: erstes vorhandenes Formatter-Plugin mit `reformat`), `apply?` (Standard true), `version?` | `{tool, path, file, changed, edits, open, applied, version?, text?}`; offenes Dokument: **ein Undo-Schritt** aus minimalen Änderungen (Datei unverändert), geschlossene Datei: atomar mit Local History; kein Formatter `-32005` (`data.reason: noFormatter` – die GUI nimmt dann den Language Server), Versionskonflikt `-32004` |
+| `qa.diagnostics` / `qa.clear` | `tool?`, `path?` | gespeicherte Funde `[{tool, path, file, diagnostics}]` bzw. gelöschte Pfade; beim Schließen des Projekts und beim Abschalten eines Plugins werden dessen Funde gelöscht |
 
 **run** (Kern, AP15.1, D260–D269) – Prozesse auf dem Host oder im Interpreter des Projekts (lokal, Compose `exec`/`run`, Docker-Image, WSL) ausführen, Ausgabe streamen, stoppen, erneut ausführen
 

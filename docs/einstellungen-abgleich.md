@@ -118,7 +118,7 @@ Tiegel-Stand (M13 abgeschlossen): ein Katalog aller belegbaren Aktionen (`intern
 | Composer (Pfad, `composer.json` synchronisieren) | 🟡 PSR-4 gelesen | Kern | ~ | – |
 | Server + Pfad-Mappings (Debug) | ✅ Mappings | Kern | ✔ (`php.xml`/`deployment.xml`/`remote-mappings.xml`) | M16 |
 | **Test-Frameworks** (PHPUnit über Composer-Autoload oder `phpunit.phar`, `phpunit.xml`, Bootstrap, Paratest; Pest) | ❌ | Plugin `phpunit` (Pest als eigenes Plugin) | ✔ (`php.xml` `PhpUnit`, `phpunit.xml`) | M15 |
-| **Qualitäts-Tools**: Laravel Pint, PHP-CS-Fixer, PHPCS, PHPStan, Psalm, PHPMD (Pfad, Konfigdatei, Interpreter, Timeout, Schweregrad) | ❌ | **je ein Plugin** (`qa-pint`, `qa-phpstan`, …) | ✔ (`php.xml` je Komponente) | M17 |
+| **Qualitäts-Tools**: Laravel Pint, PHP-CS-Fixer, PHPCS, PHPStan, Psalm, PHPMD (Pfad, Konfigdatei, Interpreter, Timeout, Schweregrad) | ✅ je Plugin `<id>.path/config/args/useInterpreter/timeout/severity/…`, Format bei Speichern, Prüfen bei Speichern/auf Wunsch (AP17.1, D350–D359) | **je ein Plugin** (`qa-pint`, `qa-phpstan`, …) | ✔ (`php.xml` je Komponente) | M17 |
 | Sprachserver (Wahl, Pfad, Optionen, aus) | 🟡 Erkennung in `vendor/bin`, Composer-global, PATH; **ohne Treffer nur „No language server“**, nicht abschaltbar | je Server ein Plugin (`lsp-phpactor`, …) + Kern-Supervisor, nativ | – | M11 |
 | Frameworks (Laravel, Symfony, WordPress, Drupal) | ⛔ jetzt / Plugins später | Plugin | – | – |
 

@@ -220,6 +220,8 @@ type Controller struct {
 	Services *Services
 	// Run is the run tool window state (run.go).
 	Run *Runs
+	// QA is the state of the quality tool plugins (AP17.1).
+	QA QAState
 }
 
 // New returns a controller for be. Call Close when done.
@@ -238,7 +240,7 @@ func New(be Backend) *Controller {
 	c.Services = newServices(c)
 	c.Run = newRuns(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
-		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*"}, func(e api.Event) {
+		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*", "qa.*"}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
 	})
 	if err != nil {
@@ -564,6 +566,7 @@ func (c *Controller) projectOpened(info ProjectInfo) {
 	c.LoadDir("")
 	c.refreshGit()
 	c.refreshRuntime()
+	c.RefreshQA()
 	c.Vcs.reset()
 	c.Debug.reset()
 	c.Debug.refresh()
@@ -632,6 +635,10 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 		c.Run.handleEvent(topic, payload)
 		return
 	}
+	if strings.HasPrefix(topic, "qa.") {
+		c.handleQAEvent(topic, payload)
+		return
+	}
 	switch topic {
 	case "git.changed", "git.committed", api.TopicDocEdited:
 		c.Vcs.handleEvent(topic, payload)
@@ -648,6 +655,9 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 		}
 	case "lsp.state", "lsp.log", "install.output", "install.done":
 		c.handleLSPEvent(topic, payload)
+		if topic == "install.done" {
+			c.RefreshQA() // a freshly installed tool becomes available
+		}
 	case "php.versionChanged", "interpreter.changed":
 		c.refreshRuntime()
 	case "git.changed", "git.committed", "file.saved":
@@ -667,7 +677,9 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 		if keymapSettingChanged(payload) {
 			c.LoadKeymap()
 		}
+		c.RefreshQA()
 	case "modules.changed":
+		c.RefreshQA()
 		if c.Project.Open {
 			c.refreshGit()
 			c.refreshRuntime()

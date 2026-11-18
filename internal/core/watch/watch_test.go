@@ -392,6 +392,7 @@ func TestPruneRootsAndExcluded(t *testing.T) {
 		"var/cachex":                false,
 		"sub/.git":                  true,
 		"src/.a.php.tiegel-1234":    true,
+		"src/__tiegel_ab12_a.php":   true,
 		"src/.hidden":               false,
 		"src/node_modules_like.php": false,
 	} {
