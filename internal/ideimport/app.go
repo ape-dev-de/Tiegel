@@ -461,7 +461,9 @@ func (s *appScan) terminal() {
 				if len(words) > 1 {
 					it.Changes = append(it.Changes, Setting(terminal.KeyShellArgs, ScopeGlobal, words[1:]))
 				}
-				if _, err := os.Stat(words[0]); err != nil && filepath.IsAbs(words[0]) {
+				// A path (not a bare name looked up in PATH) must exist
+				// here; "/bin/zsh" is no absolute path on Windows.
+				if _, err := os.Stat(words[0]); err != nil && strings.ContainsAny(words[0], `/\`) {
 					it.Status, it.Detail = StatusSkipped, words[0]+" does not exist here"
 					it.Changes = nil
 				}
