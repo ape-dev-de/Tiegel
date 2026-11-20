@@ -19,7 +19,8 @@
 //     template), runtime (InterpreterPicker, PathMappingEditor,
 //     XdebugHintsList, StatusbarVersion), filetree, tabs, statusbar,
 //     findbar, completion (completion list, info popup), problems,
-//     palette (choosers), settings (dialog), welcome.
+//     palette (choosers), settings (dialog), welcome, toolbar (header
+//     toolbar with project, branch and run popups).
 //   - templates: window layouts; Workbench is the main window (sidebar,
 //     tabs, editor, tool window area, right panel, status bar, overlay).
 //   - editorview: the code editor widget (virtual rendering, gutter,

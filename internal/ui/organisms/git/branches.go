@@ -309,10 +309,7 @@ func (b *BranchList) layoutRow(gtx layout.Context, th *tokens.Theme, i int) layo
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	row.Selected = i == b.selected
-	glyph, gcol := atoms.GlyphBranch, th.Color.TextMuted
-	if br.Remote {
-		glyph = atoms.GlyphCloud
-	}
+	glyph, gcol := BranchGlyph(*br), th.Color.TextMuted
 	if br.Current {
 		gcol = th.Color.Accent
 	}
@@ -335,17 +332,8 @@ func (b *BranchList) layoutRow(gtx layout.Context, th *tokens.Theme, i int) layo
 				return layout.Inset{Left: th.Space.XS}.Layout(gtx, bd.Fn(th))
 			})
 		}
-		if br.Current {
-			children = append(children, badge(atoms.Badge{Text: "current", Kind: atoms.BadgeAccent}))
-		}
-		if br.Ahead > 0 {
-			children = append(children, badge(atoms.Badge{Text: fmt.Sprintf("↑%d", br.Ahead), Kind: atoms.BadgeSuccess}))
-		}
-		if br.Behind > 0 {
-			children = append(children, badge(atoms.Badge{Text: fmt.Sprintf("↓%d", br.Behind), Kind: atoms.BadgeWarning}))
-		}
-		if br.UpstreamGone {
-			children = append(children, badge(atoms.Badge{Text: "gone", Kind: atoms.BadgeDanger}))
+		for _, bd := range BranchBadges(*br) {
+			children = append(children, badge(bd))
 		}
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
 	})

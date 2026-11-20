@@ -131,6 +131,10 @@ type Action struct {
 	// Visible reports whether the action appears in menus at all; nil
 	// means always. Find Action lists only visible actions.
 	Visible func(Context) bool
+	// Badge returns a short status text for the action's header toolbar
+	// button (e.g. a count, or "•" for "needs attention"); nil or "" means
+	// none. Menus ignore it.
+	Badge func(Context) string
 }
 
 func (a *Action) enabled(c Context) bool { return a.Enabled == nil || a.Enabled(c) }
