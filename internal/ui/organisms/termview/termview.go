@@ -153,6 +153,11 @@ type View struct {
 	}
 	hover   *terminal.Link
 	hoverAt Pos
+	// dropped is Screen.Dropped when the absolute positions (top,
+	// selection, hover) were last adjusted; droppedSet tells that it
+	// was taken from a snapshot.
+	dropped    int
+	droppedSet bool
 	// shortcut tells that the link modifier (Cmd, Ctrl) is held.
 	shortcut bool
 	// ctrlDown and altDown track the held modifiers: on macOS the text
@@ -272,6 +277,7 @@ func (v *View) Update(gtx layout.Context) []Event {
 			gtx.Execute(key.FocusCmd{})
 		}
 	}
+	v.syncDropped()
 	v.processKeys(gtx)
 	v.processPointer(gtx)
 	out := v.events
@@ -506,6 +512,47 @@ func (v *View) copySelection() {
 	}
 	from, to := v.Selection()
 	v.emit(CopyEvent{From: from, To: to})
+}
+
+// syncDropped moves the absolute positions of the view up by the lines
+// the scrollback discarded since the last snapshot, so that the
+// scrolled view and the selection stay on their text. A selection that
+// fell off entirely is removed; one partly gone starts at the oldest
+// line.
+func (v *View) syncDropped() {
+	if v.Screen == nil {
+		return
+	}
+	d := v.Screen.Dropped - v.dropped
+	if !v.droppedSet || d < 0 {
+		// First snapshot, or a different session.
+		v.dropped, v.droppedSet = v.Screen.Dropped, true
+		return
+	}
+	if d == 0 {
+		return
+	}
+	v.dropped = v.Screen.Dropped
+	up := func(p *Pos) { p.Line -= d }
+	v.top = max(0, v.top-d)
+	up(&v.sel.anchor)
+	up(&v.sel.head)
+	up(&v.sel.pressAt)
+	up(&v.sel.lastPos)
+	up(&v.hoverAt)
+	v.hover = nil
+	from, to := v.Selection()
+	switch {
+	case to.Line < 0:
+		v.sel.active, v.sel.dragging = false, false
+		v.sel.anchor, v.sel.head = Pos{}, Pos{}
+	case from.Line < 0:
+		if v.sel.anchor == from {
+			v.sel.anchor = Pos{}
+		} else {
+			v.sel.head = Pos{}
+		}
+	}
 }
 
 func (v *View) scrollLines(n int) {

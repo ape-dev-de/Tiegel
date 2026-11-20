@@ -257,7 +257,13 @@ func (v *View) processPointer(gtx layout.Context) {
 			if v.reporting(e.Modifiers) && v.Screen.Modes.Mouse == vt.MouseModeAny {
 				v.report(vt.MouseMove, vt.MouseNone, e.Position, e.Modifiers)
 			}
-		case pointer.Leave, pointer.Cancel:
+		case pointer.Leave:
+			// Gio also sends Leave to the handler that holds a pressed
+			// button: a drag beyond the view goes on (edge scrolling,
+			// the release still reaches a program); it ends on Release
+			// or Cancel.
+			v.hover = nil
+		case pointer.Cancel:
 			v.hover = nil
 			v.sel.dragging = false
 			v.mouseBtn = vt.MouseNone
@@ -302,7 +308,13 @@ func (v *View) processPointer(gtx layout.Context) {
 func (v *View) press(e pointer.Event) {
 	p := v.cellAt(e.Position, false)
 	inCell := v.cellAt(e.Position, true)
-	v.sel.pressLink = v.linkAt(inCell)
+	v.sel.pressLink = nil
+	if l := v.linkAt(inCell); l != nil {
+		// A copy: the snapshot (and its links) changes while the
+		// button is held.
+		c := *l
+		v.sel.pressLink = &c
+	}
 	v.sel.dragging = true
 	if e.Modifiers.Contain(key.ModShift) && v.sel.active {
 		v.extend(p)
@@ -335,7 +347,9 @@ func (v *View) release(e pointer.Event) {
 	if v.sel.unit == selChar && p == v.sel.pressAt {
 		v.sel.active = false
 		l := v.sel.pressLink
-		if l != nil && l == v.linkAt(v.cellAt(e.Position, true)) {
+		// The same link by value: the snapshot may have been replaced
+		// since the press.
+		if r := v.linkAt(v.cellAt(e.Position, true)); l != nil && r != nil && *l == *r {
 			switch {
 			case l.URL != "" && v.linkMod(e.Modifiers):
 				v.emit(OpenURLEvent{URL: l.URL})

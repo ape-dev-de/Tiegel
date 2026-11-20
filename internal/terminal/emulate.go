@@ -31,6 +31,21 @@ type EmulateResult struct {
 	Clipboard []string `json:"clipboard,omitempty"`
 	OSC       []string `json:"osc,omitempty"`
 	Cwd       string   `json:"cwd,omitempty"`
+	// Omitted is the number of selected lines left out of Screen.Lines
+	// (at most MaxScreenLines, the last ones); Text holds all of them.
+	Omitted int `json:"omitted,omitempty"`
+}
+
+// maxEmulateCells bounds scrollback lines × columns of an emulator run,
+// so a large scrollback at a large width cannot exhaust the memory.
+const maxEmulateCells = 4 << 20
+
+// emulateScrollback caps the scrollback n for widths up to cols.
+func emulateScrollback(n, cols int) int {
+	if n < 0 {
+		n = vt.DefaultScrollback
+	}
+	return min(n, maxEmulateCells/max(1, cols))
 }
 
 // Emulate feeds program output into a fresh terminal and returns the
@@ -43,7 +58,8 @@ func Emulate(data []byte, o EmulateOptions) EmulateResult {
 	if o.Rows <= 0 {
 		o.Rows = DefaultRows
 	}
-	t := vt.New(min(o.Cols, 1000), min(o.Rows, 500), o.Scrollback)
+	o.Cols, o.Rows = min(o.Cols, 1000), min(o.Rows, 500)
+	t := vt.New(o.Cols, o.Rows, emulateScrollback(o.Scrollback, max(o.Cols, min(o.ResizeCols, 1000))))
 	var res EmulateResult
 	var replies []byte
 	t.Reply = func(b []byte) { replies = append(replies, b...) }
@@ -67,14 +83,32 @@ func Emulate(data []byte, o EmulateOptions) EmulateResult {
 		}
 		t.Resize(cols, rows)
 	}
-	sc, colMaps := snapshot(t, o.Screen)
+	// The selected range; Screen.Lines holds at most its last
+	// MaxScreenLines lines, Text all of it.
+	cols, rows := t.Size()
+	top, count := o.Screen.Top, o.Screen.Count
+	if top < 0 {
+		top = t.History()
+	}
+	if count <= 0 {
+		count = rows
+	}
+	top = max(0, min(top, t.Total()))
+	count = max(0, min(count, t.Total()-top))
+	so := o.Screen
+	so.Top, so.Count = top, count
+	if count > MaxScreenLines {
+		res.Omitted = count - MaxScreenLines
+		so.Top, so.Count = top+res.Omitted, MaxScreenLines
+	}
+	sc, colMaps := snapshot(t, so)
 	sc.Running = true
 	addLinks(&sc, colMaps, o.Screen.URLs, o.Screen.Linker)
 	res.Screen = sc
 	res.Replies = string(replies)
 	res.Cwd = t.Dir()
-	if n := len(sc.Lines); n > 0 {
-		res.Text = trimTrailingLines(t.Text(sc.Top, 0, sc.Top+n-1, sc.Cols))
+	if count > 0 {
+		res.Text = trimTrailingLines(t.Text(top, 0, top+count-1, cols))
 	}
 	return res
 }
