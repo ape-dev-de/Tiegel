@@ -166,6 +166,16 @@ Heute: findet `lsp/servers` nichts, zeigt die Statusleiste „No language server
 - AP17.3 Live Templates/Snippets (Plugin), Datei-Vorlagen, Generate (Cmd+N: Konstruktor, Getter/Setter über LSP-Code-Actions bzw. Tree-sitter), Surround With, Extract Variable/Method über LSP-Code-Actions, Inlay Hints, Include-Pfade.
 - **Abnahme:** Kern-Code enthält keinen Werkzeugnamen; jedes Plugin einzeln abschaltbar; Pint-Format bei Speichern im Compose-Dienst getestet (Skip ohne docker).
 
+## M18 – Shell-Überarbeitung: Gefühl, Ikonografie, Fenster-Management (Nutzer-Feedback 2026-11-20)
+Ziel: dasselbe aufgeräumte, dichte Arbeitsgefühl wie die Referenz-IDE – eigene Gestaltung, keine fremden Icons (Clean-Room).
+- AP18.1 **Eigenes Icon-Set:** Dateisymbole je Sprache/Dateityp (PHP, TS, JS, JSON, YAML, Markdown, Docker, Shell, XML, SQL, .env, .gitignore, .editorconfig, composer/package-Dateien …) mit Varianten für Tests (`*.spec.ts`, `*Test.php`), Ordnersymbole (Quellen, Tests, Ressourcen, ausgeschlossen, Bibliothek), einheitliche Tool-Fenster-Symbole. Mehrfarbig, pixelgenau bei 16 dp, keine Umbrüche.
+- AP18.2 **Workbench & Tokens:** linke/rechte Leiste nur mit Symbolen (Tooltip), obere und untere Gruppe (Run, Debug, Terminal, Problems, Git unten links); keine untere Leiste mehr – **ein** lesbarer Footer (Breadcrumb links, Status rechts). Abstände/Trefferflächen überarbeitet, Kopfzeilen der Panels sauberer. Fenster-Management: zwei Tool-Fenster je Seite geteilt (oben/unten), Panel maximieren, Größen je Projekt.
+- AP18.3 **Kopfzeile (Toolbar):** Projekt-Wechsler, daneben Branch-Popup inline (Suche, lokal/remote, neu, Checkout), dann Run-Konfiguration + Run/Debug/Stop, Xdebug-Lauschen, Plugin-Schnellknöpfe (Beitragspunkt für Plugins), Suche, Einstellungen.
+- AP18.4 **VCS:** Commit-Tool-Fenster links (Commit/Stash, Werkzeugleiste, Änderungsbaum mit Häkchen und Dateisymbolen, Amend, Nachricht, „Commit“ / „Commit and Push“); Diff öffnet als Editor-Tab im Hauptfenster und wird fokussiert.
+- AP18.5 **Mehrere Projekte je Fenster + Ruhezustand:** Projekte im Hintergrund behalten ihren Zustand; „Ruhezustand“ beendet Sprachserver, Watcher, Indexer und gibt Speicher frei, Wiederaufnahme stellt Tabs/Layout wieder her. Headless: `tiegel --headless projects list|open|switch|hibernate|resume`.
+- AP18.6 **Coding-Agenten als Plugins:** Kopfzeilen-Knopf je Agent (z. B. Claude Code, opencode), Start im eingebetteten Terminal im Projekt; tiefere Anbindung (Ausgabe-Parser, Harness) nach Rückfrage.
+- **Abnahme:** Screenshot-Vergleich vorher/nachher im Review; alle Symbole eigene Zeichnungen; keine Textumbrüche in Knöpfen bei 100 %/125 %/150 %; Diff-Tab per Headless-Befehl prüfbar.
+
 ---
 
 ## Ausführungsplan (Wellen)
@@ -181,3 +191,4 @@ Heute: findet `lsp/servers` nichts, zeigt die Statusleiste „No language server
 | 6 | M12.2–12.3 · M13.3 · M14.2–14.3 · M15.1 (Run-Infrastruktur) | ja |
 | 7 | M15.2–15.5 (PHPUnit, Gutter-Play, Terminal) · M17.1 (QA-Plugins, nach M15.1) | ja |
 | 8 | M16 (Import – bildet auf M12–M15 ab) · M17.2–17.3 | ja |
+| 9 | M18.1–18.5 (Icons · Workbench/Tokens/Footer · Toolbar-Organismus · VCS-Organismen · Projekt-Sitzungen + Ruhezustand im Backend), danach GUI-Integration | ja, disjunkte Pakete |

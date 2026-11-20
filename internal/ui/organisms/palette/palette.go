@@ -129,9 +129,7 @@ func (c *Chooser) Query() string { return c.field.Text() }
 // Update returns the user's intentions.
 func (c *Chooser) Update(gtx layout.Context) []Event {
 	c.field.Editor.SingleLine, c.field.Editor.Submit = true, true
-	for len(c.rows) < len(c.Items) {
-		c.rows = append(c.rows, molecules.ListRow{})
-	}
+	c.ensureRows()
 	var out []Event
 	// The navigation keys are taken before the text field sees them (a
 	// single-line editor would move its caret on Up/Down).
@@ -196,6 +194,14 @@ func (c *Chooser) Update(gtx layout.Context) []Event {
 	return out
 }
 
+// ensureRows grows the row widgets to match Items. Callers may replace
+// Items between Update and Layout (e.g. on a QueryEvent), so both call it.
+func (c *Chooser) ensureRows() {
+	for len(c.rows) < len(c.Items) {
+		c.rows = append(c.rows, molecules.ListRow{})
+	}
+}
+
 func (c *Chooser) choose() ChooseEvent {
 	if len(c.Items) == 0 || c.NoList {
 		return ChooseEvent{Index: -1, Query: c.field.Text()}
@@ -257,6 +263,7 @@ func (c *Chooser) layoutList(th *tokens.Theme) layout.Widget {
 			}
 			return atoms.Muted(msg).Layout(gtx, th)
 		}
+		c.ensureRows()
 		rowH := gtx.Dp(th.Size.RowH)
 		h := min(len(c.Items), maxRows) * rowH
 		gtx.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X, h))

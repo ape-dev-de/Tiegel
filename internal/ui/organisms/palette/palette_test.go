@@ -65,3 +65,11 @@ func TestChooser(t *testing.T) {
 	c.NoList, c.Items, c.Message = false, nil, "Indexing…"
 	uitest.Smoke(t, "message", image.Pt(800, 600), c.Layout)
 }
+
+// Items set after Update (e.g. by a QueryEvent handler) must not crash Layout.
+func TestChooserItemsSetBeforeLayout(t *testing.T) {
+	c := &Chooser{}
+	c.Open("Go to File", "File name", "")
+	c.Items = []Item{{Label: "A.php"}, {Label: "B.php"}}
+	uitest.Smoke(t, "items-before-layout", image.Pt(800, 600), c.Layout)
+}
