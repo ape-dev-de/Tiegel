@@ -128,6 +128,17 @@ type DiffTab struct {
 	closed bool
 	// seq numbers the loads; only the latest is applied.
 	seq uint64
+	// Nav is set for the changes diff tab of the commit window, which
+	// steps through the changed files in place (OpenChangeDiff).
+	Nav *DiffNav
+}
+
+// mapKey is the key of the tab in Workspace.diffs and its virtual tab id.
+func (d *DiffTab) mapKey() string {
+	if d.Nav != nil {
+		return changesDiffKey
+	}
+	return d.Spec.key()
 }
 
 // Editable reports whether the right side is the shared work tree
@@ -189,6 +200,7 @@ func (w *Workspace) loadDiff(dt *DiffTab) {
 	doc := c.documentFor(dt.File)
 	needDoc := spec.Texts == nil && (spec.External || spec.target() == VersionWorking)
 	own := dt.ownGen
+	file := dt.File
 	c.Go(func(ctx context.Context) func() {
 		var err error
 		gen := own
@@ -196,12 +208,12 @@ func (w *Workspace) loadDiff(dt *DiffTab) {
 			var st struct {
 				Generation uint64 `json:"generation"`
 			}
-			if e := c.call(ctx, "doc.open", map[string]any{"path": dt.File}, &st); e == nil {
+			if e := c.call(ctx, "doc.open", map[string]any{"path": file}, &st); e == nil {
 				gen = st.Generation
-				doc, _ = c.be.Document(dt.File)
+				doc, _ = c.be.Document(file)
 			}
 		} else if needDoc && doc == nil {
-			doc, _ = c.be.Document(dt.File)
+			doc, _ = c.be.Document(file)
 		}
 		var raw json.RawMessage
 		var disk string
@@ -213,10 +225,10 @@ func (w *Workspace) loadDiff(dt *DiffTab) {
 			var rd struct {
 				Content string `json:"content"`
 			}
-			err = c.call(ctx, "files.read", map[string]any{"path": dt.File}, &rd)
+			err = c.call(ctx, "files.read", map[string]any{"path": file}, &rd)
 			disk = rd.Content
 		} else {
-			params := map[string]any{"path": dt.File, "base": spec.Base, "target": spec.target()}
+			params := map[string]any{"path": file, "base": spec.Base, "target": spec.target()}
 			if spec.BasePath != "" {
 				params["basePath"] = spec.BasePath
 			}
@@ -226,9 +238,11 @@ func (w *Workspace) loadDiff(dt *DiffTab) {
 			err = c.call(ctx, "git.fileDiff", params, &raw)
 		}
 		return func() {
-			if dt.closed {
+			// A closed tab, or a changes tab that moved on to another file,
+			// drops the result and a document opened for it.
+			if dt.closed || dt.File != file {
 				if gen != 0 && gen != own {
-					w.closeOwnDoc(dt.File, gen)
+					w.closeOwnDoc(file, gen)
 				}
 				return
 			}
@@ -258,7 +272,7 @@ func (w *Workspace) loadDiff(dt *DiffTab) {
 // opened itself is saved and closed unless an editor tab uses it.
 func (w *Workspace) CloseDiff(dt *DiffTab) {
 	dt.closed = true
-	delete(w.diffs, dt.Spec.key())
+	delete(w.diffs, dt.mapKey())
 	if dt.ownGen != 0 && w.c.documentFor(dt.File) == nil {
 		w.closeOwnDoc(dt.File, dt.ownGen)
 	}

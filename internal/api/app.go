@@ -212,6 +212,7 @@ func New(opts Options) (*App, error) {
 	a.registerRun()
 	a.registerQA()
 	a.registerDiff()
+	a.registerVcs()
 	a.registerTerminal()
 	a.registerIDEImport()
 	for _, ext := range opts.Extensions {

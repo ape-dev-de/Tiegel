@@ -8,11 +8,11 @@ import (
 )
 
 func init() {
-	for name, takes := range map[string]bool{"m": true, "message": true, "amend": false, "push": false, "staged": false, "base": true, "remote": true} {
+	for name, takes := range map[string]bool{"m": true, "message": true, "amend": false, "push": false, "staged": false, "base": true, "remote": true, "signoff": false, "no-verify": false} {
 		flagSpec[name] = takes
 	}
 	register(
-		&command{name: "git-commit", usage: "git-commit -m MESSAGE [--amend] [--push] [FILE...]", summary: "commit FILEs (or the index) after saving documents; --push pushes afterwards", maxArgs: -1, cwdProject: true, run: runGitCommit},
+		&command{name: "git-commit", usage: "git-commit -m MESSAGE [--amend] [--push] [--signoff] [--no-verify] [FILE...]", summary: "commit FILEs (or the index) after saving documents; --push pushes afterwards", maxArgs: -1, cwdProject: true, run: runGitCommit},
 		&command{name: "git-diff", usage: "git-diff [FILE...] [--staged] [--base REV]", summary: "unified diff of the work tree (or index/revision)", maxArgs: -1, cwdProject: true, run: runGitDiff},
 		&command{name: "git-push", usage: "git-push [--remote R]", summary: "push the current branch (network access)", maxArgs: 0, cwdProject: true, run: runGitPush},
 	)
@@ -28,13 +28,14 @@ func runGitCommit(c *cli) error {
 	}
 	var res gitmod.CommitSelectionResult
 	if len(c.p.args) > 0 || c.p.has("amend") {
-		params := gitmod.CommitSelectionParams{Message: msg, Paths: c.p.args, Amend: c.p.has("amend"), Push: c.p.has("push")}
+		params := gitmod.CommitSelectionParams{Message: msg, Paths: c.p.args, Amend: c.p.has("amend"), Push: c.p.has("push"),
+			SignOff: c.p.has("signoff"), NoVerify: c.p.has("no-verify")}
 		if err := c.call("git.commitSelection", params, &res); err != nil {
 			return err
 		}
 	} else {
 		var cr gitmod.GitCommitResult
-		if err := c.call("git.commit", gitmod.GitCommitParams{Message: msg}, &cr); err != nil {
+		if err := c.call("git.commit", gitmod.GitCommitParams{Message: msg, SignOff: c.p.has("signoff"), NoVerify: c.p.has("no-verify")}, &cr); err != nil {
 			return err
 		}
 		res.Hash, res.Message = cr.Hash, msg

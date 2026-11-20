@@ -29,9 +29,11 @@ const (
 
 // Toolbar item IDs.
 const (
-	itemPrev = "prev"
-	itemNext = "next"
-	itemOpen = "open"
+	itemPrev     = "prev"
+	itemNext     = "next"
+	itemOpen     = "open"
+	itemPrevFile = "prevFile"
+	itemNextFile = "nextFile"
 )
 
 // HighlighterFunc creates the syntax highlighter of one side; path selects
@@ -53,9 +55,14 @@ type HighlighterFunc func(b *buffer.Buffer, path string) highlight.Highlighter
 // blocks itself. Each block then has a "»" arrow in the strip that asks to
 // revert it (RevertRequested; ApplyRevert performs it).
 //
-// Data in: SetContent, SetBlocks. Events out: RevertRequested,
+// With SetFileNav the window is part of a change set (the changes diff
+// tab of the commit window): the toolbar gains previous/next file buttons
+// and the position ("2 / 7"); they report FileNavRequested and the host
+// replaces the content.
+//
+// Data in: SetContent, SetBlocks, SetFileNav. Events out: RevertRequested,
 // IgnoreWhitespaceChanged, ViewModeChanged, RightEdited,
-// OpenFileRequested.
+// OpenFileRequested, FileNavRequested.
 type DiffWindow struct {
 	// NewHighlighter creates the highlighters of both sides (nil: plain
 	// text), e.g. tshighlight.New.
@@ -81,6 +88,8 @@ type DiffWindow struct {
 
 	tools   molecules.Toolbar
 	openBar molecules.Toolbar
+	fileBar molecules.Toolbar
+	nav     FileNav
 	sbsBtn  atoms.Button
 	uniBtn  atoms.Button
 	ws      atoms.Checkbox
@@ -97,6 +106,10 @@ func NewDiffWindow() *DiffWindow {
 		{ID: itemNext, Glyph: atoms.GlyphChevronDown, Label: "Next difference", Shortcut: "F7"},
 	}
 	w.openBar.Items = []molecules.ToolbarItem{{ID: itemOpen, Glyph: atoms.GlyphEdit, Label: "Open in editor"}}
+	w.fileBar.Items = []molecules.ToolbarItem{
+		{ID: itemPrevFile, Glyph: atoms.GlyphArrowLeft, Label: "Previous file"},
+		{ID: itemNextFile, Glyph: atoms.GlyphArrowRight, Label: "Next file"},
+	}
 	w.sbsBtn = atoms.Button{Text: "Side-by-side", Kind: atoms.Secondary}
 	w.uniBtn = atoms.Button{Text: "Unified", Kind: atoms.Ghost}
 	w.ws = atoms.Checkbox{Label: "Ignore whitespace"}
@@ -192,6 +205,34 @@ func (w *DiffWindow) setBlocks(bs []Block) {
 	w.closeSide(&w.uni, &w.uniHL)
 	w.model = nil
 	w.dirty = false
+}
+
+// FileNav is the position of the shown file in a change set.
+type FileNav struct {
+	// Index is 0-based (-1: the file is not part of the set any more);
+	// Total is the number of files.
+	Index, Total int
+	// Prev and Next name the neighbours (tooltips).
+	Prev, Next string
+}
+
+// SetFileNav enables the previous/next file buttons (Total > 0) or hides
+// them (zero FileNav).
+func (w *DiffWindow) SetFileNav(n FileNav) {
+	w.nav = n
+	single := n.Total < 2 && n.Index >= 0
+	w.fileBar.Items[0].Disabled, w.fileBar.Items[1].Disabled = single, single
+	w.fileBar.Items[0].Label, w.fileBar.Items[1].Label = navLabel("Previous file", n.Prev), navLabel("Next file", n.Next)
+}
+
+// FileNav returns the file navigation.
+func (w *DiffWindow) FileNav() FileNav { return w.nav }
+
+func (n FileNav) text() string {
+	if n.Index < 0 {
+		return fmt.Sprintf("– / %d", n.Total)
+	}
+	return fmt.Sprintf("%d / %d", n.Index+1, n.Total)
 }
 
 // Content returns the shown content (the blocks as currently computed).
@@ -326,6 +367,17 @@ func (w *DiffWindow) update(gtx layout.Context) {
 			w.Next()
 		}
 	}
+	for _, id := range w.fileBar.Update(gtx) {
+		if w.nav.Total == 0 {
+			continue
+		}
+		switch id {
+		case itemPrevFile:
+			w.emit(gtx, FileNavRequested{Delta: -1})
+		case itemNextFile:
+			w.emit(gtx, FileNavRequested{Delta: 1})
+		}
+	}
 	for _, id := range w.openBar.Update(gtx) {
 		if id == itemOpen {
 			w.emit(gtx, OpenFileRequested{Path: w.content.Right.Path, Line: w.openLine()})
@@ -448,7 +500,20 @@ func (w *DiffWindow) layoutToolbar(gtx layout.Context, th *tokens.Theme) layout.
 	return atoms.Surface{Kind: atoms.SurfaceAlt}.Fill(gtx, th, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		gap := func() layout.FlexChild { return layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout) }
-		children := []layout.FlexChild{
+		var children []layout.FlexChild
+		if w.nav.Total > 0 {
+			children = append(children,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return w.fileBar.Layout(gtx, th) }),
+				layout.Rigid(atoms.Small(w.nav.text()).SingleLine().Fn(th)),
+				gap(),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Max.Y = gtx.Dp(th.Size.IconSmall)
+					return atoms.Divider{Vertical: true}.Layout(gtx, th)
+				}),
+				gap(),
+			)
+		}
+		children = append(children,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions { return w.tools.Layout(gtx, th) }),
 			gap(),
 			layout.Rigid(atoms.Muted(w.counterText()).SingleLine().Fn(th)),
@@ -457,7 +522,7 @@ func (w *DiffWindow) layoutToolbar(gtx layout.Context, th *tokens.Theme) layout.
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions { return w.uniBtn.Layout(gtx, th) }),
 			gap(),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions { return w.ws.Layout(gtx, th) }),
-		}
+		)
 		if w.editable {
 			children = append(children, gap(),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return w.openBar.Layout(gtx, th) }))
@@ -467,6 +532,13 @@ func (w *DiffWindow) layoutToolbar(gtx layout.Context, th *tokens.Theme) layout.
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
 			})
 	})
+}
+
+func navLabel(what, name string) string {
+	if name == "" {
+		return what
+	}
+	return what + ": " + name
 }
 
 // sideHeader is the title above an editor column.

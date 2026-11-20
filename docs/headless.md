@@ -134,6 +134,8 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `git-history DATEI [--skip N] [--max N] [--rev R] [--no-follow]` | Commits, die DATEI geändert haben (folgt Umbenennungen): `hash datum autor status pfad betreff` | `git.fileHistory` |
 | `git-blame DATEI [--rev R] [--ignore-whitespace]` | jede Zeile mit Commit, Autor, Datum (`00000000 (Not committed …)` für ungespeicherte/uncommittete Zeilen) | `git.blame` |
 | `git-compare BASIS [ZIEL]` | geänderte Dateien zwischen zwei Revisionen (ohne ZIEL: Arbeitsbaum) als `status pfad` | `git.compareRevisions` |
+| `git-changes [--group-by directory\|module\|none]` | Änderungsbaum des Commit-Fensters: „Changes“ (mit Branch) und „Unversioned Files“ mit Dateizahlen je Gruppe/Verzeichnis, Dateien als `zustand pfad`; `--json` mit Baum und Reihenfolge | `vcs.changes` |
+| `git-diff-tab DATEI [--mode local\|staged\|unstaged] [--next \| --prev] [--group-by G] [--ignore-whitespace]` | der Diff-Tab einer Änderung: Titel, Position `[i/n]`, vorherige/nächste Datei und die Änderungsblöcke; `--next`/`--prev` blättern wie die Tab-Navigation | `vcs.diffTab` |
 | `runtime-diagnose [INTERPRETER-ID]` | Xdebug-Einrichtung des (gewählten) Interpreters: INI-Werte `xdebug.mode/client_host/client_port`, Exec-Modus, Pfad-Mappings, Hinweise; Exit 1 bei Warnungen | `runtime.diagnose` |
 | `mappings [set HOST=REMOTE... \| reset] [--exec-mode auto\|exec\|run]` | Pfad-Mappings anzeigen oder dauerhaft korrigieren (`reset`: wieder aus Compose); Exec-Modus für Compose-Interpreter | `runtime.mappings.*`, `runtime.execMode` |
 | `php-override [VERSION \| clear]` | dauerhaften PHP-Versions-Override setzen/entfernen, danach Version und Quelle | `php.setVersionOverride`, `php.version` |
@@ -571,6 +573,10 @@ Die `$File…$`-Makros brauchen eine aktuelle Datei; ohne sie scheitert der Star
 | `composer.run` | `{script, args?, interpreter?}` | Lauf wie `run.start` (Typ `composer-script`, Name `composer <script>`); Skriptnamen mit `-` am Anfang oder Leerraum `-32602` |
 
 **diff.texts** (Kern, D313) – `{left, right, leftLabel?, rightLabel?, ignoreWhitespace?}` → Änderungsblöcke im Format von `git.fileDiff` (`{left, right, blocks, identical}`); damit zeigt das Diff-Fenster expected/actual eines Tests.
+
+**vcs.changes** (Kern, D464) – `{groupBy?}` → `{branch, tree: {grouping, changes, unversioned}, order}`; Knoten `{kind: group|dir|file, name, path, count, badge?, state?, origPath?, dir?, children}`.
+
+**vcs.diffTab** (Kern, D464) – `{path, mode?: local|staged|unstaged, step?: ±1, groupBy?, ignoreWhitespace?}` → `{path, mode, state, base, target, basePath?, title, index, total, prev, next, diff}` (`diff` = Ergebnis von `git.fileDiff`).
 
 **test** (Plugin `phpunit`, AP15.2–15.4, D310–D318) – Tests finden, ausführen und Ergebnisse lesen; der Kern kennt kein Test-Framework, die Typen stehen in `internal/api/testcontract.go`.
 

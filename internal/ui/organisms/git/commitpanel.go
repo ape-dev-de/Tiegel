@@ -1,8 +1,7 @@
 package git
 
 import (
-	"fmt"
-	"path"
+	"image"
 	"runtime"
 	"strings"
 
@@ -19,46 +18,71 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
 
-// messageMinH is the minimum height of the commit message field.
-const messageMinH = unit.Dp(96)
-
-// rowKind identifies the rows of the commit panel's file list.
-type rowKind int
-
+// Heights of the commit message editor: it starts at messageMinH and
+// grows with its text up to messageMaxShare of the panel height.
 const (
-	rowGroup rowKind = iota
-	rowFile
-	rowHunk
-	rowLine
+	messageMinH     = unit.Dp(72)
+	messageMaxShare = 0.4
 )
 
-type panelRow struct {
-	kind              rowKind
-	group, file, hunk int
-	line              int
+// Toolbar item IDs of the commit panel.
+const (
+	toolRefresh  = "refresh"
+	toolRollback = "rollback"
+	toolUpdate   = "update"
+	toolStash    = "stash"
+	toolDiff     = "diff"
+	toolExpand   = "expand"
+	toolCollapse = "collapse"
+)
+
+// groupingLabels are the view options in gitcli.ChangeGroupings order.
+var groupingLabels = map[gitcli.ChangeGrouping]string{
+	gitcli.GroupDirectory: "Group by Directory",
+	gitcli.GroupModule:    "Group by Module",
+	gitcli.GroupFlat:      "No Grouping",
 }
 
-// CommitPanel is the commit tool window: changed files grouped into
-// "Changes" and "Unversioned Files" with tri-state checkboxes per group,
-// file, hunk and line; a diff preview of the selected file; a multi-line
-// message with history; Amend; "Commit" and "Commit and Push". Cmd/Ctrl+
-// Enter commits.
+// CommitPanel is the commit tool window: tabs "Commit" and "Stash"; a
+// toolbar (refresh, rollback, update, stash, show diff, view options,
+// expand/collapse all); the change tree with the root groups "Changes"
+// (with the branch badge) and "Unversioned Files", grouped by directory,
+// module or flat, tri-state checkboxes per group, directory, file, hunk
+// and line, file icons and status colours; below it Amend with the last
+// commit, the message history, a message editor that grows with its text,
+// "Commit", "Commit and Push…" and the commit options (gear).
 //
-// Data in: SetChanges, SetDiff, SetHistory, SetAmendMessage, SetBusy,
-// SetProblem, Reset. Events out: CommitRequested, AmendMessageRequested,
-// DiffRequested, RefreshRequested, FileOpenRequested.
+// The panel shows no diff itself: double click or Enter on a file (and
+// "Show Diff") reports DiffOpenRequested and the host opens the diff as
+// an editor tab. Up/Down move between files, Space toggles the file, F4
+// opens the file in the editor. Cmd/Ctrl+Enter commits.
+//
+// Data in: SetChanges, SetDiff, SetBranch, SetLastCommit, SetHistory,
+// SetAmendMessage, SetBusy, SetProblem, SetGrouping, Reset; the host's
+// Stash widget and FileGlyph provider. Events out: CommitRequested,
+// AmendMessageRequested, DiffRequested, DiffOpenRequested,
+// FileOpenRequested, RefreshRequested, RollbackRequested,
+// UpdateRequested, StashRequested, GroupingChanged, StashTabShown.
 //
 // The commit buttons are disabled while busy, when the message is empty
 // or when nothing is selected (with Amend an empty selection is allowed:
 // it rewords the last commit). Conflicted files are listed but cannot be
 // selected.
 type CommitPanel struct {
+	// FileGlyph returns the icon of a file (nil: DefaultFileGlyph).
+	FileGlyph FileGlyphFunc
+	// Stash draws the content of the "Stash" tab (nil: a placeholder).
+	Stash func(gtx layout.Context, th *tokens.Theme) layout.Dimensions
+
 	files    []*fileSel
-	groups   [groupCount][]int // file indexes per group
-	groupCB  [groupCount]atoms.Checkbox
-	groupRow [groupCount]molecules.ListRow
-	groupArr [groupCount]atoms.IconButton
-	groupExp [groupCount]bool
+	tree     gitcli.ChangeTree
+	nodeFile map[*gitcli.ChangeNode]int   // file nodes → file index
+	under    map[*gitcli.ChangeNode][]int // group/dir nodes → file indexes
+	groups   [groupCount][]int            // file indexes per group, tree order
+	dirs     map[string]*dirState
+	closed   map[string]bool // collapsed group/dir keys
+	grouping gitcli.ChangeGrouping
+	branch   string
 	rows     []panelRow
 	dirty    bool
 	selected int // file index, -1 = none
@@ -67,32 +91,70 @@ type CommitPanel struct {
 	history   molecules.Dropdown
 	amend     atoms.Checkbox
 	amendMsg  string // message loaded for amend
+	lastMsg   string // subject of the last commit
 	commit    atoms.Button
 	push      atoms.Button
-	refresh   atoms.IconButton
+	gear      atoms.IconButton
+	gearTip   atoms.Tooltip
+	histTip   atoms.Tooltip
+	showOpts  bool
+	signOff   atoms.Checkbox
+	noVerify  atoms.Checkbox
+	tabs      [2]atoms.Button
+	stashTab  bool
+	tools     molecules.Toolbar
+	view      molecules.Dropdown
+	viewTip   atoms.Tooltip
 	list      molecules.ScrollList
-	split     molecules.Split
-	diff      *DiffView
 	busy      bool
 	problem   *Problem
 	q         queue
 	keys      int // tag for the Cmd+Enter shortcut
+	focus     int // tag of the change tree's keyboard focus
 	historyIt []string
+	// headH is the height above the change tree (tests locate rows).
+	headH int
+}
+
+// dirState is the UI state of a group or directory row.
+type dirState struct {
+	cb  atoms.Checkbox
+	row molecules.ListRow
+	arr atoms.IconButton
 }
 
 // NewCommitPanel returns an empty panel.
 func NewCommitPanel() *CommitPanel {
-	p := &CommitPanel{selected: -1, diff: NewDiffView()}
-	p.groupExp = [groupCount]bool{true, true}
+	p := &CommitPanel{selected: -1, grouping: gitcli.GroupDirectory, dirs: map[string]*dirState{}, closed: map[string]bool{}}
 	p.message.Hint = "Commit message"
 	p.message.Editor.SingleLine = false
 	p.amend.Label = "Amend"
 	p.commit = atoms.Button{Kind: atoms.Primary, Text: "Commit", Glyph: atoms.GlyphCommit}
-	p.push = atoms.Button{Kind: atoms.Secondary, Text: "Commit and Push", Glyph: atoms.GlyphUpload}
-	p.refresh = atoms.IconButton{Glyph: atoms.GlyphRefresh, Description: "Refresh"}
+	p.push = atoms.Button{Kind: atoms.Secondary, Text: "Commit and Push…", Glyph: atoms.GlyphUpload}
+	p.gear = atoms.IconButton{Glyph: atoms.GlyphSettings, Description: "Commit options"}
+	p.gearTip.Text, p.gearTip.Above = "Commit options", true
+	p.histTip.Text, p.histTip.Above = "Recent commit messages", true
+	p.signOff.Label = "Sign-off commit"
+	p.noVerify.Label = "Skip git hooks"
+	p.tabs[0] = atoms.Button{Text: "Commit", Kind: atoms.Secondary}
+	p.tabs[1] = atoms.Button{Text: "Stash", Kind: atoms.Ghost}
 	p.history = molecules.Dropdown{Glyph: atoms.GlyphHistory, Description: "Recent messages", Up: true, Width: 360}
-	p.split.Ratio = 0.42
-	p.diff.Placeholder = "Select a file to preview its changes"
+	p.view = molecules.Dropdown{Glyph: glyphViewOptions, Description: "View options", Width: 220}
+	p.viewTip.Text = "View options"
+	for _, g := range gitcli.ChangeGroupings {
+		p.view.Items = append(p.view.Items, groupingLabels[g])
+	}
+	p.tools.Items = []molecules.ToolbarItem{
+		{ID: toolRefresh, Glyph: atoms.GlyphRefresh, Label: "Refresh"},
+		{ID: toolRollback, Glyph: glyphRollback, Label: "Rollback…"},
+		{ID: toolUpdate, Glyph: glyphUpdate, Label: "Update Project…"},
+		{ID: toolStash, Glyph: glyphStash, Label: "Stash Changes…"},
+		{ID: toolDiff, Glyph: glyphShowDiff, Label: "Show Diff", Shortcut: "Enter"},
+		{Separator: true},
+		{ID: toolExpand, Glyph: glyphExpandAll, Label: "Expand All"},
+		{ID: toolCollapse, Glyph: glyphCollapseAll, Label: "Collapse All"},
+	}
+	p.rebuildTree()
 	return p
 }
 
@@ -105,12 +167,8 @@ func (p *CommitPanel) SetChanges(changes []Change) {
 	for _, f := range p.files {
 		old[f.change.Status.Path] = f
 	}
-	selPath := ""
-	if p.selected >= 0 && p.selected < len(p.files) {
-		selPath = p.files[p.selected].change.Status.Path
-	}
+	selPath := p.SelectedPath()
 	p.files = p.files[:0]
-	p.groups = [groupCount][]int{}
 	p.selected = -1
 	for _, c := range changes {
 		g := groupChanges
@@ -153,47 +211,108 @@ func (p *CommitPanel) SetChanges(changes []Change) {
 		if c.Status.Path == selPath {
 			p.selected = len(p.files)
 		}
-		p.groups[g] = append(p.groups[g], len(p.files))
 		p.files = append(p.files, f)
 	}
-	// Preview the first tracked change when nothing was selected before.
-	if p.selected < 0 && len(p.groups[groupChanges]) > 0 {
-		p.selected = p.groups[groupChanges][0]
+	p.rebuildTree()
+}
+
+// rebuildTree groups the files (gitcli.BuildChangeTree) and maps nodes to
+// files.
+func (p *CommitPanel) rebuildTree() {
+	st := make([]gitcli.FileStatus, len(p.files))
+	idx := make(map[string]int, len(p.files))
+	for i, f := range p.files {
+		st[i] = f.change.Status
+		idx[f.change.Status.Path] = i
 	}
-	if p.selected >= 0 {
-		p.diff.SetDiff(p.files[p.selected].change.Diff)
-	} else {
-		p.diff.SetDiff(nil)
+	p.tree = gitcli.BuildChangeTree(st, p.grouping, p.branch)
+	p.nodeFile = map[*gitcli.ChangeNode]int{}
+	p.under = map[*gitcli.ChangeNode][]int{}
+	var walk func(n *gitcli.ChangeNode) []int
+	walk = func(n *gitcli.ChangeNode) []int {
+		if n.Kind == gitcli.NodeFile {
+			i, ok := idx[n.Path]
+			if !ok {
+				return nil
+			}
+			p.nodeFile[n] = i
+			return []int{i}
+		}
+		var out []int
+		for _, c := range n.Children {
+			out = append(out, walk(c)...)
+		}
+		p.under[n] = out
+		return out
 	}
+	p.groups[groupChanges] = walk(&p.tree.Changes)
+	p.groups[groupUnversioned] = walk(&p.tree.Unversioned)
 	p.dirty = true
 }
 
 // SetDiff supplies the diff of path (answer to DiffRequested). The file is
 // selected as a whole afterwards if it was selected before.
 func (p *CommitPanel) SetDiff(filePath string, d *gitcli.FileDiff) {
-	for i, f := range p.files {
+	for _, f := range p.files {
 		if f.change.Status.Path != filePath {
 			continue
 		}
 		f.setDiff(d, f.state() != atoms.Unchecked)
-		if i == p.selected {
-			p.diff.SetDiff(d)
-		}
 		p.dirty = true
 		return
 	}
 }
 
+// SetBranch sets the badge of the "Changes" group (the current branch).
+func (p *CommitPanel) SetBranch(b string) {
+	if b != p.branch {
+		p.branch = b
+		p.tree.Changes.Badge = b
+	}
+}
+
+// SetGrouping groups the change tree (no event).
+func (p *CommitPanel) SetGrouping(g gitcli.ChangeGrouping) {
+	if g == "" {
+		g = gitcli.GroupDirectory
+	}
+	if g != p.grouping {
+		p.grouping = g
+		p.rebuildTree()
+	}
+}
+
+// Grouping returns the grouping of the change tree.
+func (p *CommitPanel) Grouping() gitcli.ChangeGrouping { return p.grouping }
+
+// Order returns the file paths in tree order (the diff tab's sequence).
+func (p *CommitPanel) Order() []string { return p.tree.Order() }
+
 // SetHistory sets the recent commit messages offered in the history
-// dropdown, newest first.
+// dropdown, newest first. The first one is the last commit (shown next to
+// Amend) unless SetLastCommit says otherwise.
 func (p *CommitPanel) SetHistory(msgs []string) {
 	p.historyIt = append(p.historyIt[:0], msgs...)
+	if len(msgs) > 0 {
+		p.lastMsg = firstLine(msgs[0])
+	}
+}
+
+// SetLastCommit sets the subject of the last commit shown next to Amend.
+func (p *CommitPanel) SetLastCommit(subject string) { p.lastMsg = firstLine(subject) }
+
+func firstLine(s string) string {
+	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(s)
 }
 
 // SetAmendMessage supplies the last commit's message (answer to
 // AmendMessageRequested). It fills the message field if it is empty.
 func (p *CommitPanel) SetAmendMessage(msg string) {
 	p.amendMsg = msg
+	if p.lastMsg == "" {
+		p.lastMsg = firstLine(msg)
+	}
 	if p.amend.Checked() && strings.TrimSpace(p.message.Text()) == "" {
 		p.message.SetText(msg)
 	}
@@ -206,6 +325,18 @@ func (p *CommitPanel) SelectedPath() string {
 		return ""
 	}
 	return p.files[p.selected].change.Status.Path
+}
+
+// Select selects the file at path (e.g. following the diff tab); it
+// reports whether the path is listed.
+func (p *CommitPanel) Select(path string) bool {
+	for i, f := range p.files {
+		if f.change.Status.Path == path {
+			p.selected = i
+			return true
+		}
+	}
+	return false
 }
 
 // SetBusy disables the commit buttons while the host commits or pushes.
@@ -239,7 +370,10 @@ func (p *CommitPanel) SetMessage(s string) { p.message.SetText(s) }
 // Amend reports whether Amend is checked.
 func (p *CommitPanel) Amend() bool { return p.amend.Checked() }
 
-// Selection returns the current commit selection in list order.
+// StashShown reports whether the "Stash" tab is shown.
+func (p *CommitPanel) StashShown() bool { return p.stashTab }
+
+// Selection returns the current commit selection in tree order.
 func (p *CommitPanel) Selection() []FileSelection {
 	var out []FileSelection
 	for g := range p.groups {
@@ -280,10 +414,22 @@ func (p *CommitPanel) emit(gtx layout.Context, e Event) {
 	gtx.Execute(op.InvalidateCmd{})
 }
 
-// update handles the controls outside the virtualized list.
+// update handles the controls outside the virtualized tree.
 func (p *CommitPanel) update(gtx layout.Context) {
-	if p.refresh.Clicked(gtx) {
-		p.emit(gtx, RefreshRequested{})
+	for i := range p.tabs {
+		if p.tabs[i].Clicked(gtx) && (i == 1) != p.stashTab {
+			p.stashTab = i == 1
+			p.emit(gtx, StashTabShown{Shown: p.stashTab})
+		}
+	}
+	for _, id := range p.tools.Update(gtx) {
+		p.toolbar(gtx, id)
+	}
+	if i, ok := p.view.Update(gtx); ok && i < len(gitcli.ChangeGroupings) {
+		if g := gitcli.ChangeGroupings[i]; g != p.grouping {
+			p.SetGrouping(g)
+			p.emit(gtx, GroupingChanged{Grouping: g})
+		}
 	}
 	if p.amend.Update(gtx) {
 		if p.amend.Checked() {
@@ -300,6 +446,11 @@ func (p *CommitPanel) update(gtx layout.Context) {
 	if i, ok := p.history.Update(gtx); ok && i < len(p.historyIt) {
 		p.message.SetText(p.historyIt[i])
 	}
+	if p.gear.Clicked(gtx) {
+		p.showOpts = !p.showOpts
+	}
+	p.signOff.Update(gtx)
+	p.noVerify.Update(gtx)
 	shortcut := false
 	for {
 		e, ok := gtx.Event(
@@ -313,6 +464,7 @@ func (p *CommitPanel) update(gtx layout.Context) {
 			shortcut = true
 		}
 	}
+	p.treeKeys(gtx)
 	can := p.CanCommit()
 	p.commit.Disabled, p.push.Disabled = !can, !can
 	if p.commit.Clicked(gtx) || (shortcut && can) {
@@ -323,62 +475,67 @@ func (p *CommitPanel) update(gtx layout.Context) {
 	}
 }
 
+// toolbar runs a toolbar item.
+func (p *CommitPanel) toolbar(gtx layout.Context, id string) {
+	switch id {
+	case toolRefresh:
+		p.emit(gtx, RefreshRequested{})
+	case toolRollback:
+		if paths := p.rollbackPaths(); len(paths) > 0 {
+			p.emit(gtx, RollbackRequested{Paths: paths})
+		}
+	case toolUpdate:
+		p.emit(gtx, UpdateRequested{})
+	case toolStash:
+		p.emit(gtx, StashRequested{})
+	case toolDiff:
+		p.openDiff(gtx)
+	case toolExpand:
+		clear(p.closed)
+		p.dirty = true
+	case toolCollapse:
+		p.collapseAll()
+	}
+}
+
+// rollbackPaths are the checked tracked files, or the selected file.
+func (p *CommitPanel) rollbackPaths() []string {
+	var out []string
+	for _, i := range p.groups[groupChanges] {
+		if f := p.files[i]; f.state() != atoms.Unchecked {
+			out = append(out, f.change.Status.Path)
+		}
+	}
+	if len(out) == 0 {
+		if s := p.SelectedPath(); s != "" {
+			out = []string{s}
+		}
+	}
+	return out
+}
+
+// openDiff asks for the diff tab of the selected file.
+func (p *CommitPanel) openDiff(gtx layout.Context) {
+	if p.selected < 0 || p.selected >= len(p.files) {
+		return
+	}
+	st := p.files[p.selected].change.Status
+	p.emit(gtx, DiffOpenRequested{Path: st.Path, Untracked: st.Kind == gitcli.KindUntracked})
+}
+
 func (p *CommitPanel) requestCommit(gtx layout.Context, push bool) {
 	if !p.CanCommit() {
 		return
 	}
 	p.problem = nil
 	p.emit(gtx, CommitRequested{
-		Message: strings.TrimRight(p.message.Text(), " \t\r\n"),
-		Amend:   p.amend.Checked(),
-		Push:    push,
-		Files:   p.Selection(),
+		Message:  strings.TrimRight(p.message.Text(), " \t\r\n"),
+		Amend:    p.amend.Checked(),
+		Push:     push,
+		SignOff:  p.signOff.Checked(),
+		NoVerify: p.noVerify.Checked(),
+		Files:    p.Selection(),
 	})
-}
-
-// buildRows flattens groups, files, hunks and lines into list rows.
-func (p *CommitPanel) buildRows() {
-	p.rows = p.rows[:0]
-	for g := range p.groups {
-		if len(p.groups[g]) == 0 {
-			continue
-		}
-		p.rows = append(p.rows, panelRow{kind: rowGroup, group: g})
-		if !p.groupExp[g] {
-			continue
-		}
-		for _, fi := range p.groups[g] {
-			f := p.files[fi]
-			p.rows = append(p.rows, panelRow{kind: rowFile, group: g, file: fi})
-			if !f.expanded || f.change.Diff == nil {
-				continue
-			}
-			for h := range f.lines {
-				p.rows = append(p.rows, panelRow{kind: rowHunk, group: g, file: fi, hunk: h})
-				if !f.hunkExpanded[h] {
-					continue
-				}
-				if f.lineCB[h] == nil {
-					f.lineCB[h] = make([]atoms.Checkbox, len(f.lines[h]))
-				}
-				for l := range f.lines[h] {
-					p.rows = append(p.rows, panelRow{kind: rowLine, group: g, file: fi, hunk: h, line: l})
-				}
-			}
-		}
-	}
-	p.dirty = false
-}
-
-func (p *CommitPanel) selectFile(gtx layout.Context, i int) {
-	p.selected = i
-	f := p.files[i]
-	p.diff.SetDiff(f.change.Diff)
-	if f.change.Diff == nil && !f.requested {
-		f.requested = true
-		st := f.change.Status
-		p.emit(gtx, DiffRequested{Path: st.Path, Untracked: st.Kind == gitcli.KindUntracked})
-	}
 }
 
 // Layout draws the panel filling the maximum constraints.
@@ -393,91 +550,132 @@ func (p *CommitPanel) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimens
 	event.Op(gtx.Ops, &p.keys)
 	area.Pop()
 	return atoms.Surface{Kind: atoms.SurfacePanel}.Fill(gtx, th, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.layoutToolbar(gtx, th) }),
-			layout.Rigid(atoms.Divider{}.Fn(th)),
+		head := 0
+		measure := func(w layout.Widget) layout.Widget {
+			return func(gtx layout.Context) layout.Dimensions {
+				d := w(gtx)
+				head += d.Size.Y
+				return d
+			}
+		}
+		children := []layout.FlexChild{
+			layout.Rigid(measure(func(gtx layout.Context) layout.Dimensions { return p.layoutTabs(gtx, th) })),
+			layout.Rigid(measure(atoms.Divider{}.Fn(th))),
+		}
+		if p.stashTab {
+			children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				if p.Stash == nil {
+					return layout.UniformInset(th.Space.L).Layout(gtx, atoms.Muted("No stash view").Fn(th))
+				}
+				gtx.Constraints.Min = gtx.Constraints.Max
+				return p.Stash(gtx, th)
+			}))
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+		}
+		children = append(children,
+			layout.Rigid(measure(func(gtx layout.Context) layout.Dimensions { return p.layoutToolbar(gtx, th) })),
+			layout.Rigid(measure(atoms.Divider{}.Fn(th))),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return p.split.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
-					return p.layoutLeft(gtx, th)
-				}, func(gtx layout.Context) layout.Dimensions {
-					return p.diff.Layout(gtx, th)
+				p.headH = head
+				return p.layoutTree(gtx, th)
+			}),
+			layout.Rigid(atoms.Divider{}.Fn(th)),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: th.Space.M, Right: th.Space.M, Top: th.Space.S, Bottom: th.Space.M}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return p.layoutMessage(gtx, th, size.Y)
 				})
 			}),
 		)
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	})
 }
 
-func (p *CommitPanel) layoutToolbar(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
-	total, chosen := 0, 0
-	for _, f := range p.files {
-		total++
-		if f.state() != atoms.Unchecked {
-			chosen++
-		}
+// layoutTabs draws "Commit" | "Stash".
+func (p *CommitPanel) layoutTabs(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	p.tabs[0].Kind, p.tabs[1].Kind = atoms.Secondary, atoms.Ghost
+	if p.stashTab {
+		p.tabs[0].Kind, p.tabs[1].Kind = atoms.Ghost, atoms.Secondary
 	}
 	return atoms.Surface{Kind: atoms.SurfaceAlt}.Fill(gtx, th, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		return layout.Inset{Left: th.Space.M, Right: th.Space.XS, Top: th.Space.XXS, Bottom: th.Space.XXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: th.Space.S, Right: th.Space.S, Top: th.Space.XS, Bottom: th.Space.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(atoms.Strong("Commit").Fn(th)),
-				layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return atoms.Small(fmt.Sprintf("%d of %d files selected", chosen, total)).SingleLine().Layout(gtx, th)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.refresh.Layout(gtx, th) }),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.tabs[0].Layout(gtx, th) }),
+				layout.Rigid(layout.Spacer{Width: th.Space.XS}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.tabs[1].Layout(gtx, th) }),
 			)
 		})
 	})
 }
 
-func (p *CommitPanel) layoutLeft(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			if len(p.files) == 0 {
-				gtx.Constraints.Min = gtx.Constraints.Max
-				return layout.UniformInset(th.Space.L).Layout(gtx, atoms.Muted("No changes").Fn(th))
-			}
-			return p.list.Layout(gtx, th, len(p.rows), func(gtx layout.Context, i int) layout.Dimensions {
-				return p.layoutRow(gtx, th, p.rows[i])
-			})
-		}),
-		layout.Rigid(atoms.Divider{}.Fn(th)),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(th.Space.S).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return p.layoutMessage(gtx, th)
-			})
-		}),
-	)
+func (p *CommitPanel) layoutToolbar(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	empty := len(p.files) == 0
+	for i := range p.tools.Items {
+		switch p.tools.Items[i].ID {
+		case toolRollback:
+			p.tools.Items[i].Disabled = len(p.rollbackPaths()) == 0 || p.busy
+		case toolStash:
+			p.tools.Items[i].Disabled = empty || p.busy
+		case toolDiff:
+			p.tools.Items[i].Disabled = p.selected < 0
+		case toolExpand, toolCollapse:
+			p.tools.Items[i].Disabled = empty
+		}
+	}
+	return layout.Inset{Left: th.Space.XS, Right: th.Space.XS, Top: th.Space.XXS, Bottom: th.Space.XXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.tools.Layout(gtx, th) }),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return p.viewTip.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions { return p.view.Layout(gtx, th) })
+			}),
+			layout.Flexed(1, layout.Spacer{}.Layout),
+		)
+	})
 }
 
-func (p *CommitPanel) layoutMessage(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
-	gap := layout.Rigid(layout.Spacer{Height: th.Space.S}.Layout)
+func (p *CommitPanel) layoutMessage(gtx layout.Context, th *tokens.Theme, panelH int) layout.Dimensions {
 	can := p.CanCommit()
 	p.commit.Disabled, p.push.Disabled = !can, !can
+	gap := func(h unit.Dp) layout.FlexChild { return layout.Rigid(layout.Spacer{Height: h}.Layout) }
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		// Amend [last commit] … history.
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.amend.Layout(gtx, th) }),
-				layout.Flexed(1, layout.Spacer{}.Layout),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					if p.lastMsg == "" {
+						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, 0)}
+					}
+					return layout.Inset{Left: th.Space.S, Right: th.Space.S}.Layout(gtx, atoms.Small(p.lastMsg).SingleLine().Fn(th))
+				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					p.history.Items = p.historyIt
-					return p.history.Layout(gtx, th)
+					return p.histTip.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions { return p.history.Layout(gtx, th) })
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: th.Space.XS}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.Y = gtx.Dp(messageMinH)
-			gtx.Constraints.Max.Y = max(gtx.Constraints.Min.Y, gtx.Constraints.Max.Y)
-			return p.message.Layout(gtx, th)
-		}),
+		gap(th.Space.XS),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.layoutEditor(gtx, th, panelH) }),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if p.problem == nil {
 				return layout.Dimensions{}
 			}
 			return layout.Inset{Top: th.Space.S}.Layout(gtx, p.problem.banner().Fn(th))
 		}),
-		gap,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !p.showOpts {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: th.Space.S}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.signOff.Layout(gtx, th) }),
+					layout.Rigid(layout.Spacer{Width: th.Space.M}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.noVerify.Layout(gtx, th) }),
+				)
+			})
+		}),
+		gap(th.Space.S),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return p.commit.Layout(gtx, th) }),
@@ -490,225 +688,31 @@ func (p *CommitPanel) layoutMessage(gtx layout.Context, th *tokens.Theme) layout
 					}
 					return layout.Inset{Left: th.Space.S}.Layout(gtx, atoms.Small(hint).SingleLine().Fn(th))
 				}),
-			)
-		}),
-	)
-}
-
-// syncBox sets cb to state, processes a click and returns the new state
-// and whether it changed.
-func syncBox(gtx layout.Context, cb *atoms.Checkbox, state atoms.CheckState, disabled bool) (atoms.CheckState, bool) {
-	cb.State, cb.Disabled = state, disabled
-	if cb.Update(gtx) {
-		return cb.State, true
-	}
-	return state, false
-}
-
-func arrowGlyph(open bool) *atoms.Glyph {
-	if open {
-		return atoms.GlyphChevronDown
-	}
-	return atoms.GlyphChevronRight
-}
-
-func (p *CommitPanel) layoutRow(gtx layout.Context, th *tokens.Theme, r panelRow) layout.Dimensions {
-	small := th.Size.ControlH - th.Space.S
-	switch r.kind {
-	case rowGroup:
-		files := make([]*fileSel, 0, len(p.groups[r.group]))
-		for _, i := range p.groups[r.group] {
-			files = append(files, p.files[i])
-		}
-		cb := &p.groupCB[r.group]
-		st, inner := syncBox(gtx, cb, groupState(files), false)
-		if inner {
-			for _, f := range files {
-				f.setAll(st == atoms.Checked)
-			}
-			gtx.Execute(op.InvalidateCmd{})
-		}
-		cb.State = groupState(files)
-		arr := &p.groupArr[r.group]
-		arr.Size, arr.IconSize, arr.Description = small, th.Size.IconSmall, "Expand or collapse"
-		toggle := arr.Clicked(gtx)
-		arr.Glyph = arrowGlyph(p.groupExp[r.group])
-		row := &p.groupRow[r.group]
-		// Clicks on inner controls bubble up to the row; ignore those.
-		if c, _ := row.Update(gtx); (c && !inner) || toggle {
-			p.groupExp[r.group] = !p.groupExp[r.group]
-			p.dirty = true
-			gtx.Execute(op.InvalidateCmd{})
-		}
-		return row.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return arr.Layout(gtx, th) }),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return cb.Layout(gtx, th) }),
-				layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
-				layout.Rigid(atoms.Strong(groupNames[r.group]).Fn(th)),
-				layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
-				layout.Rigid(atoms.Badge{Text: fmt.Sprint(len(files))}.Fn(th)),
-			)
-		})
-
-	case rowFile:
-		f := p.files[r.file]
-		st, inner := syncBox(gtx, &f.cb, f.state(), f.disabled)
-		if inner {
-			f.setAll(st == atoms.Checked)
-			gtx.Execute(op.InvalidateCmd{})
-		}
-		f.cb.State = f.state()
-		expandable := f.change.Diff != nil && len(f.lines) > 0
-		f.arrow.Size, f.arrow.IconSize, f.arrow.Description = small, th.Size.IconSmall, "Show hunks"
-		if f.arrow.Clicked(gtx) && expandable {
-			f.expanded = !f.expanded
-			p.dirty = true
-			inner = true
-			gtx.Execute(op.InvalidateCmd{})
-		}
-		f.arrow.Glyph = arrowGlyph(f.expanded)
-		if c, dbl := f.row.Update(gtx); c && !inner {
-			p.selectFile(gtx, r.file)
-			if dbl {
-				p.emit(gtx, FileOpenRequested{Path: f.change.Status.Path})
-			}
-		}
-		f.row.Selected = r.file == p.selected
-		f.row.Indent = th.Space.L
-		return f.row.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
-			return p.layoutFileContent(gtx, th, f, expandable)
-		})
-
-	case rowHunk:
-		f := p.files[r.file]
-		h := r.hunk
-		cb := &f.hunkCB[h]
-		st, inner := syncBox(gtx, cb, f.hunkState(h), f.disabled)
-		if inner {
-			f.setHunk(h, st == atoms.Checked)
-			gtx.Execute(op.InvalidateCmd{})
-		}
-		cb.State = f.hunkState(h)
-		arr := &f.hunkArrow[h]
-		arr.Size, arr.IconSize, arr.Description = small, th.Size.IconSmall, "Show lines"
-		if arr.Clicked(gtx) {
-			f.hunkExpanded[h] = !f.hunkExpanded[h]
-			p.dirty = true
-			inner = true
-			gtx.Execute(op.InvalidateCmd{})
-		}
-		arr.Glyph = arrowGlyph(f.hunkExpanded[h])
-		row := &f.hunkRow[h]
-		if c, _ := row.Update(gtx); c && !inner {
-			if p.selected != r.file {
-				p.selectFile(gtx, r.file)
-			}
-			p.diff.ScrollToHunk(h)
-		}
-		row.Indent = th.Space.L + th.Size.IndentStep
-		hk := &f.change.Diff.Hunks[h]
-		return row.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return arr.Layout(gtx, th) }),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return cb.Layout(gtx, th) }),
-				layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return atoms.Label{Text: hk.Header(), Role: atoms.RoleCode, Color: th.Color.TextMuted, MaxLines: 1}.Layout(gtx, th)
-				}),
-			)
-		})
-
-	default: // rowLine
-		f := p.files[r.file]
-		h, l := r.hunk, r.line
-		dl := f.change.Diff.Hunks[h].Lines[l]
-		return layout.Inset{Left: th.Space.L + 2*th.Size.IndentStep + th.Space.S}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if dl.Kind == gitcli.LineContext {
-						return layout.Spacer{Width: th.Size.Checkbox}.Layout(gtx)
-					}
-					cb := &f.lineCB[h][l]
-					state := atoms.Unchecked
-					if f.lines[h][l] {
-						state = atoms.Checked
-					}
-					if st, ch := syncBox(gtx, cb, state, f.disabled); ch {
-						f.setLine(h, l, st == atoms.Checked)
-						gtx.Execute(op.InvalidateCmd{})
-					}
-					return cb.Layout(gtx, th)
-				}),
-				layout.Rigid(layout.Spacer{Width: th.Space.XS}.Layout),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					tone := molecules.ToneContext
-					switch dl.Kind {
-					case gitcli.LineAdded:
-						tone = molecules.ToneAdded
-					case gitcli.LineDeleted:
-						tone = molecules.ToneRemoved
-					}
-					return molecules.CodeLine{Marker: string(rune(dl.Kind)), Text: expandTabs(dl.Text), Tone: tone}.Layout(gtx, th)
+					p.gear.Active = p.showOpts
+					return p.gearTip.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions { return p.gear.Layout(gtx, th) })
 				}),
 			)
-		})
-	}
-}
-
-func (p *CommitPanel) layoutFileContent(gtx layout.Context, th *tokens.Theme, f *fileSel, expandable bool) layout.Dimensions {
-	st := f.change.Status
-	name, dir := path.Base(st.Path), path.Dir(st.Path)
-	if dir == "." {
-		dir = ""
-	}
-	if st.OrigPath != "" {
-		dir = strings.TrimSpace(dir + "  ← " + st.OrigPath)
-	}
-	added, deleted := 0, 0
-	if f.change.Diff != nil {
-		added, deleted = f.change.Diff.Stats()
-	}
-	return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if !expandable {
-				return layout.Spacer{Width: th.Size.ControlH - th.Space.S}.Layout(gtx)
-			}
-			return f.arrow.Layout(gtx, th)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return f.cb.Layout(gtx, th) }),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: th.Space.S, Right: th.Space.XS + th.Space.XXS}.Layout(gtx,
-				atoms.Icon{Glyph: atoms.GlyphFile, Color: th.Color.TextMuted}.Fn(th))
-		}),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
-				layout.Rigid(atoms.Label{Text: name, Color: statusOf(st).Color(th), MaxLines: 1}.Fn(th)),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					if dir == "" {
-						return layout.Dimensions{}
-					}
-					return layout.Inset{Left: th.Space.S}.Layout(gtx, atoms.Small(dir).SingleLine().Fn(th))
-				}),
-			)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if added+deleted == 0 {
-				return layout.Dimensions{}
-			}
-			return layout.Inset{Left: th.Space.S}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
-					layout.Rigid(atoms.Label{Text: fmt.Sprintf("+%d", added), Role: atoms.RoleSmall, Color: th.Editor.DiffAddedFg}.Fn(th)),
-					layout.Rigid(layout.Spacer{Width: th.Space.XS}.Layout),
-					layout.Rigid(atoms.Label{Text: fmt.Sprintf("−%d", deleted), Role: atoms.RoleSmall, Color: th.Editor.DiffRemovedFg}.Fn(th)),
-				)
-			})
 		}),
 	)
 }
 
-// diffView exposes the embedded preview (tests).
-func (p *CommitPanel) diffView() *DiffView { return p.diff }
+// layoutEditor draws the message field: at least messageMinH, growing
+// with its text up to messageMaxShare of the panel; longer text is
+// clipped (the editor scrolls its caret into view).
+func (p *CommitPanel) layoutEditor(gtx layout.Context, th *tokens.Theme, panelH int) layout.Dimensions {
+	minH := gtx.Dp(messageMinH)
+	maxH := max(minH, int(float32(panelH)*messageMaxShare))
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	gtx.Constraints.Min.Y = minH
+	gtx.Constraints.Max.Y = maxH
+	m := op.Record(gtx.Ops)
+	d := p.message.Layout(gtx, th)
+	call := m.Stop()
+	defer clip.Rect{Max: d.Size}.Push(gtx.Ops).Pop()
+	call.Add(gtx.Ops)
+	return d
+}
 
 // shortcutHint describes the commit shortcut for the platform.
 func shortcutHint() string {
