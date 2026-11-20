@@ -4,7 +4,8 @@
 //   - project switcher: two-letter avatar, project name, chevron; its
 //     inline popup lists open projects with their state (active,
 //     background, hibernated), recent projects and the actions "Open…",
-//     "Hibernate <project>" and "Resume <project>";
+//     "Hibernate <project>", "Resume <project>", "Close <project>" and
+//     submenus to hibernate or close the other open projects;
 //   - branch switcher: branch glyph, branch name, chevron; its inline
 //     popup has a search field, the actions "New Branch…" and "Checkout
 //     Tag or Revision…", the sections Recent, Local and Remote and a
@@ -159,6 +160,7 @@ func (b *Bar) icons() Icons {
 	fill(&ic.Open, d.Open)
 	fill(&ic.Hibernate, d.Hibernate)
 	fill(&ic.Resume, d.Resume)
+	fill(&ic.Close, d.Close)
 	fill(&ic.Check, d.Check)
 	return ic
 }
@@ -400,10 +402,29 @@ func (b *Bar) projectItems(ic Icons) []item {
 	if cur != nil && cur.State != ProjectHibernated {
 		items = append(items, item{label: "Hibernate " + cur.Name, glyph: ic.Hibernate, ev: HibernateProject{ID: cur.ID}})
 	}
+	var hibernate, closeOther []item
+	for _, p := range b.Projects {
+		if cur != nil && p.ID == cur.ID {
+			continue
+		}
+		closeOther = append(closeOther, item{label: p.Name, detail: p.Path, avatar: p.Name, ev: CloseProject{ID: p.ID}})
+		if p.State != ProjectHibernated {
+			hibernate = append(hibernate, item{label: p.Name, detail: p.Path, avatar: p.Name, ev: HibernateProject{ID: p.ID}})
+		}
+	}
+	if len(hibernate) > 0 {
+		items = append(items, item{label: "Hibernate Other Project", glyph: ic.Hibernate, sub: hibernate})
+	}
 	for _, p := range b.Projects {
 		if p.State == ProjectHibernated {
 			items = append(items, item{label: "Resume " + p.Name, glyph: ic.Resume, ev: ResumeProject{ID: p.ID}})
 		}
+	}
+	if cur != nil {
+		items = append(items, item{label: "Close " + cur.Name, glyph: ic.Close, ev: CloseProject{ID: cur.ID}})
+	}
+	if len(closeOther) > 0 {
+		items = append(items, item{label: "Close Other Project", glyph: ic.Close, sub: closeOther})
 	}
 	return items
 }

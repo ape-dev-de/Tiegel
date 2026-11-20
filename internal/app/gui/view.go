@@ -99,6 +99,13 @@ type View struct {
 
 	// Host opens other project windows (nil: single window).
 	Host WindowHost
+	// sessions are the projects of the window when it hosts several
+	// (nil: one project per window, the project lifecycle goes through
+	// the controller).
+	sessions *Sessions
+	// restoreCarets are caret offsets by file applied when the file's
+	// editor is created (tabs restored after hibernation).
+	restoreCarets map[string]int
 	// Quit closes all windows (native app menu); nil: unsupported.
 	Quit func()
 	// MenuPresenter replaces the default menu presentation (a context
@@ -177,11 +184,20 @@ type View struct {
 // NewView returns the view for ctl. goos selects the keymap ("darwin":
 // Cmd shortcuts).
 func NewView(ctl *controller.Controller, goos string) *View {
+	return newView(ctl, goos, nil)
+}
+
+// newView is NewView with a text shaper shared by the views of one
+// window (nil: a new one). A shaper belongs to one UI goroutine.
+func newView(ctl *controller.Controller, goos string, sh *text.Shaper) *View {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
+	if sh == nil {
+		sh = newShaper()
+	}
 	v := &View{
-		ctl: ctl, goos: goos, Registry: NewRegistry(), shaper: newShaper(),
+		ctl: ctl, goos: goos, Registry: NewRegistry(), shaper: sh,
 		editors: map[sessionKey]*editorSession{}, Invalidate: func() {},
 		systemDark: systemDarkMode, Raise: func() {}, recovery: newRecoveryBar(),
 		tabBars: map[*controller.EditorGroup]*groupView{}, splitViews: map[*controller.SplitNode]*molecules.Split{},

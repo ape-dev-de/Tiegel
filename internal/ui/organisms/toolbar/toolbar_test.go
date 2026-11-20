@@ -255,7 +255,7 @@ func TestProjectPopup(t *testing.T) {
 	if b.Opened() != PopupProject {
 		t.Fatal("not open")
 	}
-	want := []string{"#Open Projects", "shop", "api", "legacy blog", "#Recent Projects", "tools", "-", "Open…", "Hibernate shop", "Resume legacy blog"}
+	want := []string{"#Open Projects", "shop", "api", "legacy blog", "#Recent Projects", "tools", "-", "Open…", "Hibernate shop", "Hibernate Other Project", "Resume legacy blog", "Close shop", "Close Other Project"}
 	if got := labels(b.projectPop.items); !reflect.DeepEqual(got, want) {
 		t.Fatalf("items %q", got)
 	}
@@ -272,7 +272,7 @@ func TestProjectPopup(t *testing.T) {
 	for _, c := range []struct {
 		row  int
 		want Event
-	}{{5, OpenRecentProject{Path: "/work/tools"}}, {7, OpenProject{}}, {8, HibernateProject{ID: "p1"}}, {9, ResumeProject{ID: "p3"}}} {
+	}{{5, OpenRecentProject{Path: "/work/tools"}}, {7, OpenProject{}}, {8, HibernateProject{ID: "p1"}}, {10, ResumeProject{ID: "p3"}}, {11, CloseProject{ID: "p1"}}} {
 		r.click(center(r.seg(SegProject)))
 		r.take()
 		r.click(r.rowPoint(&b.projectPop, c.row))
@@ -290,8 +290,18 @@ func TestProjectPopup(t *testing.T) {
 	r.expect(SwitchProject{ID: "p2"})
 	r.click(center(r.seg(SegProject)))
 	r.take()
-	r.key(key.NameUpArrow, key.NameEnter)
+	r.key(key.NameUpArrow, key.NameUpArrow, key.NameUpArrow, key.NameEnter)
 	r.expect(ResumeProject{ID: "p3"})
+	// The other projects are hibernated or closed through submenus.
+	r.click(center(r.seg(SegProject)))
+	r.take()
+	r.key(key.NameUpArrow, key.NameRightArrow, key.NameDownArrow, key.NameEnter)
+	r.expect(CloseProject{ID: "p3"})
+	r.click(center(r.seg(SegProject)))
+	r.take()
+	r.click(r.rowPoint(&b.projectPop, 9))
+	r.key(key.NameDownArrow, key.NameEnter)
+	r.expect(HibernateProject{ID: "p2"})
 	// Escape closes; a click outside closes.
 	r.click(center(r.seg(SegProject)))
 	r.take()
@@ -308,7 +318,7 @@ func TestProjectPopup(t *testing.T) {
 	r.expect()
 	// A hibernated current project offers no "Hibernate".
 	b.Projects[0].State = ProjectHibernated
-	if got := labels(b.projectItems(DefaultIcons())); got[len(got)-3] != "Open…" {
+	if got := labels(b.projectItems(DefaultIcons())); got[len(got)-6] != "Open…" || got[len(got)-5] != "Hibernate Other Project" {
 		t.Fatalf("items %q", got)
 	}
 }

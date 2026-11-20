@@ -15,8 +15,10 @@ import (
 // Projects: File → Open… (native folder dialog on macOS, D110, else a
 // folder browser built from the chooser), Recent Projects, Close Project
 // and the question "this window or a new window" when a project is
-// already open. Each window shows one project; a project that is open in
-// another window is brought to the front instead (WindowHost).
+// already open. A window holds several projects (Sessions, D477): "this
+// window" opens the project next to the others, which keep running in
+// the background. A project that is open in another window is brought to
+// the front instead (WindowHost).
 
 // WindowHost lets a View open projects in other windows. The window
 // manager of Run implements it; tests and single-window hosts leave it
@@ -34,11 +36,21 @@ type WindowHost interface {
 func (v *View) openWindow(path string) {
 	if v.Host == nil {
 		if path != "" {
-			v.ctl.OpenProject(path)
+			v.openHere(path)
 		}
 		return
 	}
 	v.Host.OpenWindow(path)
+}
+
+// openHere opens dir in this window: next to the other projects with a
+// workspace (projects.open), else in place of the current one.
+func (v *View) openHere(dir string) {
+	if v.sessions != nil {
+		v.sessions.Open(dir)
+		return
+	}
+	v.ctl.OpenProject(dir)
 }
 
 // requestProject opens the project dir: in this window when none is open,
@@ -57,28 +69,36 @@ func (v *View) requestProject(dir string) {
 	if v.ctl.Project.Open && v.ctl.Project.Root == dir {
 		return
 	}
+	if v.sessions != nil && v.sessions.Has(dir) {
+		v.sessions.Switch(dir) // resumes a hibernated one
+		return
+	}
 	if v.Host != nil && v.Host.FocusProject(v, dir) {
 		return
 	}
 	if !v.ctl.Project.Open || v.Host == nil {
 		v.ctl.Status.Notice = ""
-		v.ctl.OpenProject(dir)
+		v.openHere(dir)
 		return
 	}
 	switch v.ctl.Prefs.OpenProjectIn { // setting projects.openIn
 	case "this":
-		v.ctl.OpenProject(dir)
+		v.openHere(dir)
 		return
 	case "new":
 		v.openWindow(dir)
 		return
 	}
+	detail := "Open " + filepath.Base(dir) + " in this window (closing " + v.ctl.Project.Name + ") or in a new window?"
+	if v.sessions != nil {
+		detail = "Open " + filepath.Base(dir) + " in this window (" + v.ctl.Project.Name + " keeps running in the background, switch with the project switcher) or in a new window?"
+	}
 	v.OpenPopup(&Popup{
 		Title:    "Open Project",
-		Detail:   "Open " + filepath.Base(dir) + " in this window (closing " + v.ctl.Project.Name + ") or in a new window?",
+		Detail:   detail,
 		Centered: true,
 		Buttons: []*PopupButton{
-			{Text: "This Window", Kind: atoms.Secondary, OnClick: func() { v.ctl.OpenProject(dir) }},
+			{Text: "This Window", Kind: atoms.Secondary, OnClick: func() { v.openHere(dir) }},
 			{Text: "New Window", Kind: atoms.Primary, OnClick: func() { v.openWindow(dir) }},
 			{Text: "Cancel", Kind: atoms.Ghost},
 		},
@@ -176,12 +196,78 @@ func (v *View) openRecentProjects() {
 	v.ShowMenu("Recent Projects", items)
 }
 
-// closeProject closes the project and shows the welcome screen.
+// closeProject closes the project and shows the next open project of
+// the window or the welcome screen.
 func (v *View) closeProject() {
 	if !v.ctl.Project.Open {
 		return
 	}
 	v.closeOverlay()
+	if v.sessions != nil {
+		// Running processes and debug sessions: listed, stopped on
+		// confirmation (projects.busy); unsaved changes that cannot be
+		// saved become recovery points as with project.close.
+		v.sessions.Close(v.ctl.Project.Root)
+		return
+	}
 	// Running processes: ask, terminate or keep (run.confirmClose).
 	v.rund.confirmClose(v.ctl.CloseProject)
+}
+
+// hibernateProject hibernates the shown project (header, Find Action).
+func (v *View) hibernateProject() {
+	if v.ctl.Project.Open {
+		v.hdr.Sessions.Hibernate(v.ctl.Project.Root)
+	}
+}
+
+// openProjectSwitcher is "Switch Project…": the open projects with their
+// state, then the recent ones; choosing one switches to it (resuming a
+// hibernated one) or opens it.
+func (v *View) openProjectSwitcher() {
+	open, current := v.hdr.Sessions.Projects()
+	isOpen := map[string]bool{}
+	var ids []string
+	var items []palette.Item
+	for _, p := range open {
+		isOpen[p.ID] = true
+		if p.ID == current {
+			continue
+		}
+		ids = append(ids, p.ID)
+		items = append(items, palette.Item{Label: p.Name, Detail: p.State.String() + " · " + p.Path, Glyph: atoms.GlyphFolderOpen})
+	}
+	for _, r := range v.ctl.RecentProjects {
+		if isOpen[r] {
+			continue
+		}
+		ids = append(ids, "recent:"+r)
+		items = append(items, palette.Item{Label: filepath.Base(r), Detail: "recent · " + homeShort(r), Glyph: atoms.GlyphFolder})
+	}
+	allIDs, shown := ids, ids
+	v.OpenChooser(ChooserSpec{
+		Title: "Switch Project", Hint: "Project name", Items: items,
+		OnQuery: func(q string) []palette.Item {
+			shown = nil
+			var out []palette.Item
+			q = strings.ToLower(q)
+			for i, it := range items {
+				if q == "" || strings.Contains(strings.ToLower(it.Label+" "+it.Detail), q) {
+					shown = append(shown, allIDs[i])
+					out = append(out, it)
+				}
+			}
+			return out
+		},
+		OnChoose: func(i int, _ string) {
+			if i < 0 || i >= len(shown) {
+				return
+			}
+			if r, ok := strings.CutPrefix(shown[i], "recent:"); ok {
+				v.requestProject(r)
+				return
+			}
+			v.hdr.Sessions.Switch(shown[i])
+		},
+	})
 }
