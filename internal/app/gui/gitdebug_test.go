@@ -122,8 +122,14 @@ func TestGitEndToEnd(t *testing.T) {
 	if _, ok := e.v.Registry.ToolWindow(ToolCommit); !ok {
 		t.Fatal("commit window not installed")
 	}
-	if items := e.v.gitd.status(); len(items) != 1 || !strings.HasPrefix(items[0].Text, "main") {
-		t.Fatalf("branch status %+v", items)
+	// The branch is shown in the header only, not in the footer.
+	if e.v.hdr.bar.Branch != "main" {
+		t.Fatalf("header branch %q", e.v.hdr.bar.Branch)
+	}
+	for _, it := range append(e.v.status.Left, e.v.status.Right...) {
+		if strings.HasPrefix(it.Text, "main") {
+			t.Fatalf("branch in the footer: %+v", it)
+		}
 	}
 
 	e.ctl.OpenFile("src/Shop.php", nil)
@@ -209,7 +215,7 @@ func TestGitEndToEnd(t *testing.T) {
 	e.ctl.SetModuleEnabled("git", false)
 	e.waitFor("git removed", func() bool {
 		_, ok := e.v.Registry.ToolWindow(ToolCommit)
-		return !ok && len(e.v.gitd.status()) == 0
+		return !ok && e.v.hdr.bar.Branch == ""
 	})
 	if _, ok := e.v.Registry.Action(ActCommit); ok {
 		t.Fatal("commit action should be removed")
@@ -240,13 +246,13 @@ func TestGitBranchesAndConflicts(t *testing.T) {
 	e.ctl.Vcs.LoadBranches()
 	e.waitFor("git", func() bool { return e.ctl.Vcs.Available && len(e.ctl.Vcs.Branches) == 3 })
 
-	// Branch popup from the status bar item.
-	e.v.gitd.openBranchChooser()
+	// Branch popup of the header.
+	e.v.RunAction(ActBranches)
 	e.frame()
-	if e.v.chooseMode != chooseCustom || len(e.v.chooser.Items) != 4 {
-		t.Fatalf("branch chooser %d items", len(e.v.chooser.Items))
+	if e.v.hdr.bar.Opened() != toolbar.PopupBranch {
+		t.Fatal("branch popup not opened")
 	}
-	e.v.closeOverlay()
+	e.v.hdr.bar.Close()
 
 	// Delete asks first.
 	e.v.Confirm("Delete branch gone?", "", "Delete", func() { e.ctl.Vcs.DeleteBranch("gone", false) })
@@ -258,21 +264,26 @@ func TestGitBranchesAndConflicts(t *testing.T) {
 	e.v.popup = nil
 	e.waitFor("branch deleted", func() bool { return len(e.ctl.Vcs.Branches) == 2 })
 
-	// Merge with a conflict → hint, merge window, apply → resolved.
-	cmd := exec.Command("git", "merge", "other")
-	cmd.Dir = root
-	_ = cmd.Run() // fails with the conflict
-	e.ctl.Vcs.LoadChanges()
-	e.ctl.Autosave("focusLost")
-	e.app.Bus().Publish("git.changed", map[string]any{"op": "merge"})
-	e.waitFor("conflict", func() bool { return len(e.ctl.Vcs.Conflicts) == 1 })
-	if !strings.Contains(e.ctl.Status.Notice, "conflict") {
+	// Merge from the header's branch submenu (U11): confirmation, then
+	// the conflict opens the merge window and the Git window.
+	e.frame()
+	e.v.hdr.handle(toolbar.MergeBranch{Name: "other"})
+	e.frame()
+	if e.v.popup == nil || !strings.Contains(e.v.popup.Title, "Merge “other” into “main”") {
+		t.Fatalf("merge confirmation expected: %+v %q", e.v.popup, e.ctl.Status.Notice)
+	}
+	e.v.popup.Buttons[0].OnClick()
+	e.v.popup = nil
+	e.waitFor("conflict", func() bool { return len(e.ctl.Vcs.Conflicts) == 1 && e.ctl.Vcs.InProgress() == "merge" })
+	if !strings.Contains(e.ctl.Status.Notice, "onflict") {
 		t.Fatalf("hint %q", e.ctl.Status.Notice)
 	}
-	e.v.ShowTool(ToolGit)
-	e.frame()
-	e.ctl.Vcs.OpenMerge("index.php")
 	e.waitFor("merge window", func() bool { return e.v.ToolShown(toolMerge + "index.php") })
+	// A second merge is refused while this one runs.
+	e.v.hdr.handle(toolbar.RebaseOnto{Name: "other"})
+	if e.v.popup != nil || !strings.Contains(e.ctl.Status.Notice, "in progress") {
+		t.Fatalf("rebase during merge: %q", e.ctl.Status.Notice)
+	}
 	mv := e.v.gitd.merges["index.php"]
 	if mv == nil || mv.Conflicts() != 1 {
 		t.Fatal("merge view")
@@ -282,6 +293,13 @@ func TestGitBranchesAndConflicts(t *testing.T) {
 		_, open := e.v.Registry.ToolWindow(toolMerge + "index.php")
 		return len(e.ctl.Vcs.Conflicts) == 0 && !open
 	})
+	e.v.RunAction(ActGitContinue)
+	e.waitFor("merge concluded", func() bool {
+		return e.ctl.Vcs.InProgress() == "" && strings.Contains(e.ctl.Status.Notice, "Merge done")
+	})
+	if got := runGit(t, root, "rev-list", "--count", "--merges", "HEAD"); strings.TrimSpace(got) != "1" {
+		t.Fatalf("merge commits %q", got)
+	}
 	data, _ := os.ReadFile(filepath.Join(root, "index.php"))
 	if string(data) != "<?php\necho 23;\n" {
 		t.Fatalf("resolved content %q", data)
@@ -437,6 +455,19 @@ func TestDebugEndToEnd(t *testing.T) {
 		t.Fatal("gutter click not handled")
 	}
 	e.waitFor("breakpoint", func() bool { return hasMarker(markers(), 2, editorview.MarkerBreakpoint) })
+	// Not paused: placeholders and the breakpoint list.
+	e.v.ShowTool(ToolDebug)
+	e.frame()
+	e.shot("debug-idle")
+	// Docked at the side the panel is narrow (D496: stacked, no
+	// truncated section titles).
+	e.ctl.Tools.MoveTo(ToolDebug, controller.SideRight, controller.GroupPrimary)
+	e.v.ShowTool(ToolDebug)
+	e.frame()
+	e.shot("debug-idle-side")
+	e.ctl.Tools.MoveTo(ToolDebug, controller.SideBottom, controller.GroupPrimary)
+	e.v.ShowTool(ToolDebug)
+	e.frame()
 	// Right click edits the condition (chooser); empty keeps it plain.
 	e.v.dbgd.gutterClick(file, editorview.GutterClickEvent{Line: 2, Area: editorview.GutterIcons, Secondary: true})
 	e.frame()
@@ -482,6 +513,13 @@ func TestDebugEndToEnd(t *testing.T) {
 	})
 	e.frame()
 	e.shot("debug")
+	e.ctl.Tools.MoveTo(ToolDebug, controller.SideRight, controller.GroupPrimary)
+	e.v.ShowTool(ToolDebug)
+	e.frame()
+	e.shot("debug-side")
+	e.ctl.Tools.MoveTo(ToolDebug, controller.SideBottom, controller.GroupPrimary)
+	e.v.ShowTool(ToolDebug)
+	e.frame()
 
 	// F8 steps over.
 	e.key("F8", 0)

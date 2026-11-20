@@ -209,7 +209,7 @@ func newView(ctl *controller.Controller, goos string, sh *text.Shaper) *View {
 		toolIDs: map[string]bool{},
 	}
 	v.Registry.SetGOOS(goos)
-	v.tree.Icon = treeIcon
+	v.tree.Icon = v.treeIcon
 	for _, a := range defaultActions() {
 		v.Registry.AddAction(a)
 	}
@@ -461,9 +461,6 @@ func (v *View) handleStatus(gtx layout.Context) {
 			continue
 		}
 		switch e.ID {
-		case statusGitID:
-			// The branch popup of the header replaces the chooser.
-			v.RunAction(ActBranches)
 		case statusCaret:
 			v.openGotoLine()
 		case statusLSP:

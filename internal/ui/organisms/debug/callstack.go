@@ -1,7 +1,10 @@
 package debug
 
 import (
+	"image"
+
 	"gioui.org/layout"
+	"gioui.org/op"
 
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
@@ -67,7 +70,8 @@ func (c *CallStackList) Layout(gtx layout.Context, th *tokens.Theme) layout.Dime
 	})
 }
 
-// emptyState draws a muted placeholder filling the available space.
+// emptyState draws a muted single-line placeholder (ellipsis when it
+// does not fit) centered in the available space.
 func emptyState(gtx layout.Context, th *tokens.Theme, text, fallback string) layout.Dimensions {
 	if text == "" {
 		text = fallback
@@ -79,7 +83,18 @@ func emptyState(gtx layout.Context, th *tokens.Theme, text, fallback string) lay
 	if size.X > unbounded {
 		size.X = gtx.Constraints.Min.X
 	}
-	layout.Inset{Top: th.Space.M, Left: th.Space.M, Right: th.Space.M}.Layout(gtx, atoms.Muted(text).Fn(th))
+	pad := gtx.Dp(th.Space.M)
+	cg := gtx
+	cg.Constraints = layout.Constraints{Max: image.Pt(max(0, size.X-2*pad), size.Y)}
+	m := op.Record(gtx.Ops)
+	d := atoms.Muted(text).SingleLine().Layout(cg, th)
+	call := m.Stop()
+	// Centered horizontally; vertically centered in short areas, a
+	// little below the top in tall ones (the eye starts there).
+	y := min((size.Y-d.Size.Y)/2, 4*pad)
+	t := op.Offset(image.Pt(max(pad, (size.X-d.Size.X)/2), max(0, y))).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	t.Pop()
 	return layout.Dimensions{Size: size}
 }
 

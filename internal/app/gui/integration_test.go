@@ -149,11 +149,10 @@ func TestHeaderQuickActionsAndEvents(t *testing.T) {
 		t.Fatal("move to a split slot")
 	}
 	e.v.hdr.handle(toolbar.MergeBranch{Name: "x"})
-	if e.ctl.Status.Notice == "" {
-		t.Fatal("merge should explain itself")
+	if e.v.popup != nil {
+		t.Fatal("merge without a repository asks for confirmation")
 	}
-	// The footer item of the git branch opens the header popup; crumbs
-	// are reported as CrumbEvent (no panic in the status handler).
+	// Crumbs are reported as CrumbEvent (no panic in the status handler).
 	e.v.status.Path = []statusbar.Crumb{{Text: "p"}}
 	e.frame()
 }

@@ -347,9 +347,20 @@ func (d *debugDock) layoutHints(gtx layout.Context, th *tokens.Theme, hints []co
 		}
 		lines = append(lines, "• "+h.Message)
 	}
+	banner := molecules.Banner{Kind: kind, Title: "Xdebug setup: no path mappings configured", Detail: strings.Join(lines, "\n")}.Fn(th)
 	return layout.Inset{Left: th.Space.S, Right: th.Space.S, Top: th.Space.XS, Bottom: th.Space.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		// Docked at a side (narrow) the Dismiss button goes below the
+		// banner, which keeps the full width.
+		if gtx.Constraints.Max.X < 2*gtx.Dp(th.Shell().PanelColumnMin) {
+			return layout.Flex{Axis: layout.Vertical, Alignment: layout.End}.Layout(gtx,
+				layout.Rigid(banner),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Top: th.Space.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return d.dismiss.Layout(gtx, th) })
+				}),
+			)
+		}
 		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-			layout.Flexed(1, molecules.Banner{Kind: kind, Title: "Xdebug setup: no path mappings configured", Detail: strings.Join(lines, "\n")}.Fn(th)),
+			layout.Flexed(1, banner),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: th.Space.S}.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return d.dismiss.Layout(gtx, th) })
 			}),

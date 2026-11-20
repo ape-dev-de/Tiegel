@@ -26,6 +26,7 @@ package toolbar
 
 import (
 	"fmt"
+	"hash/maphash"
 	"image"
 	"image/color"
 	"strings"
@@ -43,18 +44,8 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
 
-// Widths of the popups and caps of the truncated names.
-const (
-	projectPopupWidth = unit.Dp(340)
-	branchPopupWidth  = unit.Dp(360)
-	runPopupWidth     = unit.Dp(300)
-	subMenuWidth      = unit.Dp(260)
-	projectNameCap    = unit.Dp(200)
-	branchNameCap     = unit.Dp(240)
-	configNameCap     = unit.Dp(200)
-	// DefaultPopupMaxHeight bounds the popups when PopupMaxHeight is 0.
-	DefaultPopupMaxHeight = unit.Dp(480)
-)
+// The widths of the popups and the caps of the truncated names are
+// tokens (tokens.ShellSizes); PopupMaxHeight 0 uses ShellSizes.PopupMaxH.
 
 // Segment names of Rect (for hosts that anchor overlays and for tests).
 const (
@@ -104,7 +95,7 @@ type Bar struct {
 
 	// Icons replaces the default glyphs (zero fields use DefaultIcons).
 	Icons Icons
-	// PopupMaxHeight bounds the popups (0: DefaultPopupMaxHeight).
+	// PopupMaxHeight bounds the popups (0: tokens.ShellSizes.PopupMaxH).
 	PopupMaxHeight unit.Dp
 
 	projectBtn, branchBtn, configBtn widget.Clickable
@@ -117,6 +108,10 @@ type Bar struct {
 
 	projectPop, branchPop, runPop popup
 	inited                        bool
+	// builtIcons are the resolved icons the popup items were built with; a
+	// change rebuilds them.
+	builtIcons Icons
+	hash       maphash.Hash
 
 	q     []Event
 	rects map[string]image.Rectangle
@@ -136,6 +131,7 @@ func (b *Bar) init() {
 	b.inited = true
 	b.branchPop.search = molecules.NewSearchField("Search branches and actions")
 	b.projectPop.subOf, b.branchPop.subOf, b.runPop.subOf = -1, -1, -1
+	b.branchPop.expand = func(it item) []item { return b.branchSub(b.icons(), it.branch) }
 }
 
 // icons returns Icons with defaults filled in.
@@ -288,19 +284,24 @@ func (b *Bar) update(gtx layout.Context) {
 		b.branchPop.close()
 	}
 	ic := b.icons()
-	b.projectPop.setItems(b.projectItems(ic))
-	b.q = append(b.q, b.projectPop.process(gtx)...)
-	b.branchPop.setItems(b.branchItems(ic))
-	b.q = append(b.q, b.branchPop.process(gtx)...)
-	if b.branchPop.queryChanged {
-		b.branchPop.queryChanged = false
-		b.branchPop.sel = -1
-		b.branchPop.setItems(b.branchItems(ic))
-		b.branchPop.list.ScrollTo(0)
+	// Only the open popup has items; they are rebuilt when its data or
+	// the search query changed (U3).
+	for _, pp := range []*popup{&b.projectPop, &b.branchPop, &b.runPop} {
+		if !pp.open && pp.built {
+			pp.items, pp.built = nil, false
+		}
 	}
-	b.runPop.setItems(b.runItems(ic))
-	b.q = append(b.q, b.runPop.process(gtx)...)
-
+	if p := b.Opened(); p != PopupNone {
+		pp := b.pop(p)
+		b.refresh(p, ic)
+		b.q = append(b.q, pp.process(gtx)...)
+		if pp.queryChanged {
+			pp.queryChanged = false
+			pp.sel, pp.built = -1, false
+			b.refresh(p, ic)
+			pp.list.ScrollTo(0)
+		}
+	}
 	b.syncButtons(ic)
 	if b.run.Clicked(gtx) {
 		b.q = append(b.q, Run{Config: b.Config})
@@ -328,6 +329,96 @@ func (b *Bar) update(gtx layout.Context) {
 	if len(b.q) > 0 {
 		gtx.Execute(op.InvalidateCmd{})
 	}
+}
+
+// refresh rebuilds the items of popup p when it is open and its data
+// changed since the last build (the search query is tracked through
+// popup.queryChanged).
+func (b *Bar) refresh(p Popup, ic Icons) {
+	pp := b.pop(p)
+	if !pp.open {
+		return
+	}
+	if ic != b.builtIcons {
+		b.builtIcons = ic
+		b.projectPop.built, b.branchPop.built, b.runPop.built = false, false, false
+	}
+	key := b.dataKey(p)
+	if pp.built && pp.key == key {
+		return
+	}
+	switch p {
+	case PopupProject:
+		pp.setItems(b.projectItems(ic))
+	case PopupBranch:
+		pp.setItems(b.branchItems(ic))
+	case PopupRun:
+		pp.setItems(b.runItems(ic))
+	}
+	pp.key, pp.built = key, true
+}
+
+// dataKey hashes the data popup p is built from. It does not allocate,
+// so checking it every frame is cheap even for thousands of branches.
+func (b *Bar) dataKey(p Popup) uint64 {
+	h := &b.hash
+	h.Reset()
+	str := func(s string) {
+		h.WriteString(s)
+		h.WriteByte(0)
+	}
+	num := func(v int) {
+		var buf [8]byte
+		for i := range buf {
+			buf[i] = byte(v >> (8 * i))
+		}
+		h.Write(buf[:])
+	}
+	flag := func(v bool) {
+		if v {
+			h.WriteByte(1)
+		} else {
+			h.WriteByte(0)
+		}
+	}
+	switch p {
+	case PopupProject:
+		str(b.Current)
+		for _, pr := range b.Projects {
+			str(pr.ID)
+			str(pr.Name)
+			str(pr.Path)
+			num(int(pr.State))
+		}
+		h.WriteByte(1)
+		for _, r := range b.Recent {
+			str(r.Name)
+			str(r.Path)
+		}
+	case PopupBranch:
+		str(b.Branch)
+		for _, br := range b.Branches {
+			str(br.Name)
+			flag(br.Remote)
+			flag(br.Current)
+			flag(br.UpstreamGone)
+			num(br.Ahead)
+			num(br.Behind)
+		}
+		h.WriteByte(1)
+		for _, n := range b.RecentBranches {
+			str(n)
+		}
+	case PopupRun:
+		str(b.Config)
+		for _, c := range b.Configs {
+			str(c.ID)
+			str(c.Name)
+			str(c.Detail)
+			maphash.WriteComparable(h, c.Glyph)
+		}
+	}
+	return h.Sum64()
 }
 
 // syncButtons copies the data into the button states; it runs in Update
@@ -431,8 +522,8 @@ func (b *Bar) projectItems(ic Icons) []item {
 
 // branchItems builds the branch popup for the current search query.
 func (b *Bar) branchItems(ic Icons) []item {
-	q := strings.ToLower(b.branchPop.query())
-	match := func(s string) bool { return q == "" || strings.Contains(strings.ToLower(s), q) }
+	q := b.branchPop.query()
+	match := func(s string) bool { return q == "" || containsFold(s, q) }
 	var items []item
 	for _, a := range []item{
 		{label: "New Branch…", glyph: ic.Add, ev: NewBranch{}},
@@ -479,12 +570,22 @@ func (b *Bar) branchItems(ic Icons) []item {
 	return items
 }
 
-// branchItem is a branch row with its submenu.
+// branchItem is a branch row; its submenu is built when it opens
+// (branchSub).
 func (b *Bar) branchItem(ic Icons, br gitcli.Branch) item {
 	g := git.BranchGlyph(br)
 	if !br.Remote {
 		g = ic.Branch
 	}
+	var badges []atoms.Badge
+	if br.Current || br.Ahead > 0 || br.Behind > 0 || br.UpstreamGone {
+		badges = git.BranchBadges(br)
+	}
+	return item{label: br.Name, glyph: g, accent: br.Current, bold: br.Current, badges: badges, lazy: true, branch: br}
+}
+
+// branchSub is the submenu of a branch row.
+func (b *Bar) branchSub(ic Icons, br gitcli.Branch) []item {
 	cur := b.Branch
 	n := br.Name
 	sub := []item{
@@ -496,7 +597,34 @@ func (b *Bar) branchItem(ic Icons, br gitcli.Branch) item {
 		separator(),
 		{label: "Delete", glyph: atoms.GlyphDelete, disabled: br.Current, ev: DeleteBranch{Name: n, Remote: br.Remote}},
 	}
-	return item{label: n, glyph: g, accent: br.Current, bold: br.Current, badges: git.BranchBadges(br), sub: sub}
+	return sub
+}
+
+// containsFold reports whether s contains sub, ignoring case, without
+// allocating for ASCII text.
+func containsFold(s, sub string) bool {
+	if sub == "" {
+		return true
+	}
+	if !isASCII(s) || !isASCII(sub) {
+		return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
+	}
+	n := len(sub)
+	for i := 0; i+n <= len(s); i++ {
+		if strings.EqualFold(s[i:i+n], sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 // runItems builds the run configuration popup.
@@ -530,10 +658,19 @@ type seg struct {
 
 // Layout draws the bar across the full width and, when open, its popup.
 func (b *Bar) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
-	b.update(gtx)
+	b.init()
+	if b.Branch == "" {
+		b.branchPop.close()
+	}
 	ic := b.icons()
+	// Input is handled in Update; here only data the host changed since
+	// is picked up (a no-op unless the open popup's data changed).
+	if p := b.Opened(); p != PopupNone {
+		b.refresh(p, ic)
+	}
 	b.syncButtons(ic)
-	w := draw.Width(gtx, gtx.Dp(1200))
+	sh := th.Shell()
+	w := draw.Width(gtx, gtx.Dp(sh.FallbackW))
 	h := Height(gtx, th)
 	draw.Rect(gtx.Ops, image.Rect(0, 0, w, h), th.Color.SurfaceAlt)
 	draw.Rect(gtx.Ops, image.Rect(0, h-gtx.Dp(th.Size.BorderWidth), w, h), th.Color.Border)
@@ -567,9 +704,9 @@ func (b *Bar) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 		mg.Constraints = layout.Constraints{Max: image.Pt(draw.Unbounded, h)}
 		return draw.Measure(mg, l.SingleLine().Fn(th)).Size.X
 	}
-	want := []int{min(natural(projLabel), gtx.Dp(projectNameCap)), 0, min(natural(cfgLabel), gtx.Dp(configNameCap))}
+	want := []int{min(natural(projLabel), gtx.Dp(sh.ProjectNameCap)), 0, min(natural(cfgLabel), gtx.Dp(sh.ConfigNameCap))}
 	if b.Branch != "" {
-		want[1] = min(natural(branchLabel), gtx.Dp(branchNameCap))
+		want[1] = min(natural(branchLabel), gtx.Dp(sh.BranchNameCap))
 	}
 	segsFor := func(lw []int) (left, right []seg) {
 		left = append(left, seg{SegProject, b.trigger(th, &b.projectBtn, &b.projectTip, b.projectPop.open, projName,
@@ -643,13 +780,13 @@ func (b *Bar) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	// Popups, anchored below their trigger.
 	maxH := gtx.Dp(b.PopupMaxHeight)
 	if maxH <= 0 {
-		maxH = gtx.Dp(DefaultPopupMaxHeight)
+		maxH = gtx.Dp(sh.PopupMaxH)
 	}
 	for _, p := range []struct {
 		pp    *popup
 		seg   string
 		width unit.Dp
-	}{{&b.projectPop, SegProject, projectPopupWidth}, {&b.branchPop, SegBranch, branchPopupWidth}, {&b.runPop, SegConfig, runPopupWidth}} {
+	}{{&b.projectPop, SegProject, sh.ProjectPopupW}, {&b.branchPop, SegBranch, sh.BranchPopupW}, {&b.runPop, SegConfig, sh.RunPopupW}} {
 		r, ok := b.rects[p.seg]
 		if !p.pp.open || !ok {
 			continue

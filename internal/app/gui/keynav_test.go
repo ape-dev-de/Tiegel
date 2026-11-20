@@ -200,7 +200,19 @@ func TestNextErrorAndQuickDoc(t *testing.T) {
 			{"severity": "warning", "message": "second problem", "start": 40, "end": 44, "line": 8, "col": 1},
 		},
 	})
-	e.waitFor("diagnostics", func() bool { return len(e.ctl.Diagnostics(file)) == 2 })
+	// Wait for the two published problems themselves: the PHP version
+	// check may add its own diagnostics at any time (so the count is no
+	// condition), and the event is delivered asynchronously (slow under
+	// load; waitFor's deadline is generous).
+	e.waitFor("diagnostics", func() bool {
+		found := 0
+		for _, d := range e.ctl.Diagnostics(file) {
+			if d.Message == "first problem" || d.Message == "second problem" {
+				found++
+			}
+		}
+		return found == 2
+	})
 	e.frame()
 	e.key(key.NameF2, 0)
 	if caret := s.ed.Cursor().Primary().Head; caret != 10 || !e.ctl.Hover.Open || !strings.Contains(e.ctl.Hover.Text, "first problem") {

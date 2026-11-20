@@ -1,8 +1,6 @@
 package gui
 
 import (
-	"strings"
-
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/fileicons"
@@ -27,32 +25,28 @@ func tabGlyph(t *controller.Tab) *atoms.Glyph {
 	return fileGlyph(t.Title())
 }
 
-// sourceRootNames, testRootNames and resourceRootNames are the top-level
-// directory names marked as source, test and resource roots until the
-// project model provides marked directories.
-var (
-	sourceRootNames   = map[string]bool{"src": true, "app": true, "lib": true}
-	testRootNames     = map[string]bool{"tests": true, "test": true}
-	resourceRootNames = map[string]bool{"resources": true, "assets": true, "public": true}
-)
-
-// treeIcon is the icon provider of the project tree.
-func treeIcon(n *filetree.Node, open bool) *atoms.Glyph {
+// treeIcon is the icon provider of the project tree. Folder roles come
+// from the backend (project.roles: composer.json autoload/autoload-dev
+// and vendor-dir, else conventional names; D499).
+func (v *View) treeIcon(n *filetree.Node, open bool) *atoms.Glyph {
 	h := fileicons.Hints{Open: open, LibraryRoot: n.Library && n.Dir}
-	top := n.Path != "" && !strings.Contains(n.Path, "/")
 	if n.Dir {
-		name := strings.ToLower(n.Name)
 		switch {
 		case n.Path == "" || n.Path == ".":
 			// The project root is a plain folder.
 		case n.Ignored:
 			h.Excluded = true
-		case top && testRootNames[name]:
-			h.TestRoot = true
-		case top && sourceRootNames[name]:
-			h.SourceRoot = true
-		case top && resourceRootNames[name]:
-			h.ResourceRoot = true
+		default:
+			switch v.ctl.RoleOf(n.Path) {
+			case "source":
+				h.SourceRoot = true
+			case "test":
+				h.TestRoot = true
+			case "resource":
+				h.ResourceRoot = true
+			case "library":
+				h.LibraryRoot = true
+			}
 		}
 		return fileicons.GlyphFor(n.Name, true, h)
 	}

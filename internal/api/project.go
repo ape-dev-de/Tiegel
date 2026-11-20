@@ -63,6 +63,7 @@ func (a *App) registerProject() {
 	mustHandle(a, "files.list", "Project file tree (.gitignore respected, vendor/node_modules marked)", a.filesList)
 	mustHandle(a, "files.read", "Read a file from disk", a.filesRead)
 	mustHandle(a, "files.detectLanguage", "Detect the language of a file", a.filesDetectLanguage)
+	a.registerProjectRoles()
 }
 
 func (a *App) projectOpen(ctx context.Context, p PathParams) (ProjectInfo, error) {

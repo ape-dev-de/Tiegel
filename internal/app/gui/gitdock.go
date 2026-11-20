@@ -17,8 +17,6 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
 	gitui "github.com/ape-dev-de/tiegel/internal/ui/organisms/git"
-	"github.com/ape-dev-de/tiegel/internal/ui/organisms/palette"
-	"github.com/ape-dev-de/tiegel/internal/ui/organisms/statusbar"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
 
@@ -30,10 +28,9 @@ import (
 
 // Git tool window and action IDs.
 const (
-	ToolCommit  = "commit"
-	ToolGit     = "git"
-	toolMerge   = "merge:"
-	statusGitID = "git.branch"
+	ToolCommit = "commit"
+	ToolGit    = "git"
+	toolMerge  = "merge:"
 
 	ActCommit   keymap.Action = "git.commit"
 	ActPush     keymap.Action = "git.push"
@@ -94,14 +91,6 @@ func installGit(v *View) *gitDock {
 	r.AddFrameHandler(d.frame)
 	r.AddGutterProvider(d.markers)
 	r.AddGutterClickHandler(d.gutterClick)
-	r.AddStatusProvider(d.status)
-	r.AddStatusClickHandler(func(v *View, id string) bool {
-		if id != statusGitID {
-			return false
-		}
-		d.openBranchChooser()
-		return true
-	})
 	return d
 }
 
@@ -688,8 +677,6 @@ func (d *gitDock) rollbackAtCaret() {
 	})
 }
 
-// ---- status bar -----------------------------------------------------------------
-
 func branchText(branch string, ahead, behind int) string {
 	t := branch
 	if ahead > 0 {
@@ -699,80 +686,4 @@ func branchText(branch string, ahead, behind int) string {
 		t += fmt.Sprintf(" ↓%d", behind)
 	}
 	return t
-}
-
-func (d *gitDock) status() []statusbar.Item {
-	if !d.installed {
-		return nil
-	}
-	info := d.git().Info
-	branch := info.Branch
-	if info.Detached && len(info.Head) >= 7 {
-		branch = info.Head[:7]
-	}
-	if branch == "" {
-		return nil
-	}
-	tip := "Git branch – click to switch"
-	if info.Upstream != "" {
-		tip = fmt.Sprintf("Git branch (upstream %s, %d ahead, %d behind) – click to switch", info.Upstream, info.Ahead, info.Behind)
-	}
-	return []statusbar.Item{{ID: statusGitID, Text: branchText(branch, info.Ahead, info.Behind), Glyph: atoms.GlyphBranch, Tooltip: tip, Clickable: true}}
-}
-
-// openBranchChooser shows the branch popup: checkout of local and remote
-// branches and "New Branch…".
-func (d *gitDock) openBranchChooser() {
-	g := d.git()
-	g.LoadBranches()
-	items := func(q string) []palette.Item {
-		q = strings.ToLower(q)
-		out := []palette.Item{{Label: "New Branch…", Detail: "from " + g.Info.Branch, Glyph: atoms.GlyphAdd}}
-		for _, b := range g.Branches {
-			if q != "" && !strings.Contains(strings.ToLower(b.Name), q) {
-				continue
-			}
-			detail := b.Subject
-			if b.Current {
-				detail = "current · " + detail
-			}
-			gl := atoms.GlyphBranch
-			if b.Remote {
-				gl = atoms.GlyphCloud
-			}
-			out = append(out, palette.Item{Label: b.Name, Detail: detail, Glyph: gl})
-		}
-		return out
-	}
-	var shown []palette.Item
-	d.v.OpenChooser(ChooserSpec{
-		Title: "Branches", Hint: "Filter branches", Items: items(""),
-		OnQuery: func(q string) []palette.Item { shown = items(q); return shown },
-		OnChoose: func(i int, q string) {
-			list := shown
-			if list == nil {
-				list = items("")
-			}
-			if i <= 0 || i >= len(list) {
-				d.openNewBranch(q)
-				return
-			}
-			name := list[i].Label
-			for _, b := range g.Branches {
-				if b.Name == name && !b.Current {
-					g.Checkout(b.Name, b.Remote)
-				}
-			}
-		},
-	})
-}
-
-func (d *gitDock) openNewBranch(name string) {
-	g := d.git()
-	d.v.OpenChooser(ChooserSpec{Title: "New Branch", Hint: "Branch name (checked out after creation)", Query: name, NoList: true,
-		OnChoose: func(_ int, q string) {
-			if q = strings.TrimSpace(q); q != "" {
-				g.CreateBranch(q, "", true)
-			}
-		}})
 }

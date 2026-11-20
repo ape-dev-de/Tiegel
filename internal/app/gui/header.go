@@ -24,6 +24,12 @@ import (
 // ActBranches opens the branch popup of the header.
 const ActBranches keymap.Action = "git.branches"
 
+// Actions for a merge or rebase stopped on conflicts.
+const (
+	ActGitContinue keymap.Action = "git.continueOperation"
+	ActGitAbort    keymap.Action = "git.abortOperation"
+)
+
 // ProjectSessions performs the project switcher's life-cycle intents.
 // IDs are project roots (toolbar.Project IDs). A window with the
 // multi-project workspace uses *Sessions (D477); singleProject is the
@@ -98,6 +104,57 @@ func (h *header) branchesAction() Action {
 	}}
 }
 
+// operationActions continue or abort a merge or rebase in progress.
+func (h *header) operationActions() []Action {
+	return []Action{
+		{ID: ActGitContinue, Title: "Continue Merge or Rebase", Menu: "Git", Section: "branch", Run: func(v *View) {
+			if c := v.ctl; c.Vcs != nil {
+				c.Vcs.ContinueOp(nil)
+			}
+		}},
+		{ID: ActGitAbort, Title: "Abort Merge or Rebase…", Menu: "Git", Section: "branch", Run: func(v *View) {
+			c := v.ctl
+			if c.Vcs == nil {
+				return
+			}
+			op := c.Vcs.InProgress()
+			if op == "" {
+				c.Status.Notice = "No merge or rebase in progress"
+				return
+			}
+			v.Confirm("Abort the "+op+"?", "The branch returns to its state before the "+op+"; conflict resolutions are lost.", "Abort",
+				func() { c.Vcs.AbortOp(nil) })
+		}},
+	}
+}
+
+// mergeOrRebase asks for confirmation and merges branch into the
+// current branch (rebase: rebases the current branch onto it). Conflicts
+// open the first file in a merge window; the Git window lists all.
+func (h *header) mergeOrRebase(branch string, rebase bool) {
+	v, c := h.v, h.v.ctl
+	if c.Vcs == nil || !c.Vcs.Available || h.bar.Branch == "" {
+		c.Status.Notice = "Merge and rebase need a git repository"
+		return
+	}
+	if op := c.Vcs.InProgress(); op != "" {
+		c.Status.Notice = "A " + op + " is in progress: continue or abort it first (Git menu)"
+		return
+	}
+	cur := h.bar.Branch
+	title, detail, ok := "Merge “"+branch+"” into “"+cur+"”?", "Runs git merge with the default behaviour (fast-forward when possible, otherwise a merge commit). Conflicts can be resolved in the merge window.", "Merge"
+	if rebase {
+		title, detail, ok = "Rebase “"+cur+"” onto “"+branch+"”?", "Replays the commits of “"+cur+"” on top of “"+branch+"” (rewrites them). Conflicts can be resolved in the merge window, then continue the rebase from the Git menu.", "Rebase"
+	}
+	v.Confirm(title, detail, ok, func() {
+		if rebase {
+			c.Vcs.Rebase(branch, nil)
+		} else {
+			c.Vcs.Merge(branch, nil)
+		}
+	})
+}
+
 // headerIcons uses the tool glyphs of the own icon set where it has one.
 func headerIcons() toolbar.Icons {
 	ic := toolbar.DefaultIcons()
@@ -155,8 +212,14 @@ func (h *header) sync() {
 		h.git = git
 		if git {
 			h.v.Registry.AddAction(h.branchesAction())
+			for _, a := range h.operationActions() {
+				h.v.Registry.AddAction(a)
+			}
 		} else {
 			h.v.Registry.RemoveAction(ActBranches)
+			for _, a := range h.operationActions() {
+				h.v.Registry.RemoveAction(a.ID)
+			}
 		}
 	}
 	if g := c.Vcs; git {
@@ -255,9 +318,9 @@ func (h *header) handle(ev toolbar.Event) {
 				}
 			}})
 	case toolbar.MergeBranch:
-		c.Status.Notice = "Merge “" + e.Name + "”: not available yet (no merge command in the API)"
+		h.mergeOrRebase(e.Name, false)
 	case toolbar.RebaseOnto:
-		c.Status.Notice = "Rebase onto “" + e.Name + "”: not available yet (no rebase command in the API)"
+		h.mergeOrRebase(e.Name, true)
 	case toolbar.DeleteBranch:
 		if e.Remote {
 			c.Status.Notice = "Deleting remote branches is not supported"

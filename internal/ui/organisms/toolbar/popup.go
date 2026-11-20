@@ -12,6 +12,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 
+	"github.com/ape-dev-de/tiegel/internal/gitcli"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/internal/draw"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
@@ -45,9 +46,18 @@ type item struct {
 	disabled bool
 	ev       Event
 	sub      []item
+	// lazy marks a submenu built on demand by popup.expand (branch rows:
+	// building seven submenu rows per branch up front is wasted work for
+	// thousands of branches, U3).
+	lazy bool
+	// branch is the branch of a lazy branch row.
+	branch gitcli.Branch
 }
 
 func (it item) selectable() bool { return it.kind == kindAction && !it.disabled }
+
+// hasSub reports whether the row opens a submenu.
+func (it item) hasSub() bool { return len(it.sub) > 0 || it.lazy }
 
 func header(label string) item { return item{kind: kindHeader, label: label} }
 func separator() item          { return item{kind: kindSeparator} }
@@ -85,6 +95,12 @@ type popup struct {
 	queryChanged bool
 	// focus requests the keyboard focus in the next Layout.
 	focus bool
+	// expand builds the submenu of a lazy row (nil: lazy rows have none).
+	expand func(item) []item
+	// key identifies the data the items were built from; built tells
+	// whether items are valid for key (U3: rebuild only on change).
+	key   uint64
+	built bool
 
 	rows, subRows []molecules.ListRow
 	list          molecules.ScrollList
@@ -98,7 +114,7 @@ type popup struct {
 }
 
 func (p *popup) show() {
-	p.open, p.sel, p.subOf, p.focus = true, -1, -1, true
+	p.open, p.sel, p.subOf, p.focus, p.built = true, -1, -1, true, false
 	if p.search != nil {
 		p.search.SetText("")
 	}
@@ -122,6 +138,9 @@ func (p *popup) setItems(items []item) {
 	p.items = items
 	for len(p.rows) < len(items) {
 		p.rows = append(p.rows, molecules.ListRow{})
+	}
+	if p.subOf >= 0 && p.subOf < len(items) && items[p.subOf].lazy && items[p.subOf].sub == nil && p.expand != nil {
+		items[p.subOf].sub = p.expand(items[p.subOf])
 	}
 	if p.subOf >= len(items) || (p.subOf >= 0 && len(items[p.subOf].sub) == 0) {
 		p.subOf = -1
@@ -154,7 +173,7 @@ func (p *popup) activate(i int) []Event {
 	}
 	it := p.items[i]
 	p.sel = i
-	if len(it.sub) > 0 {
+	if it.hasSub() {
 		p.subOf, p.subSel = i, -1
 		p.setItems(p.items)
 		return nil
@@ -261,7 +280,7 @@ func (p *popup) process(gtx layout.Context) []Event {
 		case key.NameDownArrow:
 			p.move(1)
 		case key.NameRightArrow:
-			if p.subOf < 0 && p.sel >= 0 && len(p.items[p.sel].sub) > 0 {
+			if p.subOf < 0 && p.sel >= 0 && p.items[p.sel].hasSub() {
 				out = append(out, p.activate(p.sel)...)
 			}
 		case key.NameLeftArrow:
@@ -280,7 +299,10 @@ func (p *popup) process(gtx layout.Context) []Event {
 			out = append(out, p.enter()...)
 		}
 	}
-	for i := range p.items {
+	// Only rows drawn in the last frame can have input (U3: no work per
+	// row for thousands of branches).
+	lo, hi := p.list.FirstVisible(), min(p.list.LastVisible(), len(p.items)-1)
+	for i := max(0, lo); i <= hi; i++ {
 		if !p.open || i >= len(p.rows) {
 			break
 		}
@@ -402,7 +424,7 @@ func (p *popup) layoutSub(gtx layout.Context, th *tokens.Theme, origin image.Poi
 	}
 	y = min(max(y, top), top+max(0, listH-gtx.Dp(th.Size.RowH)))
 	pad := gtx.Dp(th.Space.XS)
-	sw := gtx.Dp(subMenuWidth)
+	sw := gtx.Dp(th.Shell().SubMenuW)
 	sh := itemsHeight(gtx, th, sub) + 2*pad
 	sx := pw - pad
 	if x+sx+sw > right {
@@ -526,7 +548,7 @@ func rowContent(gtx layout.Context, th *tokens.Theme, it item) layout.Dimensions
 			return layout.Inset{Left: th.Space.XS}.Layout(gtx, bd.Fn(th))
 		}))
 	}
-	if len(it.sub) > 0 {
+	if it.hasSub() {
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: th.Space.XS}.Layout(gtx, atoms.Icon{Glyph: atoms.GlyphChevronRight, Size: th.Size.IconSmall, Color: muted}.Fn(th))
 		}))
