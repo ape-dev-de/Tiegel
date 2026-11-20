@@ -90,7 +90,7 @@ func TestWithFonts(t *testing.T) {
 	if th.Text.Small >= th.Text.Body || th.Text.Large <= th.Text.Body || th.Text.Title <= th.Text.Heading {
 		t.Fatalf("type scale not ordered: %+v", th.Text)
 	}
-	if want := float32(11) * 16 / 13; float32(th.Text.Small) < want-0.5 || float32(th.Text.Small) > want+0.5 {
+	if want := float32(12) * 16 / 13; float32(th.Text.Small) < want-0.5 || float32(th.Text.Small) > want+0.5 {
 		t.Fatalf("Small = %v, want ≈%v", th.Text.Small, want)
 	}
 	chain := splitChain(string(th.Font.Mono.Typeface))

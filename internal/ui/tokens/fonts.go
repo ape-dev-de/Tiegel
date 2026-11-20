@@ -315,7 +315,7 @@ func scaledText(body float32) TextSizes {
 	s := body / defaultUISize
 	r := func(v float32) unit.Sp { return unit.Sp(math.Round(float64(v*s)*2) / 2) }
 	return TextSizes{
-		Small: r(11), Body: unit.Sp(body), Large: r(15), Heading: r(17), Title: r(21),
+		Small: r(12), Body: unit.Sp(body), Large: r(15), Heading: r(17), Title: r(21),
 		Code: defaultCodeSize, CodeLineHeight: defaultLineHeight,
 	}
 }
