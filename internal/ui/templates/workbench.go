@@ -15,6 +15,12 @@
 // There is no bottom stripe; bottom tool windows are reached through the
 // bottom groups of the side stripes.
 //
+// Each bottom corner is owned either by the side panels (they span the
+// full height, default) or by the bottom panel (it spans under the side
+// panels of that corner, Workbench.BottomFull). Tool windows are moved by
+// dragging their stripe button or panel header onto a slot, the bottom
+// edge (full width) or another panel's header (as tab); see D474.
+//
 // Templates only arrange: the host passes the content of every area as a
 // layout.Widget (Slots) and receives the user's layout intentions as
 // events (D71): stripe button clicks, "move to" drags, hide, options and
@@ -34,6 +40,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/unit"
 	"gioui.org/widget"
 	"golang.org/x/exp/shiny/materialdesign/icons"
 
@@ -100,6 +107,15 @@ type Panel struct {
 	// standard maximize, options and hide buttons; they get the header
 	// height as maximum and are centered vertically.
 	Actions layout.Widget
+	// Tabs (optional) are the tool windows sharing the panel; with two or
+	// more the header shows them as tabs instead of the title (ID is the
+	// selected one). A click on another tab reports a SelectEvent.
+	Tabs []PanelTab
+}
+
+// PanelTab is a tool window in the tab strip of a panel header.
+type PanelTab struct {
+	ID, Title string
 }
 
 // Slots are the contents of the workbench areas; nil slots are left out.
@@ -148,12 +164,20 @@ type ToolMenuEvent struct {
 // HideEvent: the hide button of a panel header was clicked.
 type HideEvent struct{ ID string }
 
-// MoveEvent: a stripe button was dragged to another side or slot.
+// MoveEvent: a stripe button or panel header was dragged to another side
+// or slot. With Tab, the window joins the panel of that slot as a tab;
+// with FullWidth (dropped on the bottom edge) the bottom panel should
+// take both bottom corners.
 type MoveEvent struct {
-	ID    string
-	Side  Side
-	Group StripeGroup
+	ID        string
+	Side      Side
+	Group     StripeGroup
+	Tab       bool
+	FullWidth bool
 }
+
+// SelectEvent: another tab of a panel header was clicked.
+type SelectEvent struct{ ID string }
 
 // ResizeEvent: a divider was dragged. Without Split, Size is the new
 // share of the side (Workbench.Sizes); with Split, it is the share of the
@@ -184,6 +208,7 @@ func (ToolEvent) isWorkbenchEvent()       {}
 func (ToolMenuEvent) isWorkbenchEvent()   {}
 func (HideEvent) isWorkbenchEvent()       {}
 func (MoveEvent) isWorkbenchEvent()       {}
+func (SelectEvent) isWorkbenchEvent()     {}
 func (ResizeEvent) isWorkbenchEvent()     {}
 func (MaximizeEvent) isWorkbenchEvent()   {}
 func (PanelPressEvent) isWorkbenchEvent() {}
@@ -214,6 +239,10 @@ type Workbench struct {
 	Maximized string
 	// HideStripes hides both stripes (e.g. a distraction-free mode).
 	HideStripes bool
+	// BottomFull selects the owner of each bottom corner: true = the
+	// bottom panel spans under the side panels of that side, false = the
+	// side panels span the full height (default).
+	BottomFull [numCorners]bool
 
 	// splits: index side = between editor and side, numSides+side =
 	// between primary and split panel of side.
@@ -223,13 +252,20 @@ type Workbench struct {
 	headers [numSides][numGroups]panelHeader
 	press   [numSides][numGroups]int // panel press tags
 	panelID [numSides][numGroups]string
+	titles  [numSides][numGroups]string
 	pending []Event
 
-	// Geometry of the last layout (window coordinates) for drops.
-	main       image.Rectangle
-	dragging   string
-	dragTarget slotRef
-	dragOver   bool
+	// Geometry of the last layout (window coordinates) for drops and
+	// previews.
+	size    image.Point
+	main    image.Rectangle
+	geom    geometry
+	open    openSlots
+	bar     int
+	metric  unit.Metric
+	headerH unit.Dp
+	drag    *dragState
+	dragTag *int // the handler that owns drag
 
 	scrim, block int
 }
@@ -246,8 +282,7 @@ type stripeBtn struct {
 	tag    int
 	origin image.Point // window position of the last layout
 	at     slotRef     // the slot the button belongs to
-	press  f32.Point
-	drag   bool
+	drag   bool        // the last press became a drag (no click)
 	seen   bool
 	since  time.Time // hover start (tooltip)
 }
@@ -258,6 +293,14 @@ type panelHeader struct {
 	tips               [3]atoms.Tooltip
 	dbl                gesture.Click
 	optPos             image.Point
+	tag                int       // press, drag and release on the header
+	spans              []tabSpan // tabs of the last layout
+}
+
+// tabSpan is the horizontal extent of a header tab.
+type tabSpan struct {
+	id, title string
+	x0, x1    int
 }
 
 var (
@@ -302,19 +345,22 @@ func (w *Workbench) SplitSize(side Side) float32 {
 func (w *Workbench) Update(gtx layout.Context) []Event {
 	out := w.pending
 	w.pending = nil
+	w.dragKeys(gtx)
 	for side := range numSides {
 		for _, sb := range w.Stripes[side] {
 			b := w.btn(sb.ID)
+			// Pointer first: a release that ends a drag is no click.
+			out = append(out, w.stripePointer(gtx, sb, b)...)
 			if b.click.Clicked(gtx) && !b.drag {
 				out = append(out, ToolEvent{ID: sb.ID})
 			}
-			out = append(out, w.stripePointer(gtx, sb.ID, b)...)
 		}
 		for g := range numGroups {
 			// Events are read for every slot, open or not, so the
 			// filters exist before a panel's first frame.
 			id := w.panelID[side][g]
 			h := &w.headers[side][g]
+			out = append(out, w.headerPointer(gtx, slotRef{side, g}, id, h)...)
 			if h.options.Clicked(gtx) && id != "" {
 				out = append(out, ToolMenuEvent{ID: id, Pos: h.optPos})
 			}
@@ -372,107 +418,80 @@ func (w *Workbench) toggleMaximized(id string) Event {
 }
 
 // stripePointer handles right clicks and drags of a stripe button.
-func (w *Workbench) stripePointer(gtx layout.Context, id string, b *stripeBtn) []Event {
+func (w *Workbench) stripePointer(gtx layout.Context, sb StripeButton, b *stripeBtn) []Event {
 	var out []Event
-	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &b.tag, Kinds: pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel})
-		if !ok {
-			break
+	r := w.pointerDrag(gtx, &b.tag, b.at, b.origin, func(f32.Point) (string, string) { return sb.ID, sb.Title })
+	if r.menu != nil {
+		out = append(out, ToolMenuEvent{ID: sb.ID, Pos: *r.menu})
+	}
+	if r.move != nil {
+		out = append(out, *r.move)
+	}
+	switch {
+	case r.released:
+		b.drag = r.dragged
+	case w.dragTag == &b.tag:
+		b.drag = w.drag != nil && w.drag.moved
+	}
+	return out
+}
+
+// headerPointer handles drags of a panel header (the shown window or the
+// pressed tab), clicks on tabs and right clicks.
+func (w *Workbench) headerPointer(gtx layout.Context, at slotRef, id string, h *panelHeader) []Event {
+	// A closed panel starts no drag but still ends one that began on it.
+	tabAt := func(x float32) (tabSpan, bool) {
+		for _, sp := range h.spans {
+			if int(x) >= sp.x0 && int(x) < sp.x1 {
+				return sp, true
+			}
 		}
-		pe, ok := ev.(pointer.Event)
-		if !ok {
-			continue
+		return tabSpan{}, false
+	}
+	r := w.pointerDrag(gtx, &h.tag, at, w.geom.panels[at.side][at.group].Min, func(pos f32.Point) (string, string) {
+		if id == "" {
+			return "", ""
 		}
-		win := b.origin.Add(image.Pt(int(pe.Position.X), int(pe.Position.Y)))
-		switch pe.Kind {
-		case pointer.Press:
-			b.press, b.drag = pe.Position, false
-			if pe.Buttons.Contain(pointer.ButtonSecondary) {
-				out = append(out, ToolMenuEvent{ID: id, Pos: win})
-			}
-		case pointer.Drag:
-			d := pe.Position.Sub(b.press)
-			if !b.drag && d.X*d.X+d.Y*d.Y > float32(gtx.Dp(8)*gtx.Dp(8)) {
-				b.drag = true
-			}
-			if b.drag {
-				w.dragging = id
-				w.dragTarget, w.dragOver = w.dropSlot(win)
-			}
-		case pointer.Release, pointer.Cancel:
-			if b.drag && pe.Kind == pointer.Release {
-				if at, ok := w.dropSlot(win); ok && at != b.at {
-					out = append(out, MoveEvent{ID: id, Side: at.side, Group: at.group})
-				}
-			}
-			w.dragging, w.dragOver = "", false
-			if pe.Kind == pointer.Cancel {
-				b.drag = false
-			}
+		if sp, ok := tabAt(pos.X); ok {
+			return sp.id, sp.title
+		}
+		return id, w.titles[at.side][at.group]
+	})
+	var out []Event
+	if r.menu != nil && id != "" {
+		out = append(out, ToolMenuEvent{ID: id, Pos: *r.menu})
+	}
+	if r.move != nil {
+		out = append(out, *r.move)
+	}
+	if r.released && !r.dragged && id != "" {
+		if sp, ok := tabAt(r.pos.X); ok && sp.id != id {
+			out = append(out, SelectEvent{ID: sp.id})
 		}
 	}
 	return out
 }
 
-// dropSlot returns the slot whose drop zone contains p (window
-// coordinates); see dropZone.
-func (w *Workbench) dropSlot(p image.Point) (slotRef, bool) {
-	for _, at := range []slotRef{
-		{SideLeft, GroupPrimary}, {SideLeft, GroupSplit},
-		{SideRight, GroupPrimary}, {SideRight, GroupSplit},
-		{SideBottom, GroupPrimary}, {SideBottom, GroupSplit},
-	} {
-		if p.In(w.dropZone(at)) {
-			return at, true
-		}
-	}
-	return slotRef{}, false
-}
-
-// dropZone is the area of the main rectangle (extended over the stripes)
-// that drops into slot at: the outer fifth left and right (upper three
-// fifths primary, lower two fifths split), the lower fifth in between
-// (left half primary, right half split).
-func (w *Workbench) dropZone(at slotRef) image.Rectangle {
-	m := w.main
-	if m.Empty() {
-		return image.Rectangle{}
-	}
-	fx, fy := m.Dx()/5, m.Dy()/5
-	splitY := m.Min.Y + m.Dy()*3/5
-	const far = 1 << 20 // the stripes count as part of the zone
-	switch at {
-	case slotRef{SideLeft, GroupPrimary}:
-		return image.Rect(-far, m.Min.Y, m.Min.X+fx, splitY)
-	case slotRef{SideLeft, GroupSplit}:
-		return image.Rect(-far, splitY, m.Min.X+fx, m.Max.Y)
-	case slotRef{SideRight, GroupPrimary}:
-		return image.Rect(m.Max.X-fx, m.Min.Y, far, splitY)
-	case slotRef{SideRight, GroupSplit}:
-		return image.Rect(m.Max.X-fx, splitY, far, m.Max.Y)
-	case slotRef{SideBottom, GroupPrimary}:
-		return image.Rect(m.Min.X+fx, m.Max.Y-fy, m.Min.X+m.Dx()/2, m.Max.Y)
-	case slotRef{SideBottom, GroupSplit}:
-		return image.Rect(m.Min.X+m.Dx()/2, m.Max.Y-fy, m.Max.X-fx, m.Max.Y)
-	}
-	return image.Rectangle{}
-}
-
 // Layout fills the window.
 func (w *Workbench) Layout(gtx layout.Context, th *tokens.Theme, s Slots) layout.Dimensions {
 	size := gtx.Constraints.Max
+	w.size = size
 	gtx.Constraints = layout.Exact(size)
 	draw.Rect(gtx.Ops, image.Rectangle{Max: size}, th.Color.Background)
 	shown := map[string]bool{}
+	w.open = openSlots{}
 	for side := range numSides {
 		for g, p := range [numGroups]Panel{s.Panels[side], s.Splits[side]} {
-			w.panelID[side][g] = ""
+			w.panelID[side][g], w.titles[side][g] = "", ""
 			if p.Content != nil {
-				w.panelID[side][g] = p.ID
+				w.panelID[side][g], w.titles[side][g] = p.ID, p.Title
+				w.open[side][g] = true
 				shown[p.ID] = true
 			}
 		}
 	}
+	w.metric, w.headerH = gtx.Metric, th.Size.PanelHeaderH
+	w.bar = max(1, gtx.Dp(th.Size.BorderWidth))
 	if !shown[w.Maximized] {
 		w.Maximized = ""
 	}
@@ -513,10 +532,7 @@ func (w *Workbench) Layout(gtx layout.Context, th *tokens.Theme, s Slots) layout
 		statusCall.Add(gtx.Ops)
 		t.Pop()
 	}
-	if w.dragging != "" && w.dragOver {
-		r := w.dropZone(w.dragTarget).Intersect(w.main)
-		draw.Rect(gtx.Ops, r, tokens.WithAlpha(th.Color.Accent, 60))
-	}
+	w.layoutDragPreview(gtx, th)
 	for id, b := range w.btns {
 		if !b.seen {
 			delete(w.btns, id)
@@ -550,84 +566,27 @@ func (w *Workbench) layoutHeaderSlot(gtx layout.Context, th *tokens.Theme, heade
 	return h
 }
 
-// layoutMain draws the panels and the editor area into r.
+// layoutMain draws the panels and the editor area into r and records
+// their rectangles.
 func (w *Workbench) layoutMain(gtx layout.Context, th *tokens.Theme, s Slots, r image.Rectangle) {
-	t := op.Offset(r.Min).Push(gtx.Ops)
-	defer t.Pop()
-	mg := gtx
-	mg.Constraints = layout.Exact(r.Size())
+	var maxAt *slotRef
 	if w.Maximized != "" {
 		for side := range numSides {
-			for g, p := range [numGroups]Panel{s.Panels[side], s.Splits[side]} {
-				if p.Content != nil && p.ID == w.Maximized {
-					w.panel(th, side, StripeGroup(g), p)(mg)
-					return
+			for g := range numGroups {
+				if w.open[side][g] && w.panelID[side][g] == w.Maximized {
+					maxAt = &slotRef{side, StripeGroup(g)}
 				}
 			}
 		}
 	}
-	editorCol := func(gtx layout.Context) layout.Dimensions {
-		editor := func(gtx layout.Context) layout.Dimensions {
-			atoms.Surface{Kind: atoms.SurfaceEditor}.Paint(gtx, th)
-			if s.Editor == nil {
-				return layout.Dimensions{Size: gtx.Constraints.Max}
-			}
-			return s.Editor(gtx)
-		}
-		bottom := w.sideContent(th, s, SideBottom)
-		if bottom == nil {
-			return editor(gtx)
-		}
-		sp := &w.splits[SideBottom]
-		sp.Vertical, sp.MinPane = true, 80
-		sp.Ratio = 1 - w.Size(SideBottom)
-		d := sp.Layout(gtx, th, editor, bottom)
-		w.track(int(SideBottom), 1-sp.Ratio)
-		return d
-	}
-	inner := editorCol
-	if right := w.sideContent(th, s, SideRight); right != nil {
-		inner = func(gtx layout.Context) layout.Dimensions {
-			sp := &w.splits[SideRight]
-			sp.MinPane = 160
-			sp.Ratio = 1 - w.Size(SideRight)
-			d := sp.Layout(gtx, th, editorCol, right)
-			w.track(int(SideRight), 1-sp.Ratio)
-			return d
-		}
-	}
-	if left := w.sideContent(th, s, SideLeft); left != nil {
-		sp := &w.splits[SideLeft]
-		sp.MinPane = 160
-		sp.Ratio = w.Size(SideLeft)
-		sp.Layout(mg, th, left, inner)
-		w.track(int(SideLeft), sp.Ratio)
-		return
-	}
-	inner(mg)
-}
-
-// sideContent returns the widget of side: one panel or both divided;
-// nil if the side has no panel.
-func (w *Workbench) sideContent(th *tokens.Theme, s Slots, side Side) layout.Widget {
-	p, q := s.Panels[side], s.Splits[side]
-	switch {
-	case p.Content == nil && q.Content == nil:
-		return nil
-	case q.Content == nil:
-		return w.panel(th, side, GroupPrimary, p)
-	case p.Content == nil:
-		return w.panel(th, side, GroupSplit, q)
-	}
-	return func(gtx layout.Context) layout.Dimensions {
-		key := int(numSides + side)
-		sp := &w.splits[key]
-		sp.Vertical, sp.MinPane = side != SideBottom, 80
-		sp.Ratio = w.SplitSize(side)
-		d := sp.Layout(gtx, th, w.panel(th, side, GroupPrimary, p), w.panel(th, side, GroupSplit, q))
-		w.track(key, sp.Ratio)
-		return d
-	}
+	tree := w.plan(w.open, w.BottomFull, maxAt)
+	w.geom = geometry{}
+	rects(tree, r, w.bar, gtx.Metric, &w.geom)
+	t := op.Offset(r.Min).Push(gtx.Ops)
+	defer t.Pop()
+	mg := gtx
+	mg.Constraints = layout.Exact(r.Size())
+	w.render(th, s, tree)(mg)
 }
 
 // track records a dragged share (key: see Workbench.splits) and reports
@@ -679,9 +638,10 @@ func (w *Workbench) layoutPanelHeader(gtx layout.Context, th *tokens.Theme, side
 	size := image.Pt(width, h)
 	hd := &w.headers[side][g]
 	// Double clicks anywhere on the header (below the buttons) toggle
-	// maximize.
+	// maximize; pressing and moving drags the window (or the pressed tab).
 	area := clip.Rect{Max: size}.Push(gtx.Ops)
 	hd.dbl.Add(gtx.Ops)
+	event.Op(gtx.Ops, &hd.tag)
 	area.Pop()
 	draw.Rect(gtx.Ops, image.Rect(0, h-gtx.Dp(th.Size.BorderWidth), width, h), th.Color.Border)
 
@@ -723,8 +683,13 @@ func (w *Workbench) layoutPanelHeader(gtx layout.Context, th *tokens.Theme, side
 		call.Add(gtx.Ops)
 		t.Pop()
 	}
-	// Title: single line, vertically centered, cut before the buttons.
 	pad := gtx.Dp(th.Space.M)
+	hd.spans = hd.spans[:0]
+	if len(p.Tabs) > 1 {
+		w.layoutHeaderTabs(gtx, th, hd, p, max(0, x-gap), h)
+		return layout.Dimensions{Size: size}
+	}
+	// Title: single line, vertically centered, cut before the buttons.
 	tg := gtx
 	tg.Constraints = layout.Constraints{Max: image.Pt(max(0, x-pad-gap), h)}
 	rec := op.Record(gtx.Ops)
@@ -734,6 +699,45 @@ func (w *Workbench) layoutPanelHeader(gtx layout.Context, th *tokens.Theme, side
 	call.Add(gtx.Ops)
 	t.Pop()
 	return layout.Dimensions{Size: size}
+}
+
+// layoutHeaderTabs draws the tool windows of a tabbed panel as tabs in
+// the header up to x and records their extents.
+func (w *Workbench) layoutHeaderTabs(gtx layout.Context, th *tokens.Theme, hd *panelHeader, p Panel, limit, h int) {
+	c := clip.Rect{Max: image.Pt(limit, h)}.Push(gtx.Ops)
+	defer c.Pop()
+	padX := gtx.Dp(th.Space.M)
+	mark := gtx.Dp(2)
+	x := gtx.Dp(th.Space.XS)
+	for _, tab := range p.Tabs {
+		if x >= limit {
+			break
+		}
+		active := tab.ID == p.ID
+		lbl := atoms.Label{Text: tab.Title, Role: atoms.RoleBody, Color: th.Color.TextMuted, MaxLines: 1}
+		if active {
+			lbl.Role, lbl.Color = atoms.RoleStrong, th.Color.Text
+		}
+		lg := gtx
+		lg.Constraints = layout.Constraints{Max: image.Pt(max(0, limit-x-2*padX), h)}
+		rec := op.Record(gtx.Ops)
+		ld := lbl.Layout(lg, th)
+		call := rec.Stop()
+		tw := ld.Size.X + 2*padX
+		if active {
+			draw.Rect(gtx.Ops, image.Rect(x, h-mark, x+tw, h), th.Color.Accent)
+		}
+		t := op.Offset(image.Pt(x+padX, (h-ld.Size.Y)/2)).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		t.Pop()
+		if !active {
+			area := clip.Rect(image.Rect(x, 0, x+tw, h)).Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			area.Pop()
+		}
+		hd.spans = append(hd.spans, tabSpan{id: tab.ID, title: tab.Title, x0: x, x1: x + tw})
+		x += tw
+	}
 }
 
 // iconButton draws a square icon button of px pixels with a rounded
@@ -838,7 +842,7 @@ func (w *Workbench) layoutStripeButton(gtx layout.Context, th *tokens.Theme, sid
 		case sb.Active:
 			draw.RRect(gtx.Ops, image.Rectangle{Max: size}, rr, th.Color.Selection)
 			col = th.Color.Text
-		case b.click.Hovered() || w.dragging == sb.ID:
+		case b.click.Hovered() || (w.Dragging() && w.drag.id == sb.ID):
 			draw.RRect(gtx.Ops, image.Rectangle{Max: size}, rr, th.Color.SurfaceHover)
 			col = th.Color.Text
 		}
@@ -875,7 +879,7 @@ func (w *Workbench) layoutStripeButton(gtx layout.Context, th *tokens.Theme, sid
 // stripeTooltip shows title, badge and shortcut beside a hovered stripe
 // button (towards the window center) after atoms.TooltipDelay.
 func (w *Workbench) stripeTooltip(gtx layout.Context, th *tokens.Theme, side Side, sb StripeButton, b *stripeBtn, bs int) {
-	if !b.click.Hovered() || w.dragging != "" {
+	if !b.click.Hovered() || w.Dragging() {
 		b.since = time.Time{}
 		return
 	}

@@ -209,6 +209,7 @@ func New(opts Options) (*App, error) {
 	a.registerModules()
 	a.registerVersion()
 	a.registerSettings()
+	a.registerLayout()
 	a.registerFileConfig()
 	a.registerKeymap()
 	a.registerEditOps()

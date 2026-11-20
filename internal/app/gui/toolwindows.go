@@ -1,10 +1,14 @@
 package gui
 
 import (
+	"strings"
+
 	"gioui.org/layout"
 
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
+	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/palette"
 	"github.com/ape-dev-de/tiegel/internal/ui/templates"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
@@ -37,8 +41,10 @@ func toolSide(s templates.Side) controller.ToolSide {
 	return controller.SideBottom
 }
 
-// installProjectTool registers the project tree as a tool window.
+// installProjectTool registers the project tree as a tool window and the
+// layout actions.
 func (v *View) installProjectTool() {
+	v.installLayoutActions()
 	v.Registry.AddToolWindow(ToolWindow{
 		ID: ToolProject, Title: "Project", Glyph: atoms.GlyphFolder, Side: Left, Order: 0,
 		Mac: "Cmd+1", PC: "Alt+1", ActionID: ActProjectView,
@@ -189,6 +195,14 @@ func (v *View) toolSlots(slots *templates.Slots) {
 				continue
 			}
 			p := templates.Panel{ID: t.ID, Title: t.Title, Content: func(gtx layout.Context) layout.Dimensions { return t.Layout(gtx, th) }}
+			for _, tid := range l.TabsOf(side, g) {
+				if tt, ok := v.Registry.ToolWindow(tid); ok {
+					p.Tabs = append(p.Tabs, templates.PanelTab{ID: tid, Title: tt.Title})
+				}
+			}
+			if len(p.Tabs) < 2 {
+				p.Tabs = nil
+			}
 			if g == controller.GroupSplit {
 				slots.Splits[bs] = p
 			} else {
@@ -199,6 +213,8 @@ func (v *View) toolSlots(slots *templates.Slots) {
 	if !synced {
 		v.bench.Maximized = l.MaxPanel
 	}
+	v.bench.BottomFull[templates.CornerLeft] = l.IsBottomFull(controller.SideLeft)
+	v.bench.BottomFull[templates.CornerRight] = l.IsBottomFull(controller.SideRight)
 	v.toolsVersion = l.Version
 }
 
@@ -226,7 +242,20 @@ func (v *View) handleBenchEvent(ev templates.Event) {
 	case templates.HideEvent:
 		v.HideTool(e.ID)
 	case templates.MoveEvent:
-		l.MoveTo(e.ID, toolSide(e.Side), toolGroup(e.Group))
+		// A dropped window is shown where it landed.
+		side, group := toolSide(e.Side), toolGroup(e.Group)
+		if e.Tab {
+			l.JoinTab(e.ID, side, group)
+		} else {
+			l.MoveTo(e.ID, side, group)
+		}
+		if e.FullWidth {
+			l.SetBottomFull(controller.SideLeft, true)
+			l.SetBottomFull(controller.SideRight, true)
+		}
+		v.ShowTool(e.ID)
+	case templates.SelectEvent:
+		v.ShowTool(e.ID)
 	case templates.ResizeEvent:
 		if e.Split {
 			l.SetSplitSize(toolSide(e.Side), e.Size)
@@ -294,8 +323,117 @@ func (v *View) openToolMenu(id string) {
 	} else {
 		items = append(items, MenuItem{Title: "Show", Run: func() { v.ShowTool(id) }})
 	}
+	if len(l.TabsOf(side, group)) > 0 && contains(l.TabsOf(side, group), id) {
+		items = append(items, MenuItem{Title: "Remove from Tab Group", Run: func() { l.LeaveTabs(id) }})
+	}
+	items = append(append(items, MenuItem{Separator: true}), v.layoutMenuItems()...)
 	if more := v.Registry.ContextMenu(v, ContextToolWindow, ContextTarget{ToolID: id}); len(more) > 0 {
 		items = append(append(items, MenuItem{Separator: true}), more...)
 	}
 	v.ShowMenu(t.Title, items)
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// Layout actions (View › Tool Window Layout, D475/D476).
+const (
+	ActBottomFullWidth  keymap.Action = "view.layout.bottomFullWidth"
+	ActBottomUnderLeft  keymap.Action = "view.layout.bottomUnderLeft"
+	ActBottomUnderRight keymap.Action = "view.layout.bottomUnderRight"
+	ActResetLayout      keymap.Action = "view.layout.reset"
+	ActSaveLayout       keymap.Action = "view.layout.save"
+	ActApplyLayout      keymap.Action = "view.layout.apply"
+	ActDeleteLayout     keymap.Action = "view.layout.delete"
+)
+
+// layoutMenu is the submenu of the layout actions.
+const layoutMenu = "View/Tool Window Layout"
+
+// installLayoutActions registers the layout actions.
+func (v *View) installLayoutActions() {
+	for _, a := range []Action{
+		{ID: ActBottomFullWidth, Title: "Bottom Panel: Full Width", Section: "corners", Run: func(v *View) {
+			on := !(v.ctl.Tools.IsBottomFull(controller.SideLeft) && v.ctl.Tools.IsBottomFull(controller.SideRight))
+			v.ctl.Tools.SetBottomFull(controller.SideLeft, on)
+			v.ctl.Tools.SetBottomFull(controller.SideRight, on)
+		}},
+		{ID: ActBottomUnderLeft, Title: "Bottom Panel: Below Left Panels", Section: "corners", Run: func(v *View) { v.toggleCorner(controller.SideLeft) }},
+		{ID: ActBottomUnderRight, Title: "Bottom Panel: Below Right Panels", Section: "corners", Run: func(v *View) { v.toggleCorner(controller.SideRight) }},
+		{ID: ActResetLayout, Title: "Reset Layout", Section: "layouts", Run: func(v *View) { v.ctl.ResetToolLayout() }},
+		{ID: ActSaveLayout, Title: "Save Layout As…", Section: "layouts", Run: (*View).saveLayoutAs},
+		{ID: ActApplyLayout, Title: "Apply Layout…", Section: "layouts", Run: func(v *View) { v.chooseLayout("Apply Layout", v.ctl.ApplyToolLayout) }},
+		{ID: ActDeleteLayout, Title: "Delete Layout…", Section: "layouts", Run: func(v *View) { v.chooseLayout("Delete Layout", v.ctl.DeleteToolLayout) }},
+	} {
+		a.Menu = layoutMenu
+		v.Registry.AddAction(a)
+	}
+}
+
+// toggleCorner gives the bottom corner of side to the bottom panel or
+// back to the side panels.
+func (v *View) toggleCorner(side controller.ToolSide) {
+	l := v.ctl.Tools
+	l.SetBottomFull(side, !l.IsBottomFull(side))
+}
+
+// layoutMenuItems are the layout entries of the tool window menu.
+func (v *View) layoutMenuItems() []MenuItem {
+	l := v.ctl.Tools
+	left, right := l.IsBottomFull(controller.SideLeft), l.IsBottomFull(controller.SideRight)
+	return []MenuItem{
+		{Title: "Bottom Panel: Full Width", Action: ActBottomFullWidth, Checked: left && right},
+		{Title: "Bottom Panel: Below Left Panels", Action: ActBottomUnderLeft, Checked: left},
+		{Title: "Bottom Panel: Below Right Panels", Action: ActBottomUnderRight, Checked: right},
+		{Title: "Reset Layout", Action: ActResetLayout},
+	}
+}
+
+// saveLayoutAs asks for a name and saves the current layout under it.
+func (v *View) saveLayoutAs() {
+	v.OpenChooser(ChooserSpec{Title: "Save Layout As", Hint: "Name of the layout (an existing one is replaced)", NoList: true,
+		OnChoose: func(_ int, q string) {
+			if q = strings.TrimSpace(q); q != "" {
+				v.ctl.SaveToolLayout(q)
+			}
+		}})
+}
+
+// chooseLayout lists the saved layouts and runs fn with the chosen name.
+func (v *View) chooseLayout(title string, fn func(name string)) {
+	v.ctl.ToolLayoutNames(func(names []string) {
+		if len(names) == 0 {
+			v.ctl.Status.Notice = "No saved layouts (View › Tool Window Layout › Save Layout As…)"
+			return
+		}
+		filter := func(q string) ([]palette.Item, []string) {
+			var items []palette.Item
+			var shown []string
+			for _, n := range names {
+				if strings.Contains(strings.ToLower(n), strings.ToLower(strings.TrimSpace(q))) {
+					items = append(items, palette.Item{Label: n})
+					shown = append(shown, n)
+				}
+			}
+			return items, shown
+		}
+		items, shown := filter("")
+		v.OpenChooser(ChooserSpec{Title: title, Hint: "Saved layout", Items: items,
+			OnQuery: func(q string) []palette.Item {
+				var out []palette.Item
+				out, shown = filter(q)
+				return out
+			},
+			OnChoose: func(i int, _ string) {
+				if i >= 0 && i < len(shown) {
+					fn(shown[i])
+				}
+			}})
+	})
 }
