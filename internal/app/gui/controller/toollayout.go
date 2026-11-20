@@ -182,10 +182,52 @@ func (l *ToolLayout) RegisterIn(id string, def ToolSide, group ToolGroup) {
 		l.Tools[id] = def
 		l.changed()
 	}
+	if l.reconcile(id) {
+		l.changed()
+	}
 	if l.pending[id] {
 		delete(l.pending, id)
 		l.Show(id)
 	}
+}
+
+// reconcile moves tool window id out of slots it does not belong to (a
+// stored layout may name it as active window or tab of another slot, e.g.
+// an older layout without groups): it is shown in its own slot instead if
+// that slot shows nothing else. Windows with unknown placement (neither
+// stored nor registered) are left alone. It reports a change.
+func (l *ToolLayout) reconcile(id string) bool {
+	_, known := l.Tools[id]
+	_, def := l.defaults[id]
+	if id == "" || !known && !def {
+		return false
+	}
+	want := slotKey{l.SideOf(id), l.GroupOf(id)}
+	changed := false
+	l.eachSlot(func(k slotKey, s *SideState) {
+		if k == want {
+			return
+		}
+		if s.Active == id {
+			open := s.Open
+			s.Active, s.Open = "", false
+			for _, t := range s.Tabs {
+				if t != id {
+					s.Active, s.Open = t, open
+					break
+				}
+			}
+			if dst := l.Slot(want.side, want.group); dst.Active == "" || open && !dst.Open {
+				dst.Active, dst.Open = id, open
+			}
+			changed = true
+		}
+		if contains(s.Tabs, id) {
+			s.Tabs = removeTab(s.Tabs, id)
+			changed = true
+		}
+	})
+	return changed
 }
 
 // Unregister forgets a tool window that went away (module disabled); its
@@ -676,6 +718,14 @@ func (l *ToolLayout) UnmarshalJSON(data []byte) error {
 	restore(l.Sides, f.Sides, 0.05)
 	restore(l.Splits, f.Splits, 0.1)
 	l.MaxPanel = f.Maximized
+	var ids []string
+	l.eachSlot(func(_ slotKey, s *SideState) {
+		ids = append(ids, s.Active)
+		ids = append(ids, s.Tabs...)
+	})
+	for _, id := range ids {
+		l.reconcile(id)
+	}
 	for _, side := range []ToolSide{SideLeft, SideRight} {
 		if f.Corners[side] == cornerBottom {
 			if l.BottomFull == nil {

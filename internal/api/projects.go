@@ -15,6 +15,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/bus"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/run"
+	"github.com/ape-dev-de/tiegel/internal/terminal"
 	"github.com/ape-dev-de/tiegel/internal/workspace"
 )
 
@@ -73,6 +74,20 @@ type ProjectsHibernateParams struct {
 type ProjectsCloseParams struct {
 	Name  string `json:"name"`
 	Force bool   `json:"force,omitempty"`
+}
+
+// ProjectsClientStateParams are the params of "projects.attachClientState".
+type ProjectsClientStateParams struct {
+	Name string `json:"name"`
+	// ClientState is opaque client state as in ProjectsHibernateParams.
+	ClientState json.RawMessage `json:"clientState"`
+}
+
+// ProjectsClientStateResult is the result of "projects.attachClientState".
+type ProjectsClientStateResult struct {
+	// Attached is false when the project is not hibernated (any more):
+	// the state was dropped.
+	Attached bool `json:"attached"`
 }
 
 // ProjectsBusyResult is the result of "projects.busy".
@@ -246,6 +261,14 @@ func (w *Workspace) Hibernate(ctx context.Context, p ProjectsHibernateParams) (P
 	return info, apiError(err)
 }
 
+// AttachClientState stores client state for a hibernated project (handed
+// back by the resume); a project that is not hibernated is left alone
+// (attached false).
+func (w *Workspace) AttachClientState(name string, state json.RawMessage) (bool, error) {
+	ok, err := w.mgr.AttachClientState(name, state)
+	return ok, apiError(err)
+}
+
 // Resume restores a hibernated project in the background (active if no
 // project is).
 func (w *Workspace) Resume(ctx context.Context, name string) (ProjectSession, error) {
@@ -293,9 +316,11 @@ func apiError(err error) error {
 
 // forwardTarget returns the App a call to method on a is forwarded to: the
 // active project's App when a hosts a workspace and is not active itself.
-func (a *App) forwardTarget(method string) *App {
+// Calls from inside a handler of a (ctx marked by callLocal/Call) stay on
+// a: they belong to a's project, not to the active one.
+func (a *App) forwardTarget(ctx context.Context, method string) *App {
 	w := a.ws.Load()
-	if w == nil || w.host != a || hostMethod(method) {
+	if w == nil || w.host != a || hostMethod(method) || a.handling(ctx) {
 		return nil
 	}
 	t := w.ActiveApp()
@@ -326,7 +351,7 @@ func (a *App) eventBus() *bus.Bus {
 
 // activeRoot is the root of the project a client of a sees.
 func (a *App) activeRoot() string {
-	if t := a.forwardTarget("project.info"); t != nil {
+	if t := a.forwardTarget(context.Background(), "project.info"); t != nil {
 		return t.ProjectRoot()
 	}
 	return a.ProjectRoot()
@@ -423,7 +448,7 @@ func (w *Workspace) legacyOpen(ctx context.Context, a *App, path string) (Projec
 		return ProjectInfo{}, err
 	}
 	if cur := w.sessionOf(a); cur != nil && cur.root != root {
-		if err := w.mgr.Close(ctx, cur.root, true); err != nil {
+		if err := w.closePreserving(ctx, cur); err != nil {
 			return ProjectInfo{}, apiError(err)
 		}
 	}
@@ -445,7 +470,17 @@ func (w *Workspace) legacyClose(ctx context.Context, a *App) (ProjectInfo, error
 		a.closeProjectDirect()
 		return ProjectInfo{}, nil
 	}
-	return ProjectInfo{}, apiError(w.mgr.Close(ctx, cur.root, true))
+	return ProjectInfo{}, apiError(w.closePreserving(ctx, cur))
+}
+
+// closePreserving closes the session p with the legacy project.close
+// semantics: documents are not saved (unsaved changes become recovery
+// points) and runs and debug sessions are not stopped explicitly.
+func (w *Workspace) closePreserving(ctx context.Context, p *appProject) error {
+	p.preserve.Store(true)
+	err := w.mgr.Close(ctx, p.root, true)
+	p.preserve.Store(false)
+	return err
 }
 
 // ---- project sessions --------------------------------------------------------
@@ -454,6 +489,10 @@ func (w *Workspace) legacyClose(ctx context.Context, a *App) (ProjectInfo, error
 type appProject struct {
 	w    *Workspace
 	root string
+
+	// preserve marks a legacy project.close/open: stop neither saves
+	// nor stops runs (closeProjectDirect keeps recovery points).
+	preserve atomic.Bool
 
 	mu  sync.Mutex
 	app *App // nil while hibernated
@@ -509,8 +548,32 @@ func (w *Workspace) release(p *appProject, app *App) {
 	}
 }
 
-// Busy implements workspace.Project: running processes and debug
-// sessions.
+// terminalBlockers names the terminals of root that do work closing them
+// would end: a shell with a job in the foreground ("terminal: vim") and a
+// running plugin launch such as "docker compose up" or ssh, whose program
+// is the foreground job itself.
+func terminalBlockers(infos []terminal.Info, root string) []string {
+	var out []string
+	for _, i := range infos {
+		if !i.Running || (i.Project != "" && i.Project != root) {
+			continue
+		}
+		switch {
+		case i.Busy && i.Process != "":
+			out = append(out, "terminal: "+i.Process)
+		case i.Kind != "" && i.Kind != terminal.KindShell:
+			name := i.Name
+			if name == "" {
+				name = i.Kind + " " + i.Target
+			}
+			out = append(out, "terminal: "+name)
+		}
+	}
+	return out
+}
+
+// Busy implements workspace.Project: running processes, terminals with
+// work in the foreground and debug sessions.
 func (p *appProject) Busy(ctx context.Context) []string {
 	app := p.current()
 	if app == nil {
@@ -522,6 +585,7 @@ func (p *appProject) Busy(ctx context.Context) []string {
 			out = append(out, "run: "+i.Name)
 		}
 	}
+	out = append(out, terminalBlockers(app.terms.List(), p.root)...)
 	var sessions []struct {
 		ID string `json:"id"`
 	}
@@ -553,6 +617,9 @@ func (p *appProject) Hibernate(ctx context.Context, force bool) ([]string, error
 
 // stop saves the documents and, with force, stops runs and debugging.
 func (p *appProject) stop(ctx context.Context, app *App, force bool) error {
+	if p.preserve.Load() {
+		return nil
+	}
 	if !p.w.exiting.Load() {
 		if err := app.saver.SaveAll(ctx, autosave.TriggerClose); err != nil && !force {
 			return fmt.Errorf("%w: %v", workspace.ErrUnsaved, err)
@@ -644,6 +711,14 @@ func (a *App) registerProjects() {
 			return ProjectSession{}, err
 		}
 		return w.Hibernate(ctx, p)
+	})
+	mustHandle(a, "projects.attachClientState", "Hand client state (tabs, cursors) to a hibernated project for its resume; a running project is left alone", func(_ context.Context, p ProjectsClientStateParams) (ProjectsClientStateResult, error) {
+		w, err := a.workspace()
+		if err != nil {
+			return ProjectsClientStateResult{}, err
+		}
+		ok, err := w.AttachClientState(p.Name, p.ClientState)
+		return ProjectsClientStateResult{Attached: ok}, err
 	})
 	mustHandle(a, "projects.resume", "Restore a hibernated project in the background (active if none is)", func(ctx context.Context, p ProjectsNameParams) (ProjectSession, error) {
 		w, err := a.workspace()

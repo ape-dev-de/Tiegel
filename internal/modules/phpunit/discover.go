@@ -208,7 +208,7 @@ func (m *Module) newAncestry(ctx context.Context, parsed []parsedFile) *ancestry
 		Subtypes []node `json:"subtypes"`
 	}
 	params := map[string]any{"fqn": testCaseFQN}
-	if err := api.NewInProcess(app).Call(ctx, "nav.typeHierarchy", params, &h); err == nil {
+	if err := app.CallLocal(ctx, "nav.typeHierarchy", params, &h); err == nil {
 		var walk func([]node)
 		walk = func(ns []node) {
 			for _, n := range ns {

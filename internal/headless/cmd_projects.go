@@ -1,6 +1,7 @@
 package headless
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -11,9 +12,9 @@ import (
 func init() {
 	flagSpec["force"] = false
 	register(
-		&command{name: "projects", usage: "projects [list | open DIR | switch NAME | hibernate NAME [--force] | resume NAME | close NAME [--force] | busy NAME]",
-			summary: "several open projects: list, open, switch, hibernate (release language server, watcher, index), resume, close; NAME is the root or the directory name",
-			maxArgs: 2, run: runProjects},
+		&command{name: "projects", usage: "projects [list | open DIR | switch NAME | hibernate NAME [--force] | resume NAME | close NAME [--force] | busy NAME | client-state NAME JSON]",
+			summary: "several open projects: list, open, switch, hibernate (release language server, watcher, index), resume, close, client-state (attach to a hibernated project); NAME is the root or the directory name",
+			maxArgs: 3, run: runProjects},
 	)
 }
 
@@ -26,7 +27,9 @@ func runProjects(c *cli) error {
 	arg := ""
 	switch {
 	case sub == "list" && len(c.p.args) <= 1:
-	case sub != "list" && len(c.p.args) == 2:
+	case sub == "client-state" && len(c.p.args) == 3:
+		arg = c.p.args[1]
+	case sub != "list" && sub != "client-state" && len(c.p.args) == 2:
 		arg = c.p.args[1]
 	default:
 		return usage()
@@ -60,6 +63,22 @@ func runProjects(c *cli) error {
 			return err
 		}
 		return c.emit(list, func(w io.Writer) { printProjects(w, list) })
+	case "client-state":
+		state := json.RawMessage(c.p.args[2])
+		if !json.Valid(state) {
+			return usagef("client-state: %q is not JSON", c.p.args[2])
+		}
+		var res api.ProjectsClientStateResult
+		if err := c.call("projects.attachClientState", api.ProjectsClientStateParams{Name: arg, ClientState: state}, &res); err != nil {
+			return err
+		}
+		return c.emit(res, func(w io.Writer) {
+			if res.Attached {
+				fmt.Fprintln(w, "attached")
+			} else {
+				fmt.Fprintln(w, "not hibernated: dropped")
+			}
+		})
 	case "busy":
 		var busy api.ProjectsBusyResult
 		if err := c.call("projects.busy", api.ProjectsNameParams{Name: arg}, &busy); err != nil {

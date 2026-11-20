@@ -235,3 +235,55 @@ func TestNamedToolLayouts(t *testing.T) {
 		t.Fatal("applying a missing layout should report")
 	}
 }
+
+// Review wave 9 B3: an old layout (no groups) has Structure active in the
+// primary left slot while its default is now the split slot. Loading
+// before or after registration shows it in its own slot only, and
+// toggling does not duplicate it.
+func TestToolLayoutOldActiveMovesToGroup(t *testing.T) {
+	old := []byte(`{"sides":{"left":{"active":"structure","open":true,"tabs":["project","structure"]},"bottom":{"active":"terminal"}}}`)
+	check := func(name string, l *ToolLayout) {
+		t.Helper()
+		if l.Shown(SideLeft, GroupPrimary) == "structure" || l.Slot(SideLeft, GroupPrimary).Active == "structure" {
+			t.Fatalf("%s: structure still in the primary slot: %+v", name, *l.Slot(SideLeft, GroupPrimary))
+		}
+		if !l.Visible("structure") || l.Shown(SideLeft, GroupSplit) != "structure" {
+			t.Fatalf("%s: structure not shown in its split slot: %+v", name, *l.Slot(SideLeft, GroupSplit))
+		}
+		if p := l.Slot(SideLeft, GroupPrimary); p.Active != "project" || !p.Open || len(p.Tabs) != 0 {
+			t.Fatalf("%s: primary slot %+v", name, *p)
+		}
+		if l.Toggle("structure") || l.Visible("structure") || l.Shown(SideLeft, GroupPrimary) == "structure" {
+			t.Fatalf("%s: toggle off", name)
+		}
+		if !l.Toggle("structure") || l.Shown(SideLeft, GroupSplit) != "structure" || l.Shown(SideLeft, GroupPrimary) != "project" {
+			t.Fatalf("%s: toggle on", name)
+		}
+	}
+	// Loaded after registration.
+	l := registered()
+	if err := json.Unmarshal(old, l); err != nil {
+		t.Fatal(err)
+	}
+	check("after", l)
+	// Loaded before registration (the GUI's order).
+	l = NewToolLayout()
+	if err := json.Unmarshal(old, l); err != nil {
+		t.Fatal(err)
+	}
+	if l.Slot(SideLeft, GroupPrimary).Active != "structure" {
+		t.Fatal("unknown window moved before registration")
+	}
+	l.Register("project", SideLeft)
+	l.RegisterIn("structure", SideLeft, GroupSplit)
+	l.Register("terminal", SideBottom)
+	check("before", l)
+	// A window moved by the user to the primary slot stays there.
+	l = registered()
+	if err := json.Unmarshal([]byte(`{"groups":{"structure":"primary"},"sides":{"left":{"active":"structure","open":true}}}`), l); err != nil {
+		t.Fatal(err)
+	}
+	if l.Shown(SideLeft, GroupPrimary) != "structure" || l.Shown(SideLeft, GroupSplit) != "" {
+		t.Fatalf("user placement changed: %+v %+v", *l.Slot(SideLeft, GroupPrimary), *l.Slot(SideLeft, GroupSplit))
+	}
+}

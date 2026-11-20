@@ -349,7 +349,7 @@ func (m *Module) runTests(ctx context.Context, p api.TestRunParams) (api.TestRun
 		start.Spec = &spec
 	}
 	var info run.Info
-	if err := api.NewInProcess(app).Call(ctx, "run.start", start, &info); err != nil {
+	if err := app.CallLocal(ctx, "run.start", start, &info); err != nil {
 		return api.TestRun{}, err
 	}
 	if info.Type != ID {

@@ -86,6 +86,11 @@ type View struct {
 	toolsSeen    uint64
 	toolIDs      map[string]bool
 	toolsVersion uint64
+	// maxDrawable tells whether the maximized tool window (ToolLayout
+	// MaxPanel) could be drawn when the slots were last filled, i.e. is
+	// registered with content; only then does the workbench dropping it
+	// clear the stored maximize.
+	maxDrawable bool
 	// activeTool is the tool window the user worked with last
 	// (Shift+Escape hides it).
 	activeTool string

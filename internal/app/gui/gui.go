@@ -151,13 +151,18 @@ func (m *windows) quit() {
 	}
 }
 
-// route delivers a native menu item to the window with the focus.
+// route delivers a native menu item to the window with the focus: on its
+// UI goroutine, to the project view shown then (not the one of the last
+// frame, which may just have been switched away).
 func (m *windows) route(id string) {
 	m.mu.Lock()
-	win := m.focused
+	var sess *Sessions
+	if m.focused != nil {
+		sess = m.focused.sess
+	}
 	m.mu.Unlock()
-	if win != nil && win.view != nil {
-		win.view.Post(func() { win.view.runMenuID(id) })
+	if sess != nil {
+		sess.Post(func() { sess.Shown().runMenuID(id) })
 	}
 }
 

@@ -404,3 +404,39 @@ func TestWindowingScreenshots(t *testing.T) {
 	e.settle()
 	e.shot("windowing-welcome")
 }
+
+// Review wave 9 U8: a stored maximize of a tool window that registers
+// late (module still starting) survives until the window is there; a
+// registered window that is no longer shown drops it.
+func TestLateToolKeepsStoredMaximize(t *testing.T) {
+	e := newEnv(t, true)
+	l := e.ctl.Tools
+	if err := l.Apply([]byte(`{"tools":{"late.tool":"bottom"},"sides":{"bottom":{"active":"late.tool","open":true}},"maximized":"late.tool"}`)); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		e.frame()
+	}
+	if l.MaxPanel != "late.tool" {
+		t.Fatalf("stored maximize lost before registration: %q", l.MaxPanel)
+	}
+	e.v.Registry.AddToolWindow(ToolWindow{ID: "late.tool", Title: "Late", Side: Bottom,
+		Layout: func(gtx layout.Context, _ *tokens.Theme) layout.Dimensions {
+			return layout.Dimensions{Size: gtx.Constraints.Max}
+		}})
+	for range 3 {
+		e.frame()
+	}
+	if l.MaxPanel != "late.tool" || e.v.bench.Maximized != "late.tool" {
+		t.Fatalf("maximize after registration: layout %q, bench %q", l.MaxPanel, e.v.bench.Maximized)
+	}
+	// Closing the panel's side without Hide: the workbench drops the
+	// maximize and the layout follows.
+	l.HideSide(controller.SideBottom)
+	for range 3 {
+		e.frame()
+	}
+	if l.MaxPanel != "" {
+		t.Fatalf("maximize of a hidden registered window kept: %q", l.MaxPanel)
+	}
+}

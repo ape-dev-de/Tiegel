@@ -213,6 +213,11 @@ func (v *View) toolSlots(slots *templates.Slots) {
 	if !synced {
 		v.bench.Maximized = l.MaxPanel
 	}
+	v.maxDrawable = false
+	if l.MaxPanel != "" {
+		t, ok := v.Registry.ToolWindow(l.MaxPanel)
+		v.maxDrawable = ok && t.Layout != nil
+	}
 	v.bench.BottomFull[templates.CornerLeft] = l.IsBottomFull(controller.SideLeft)
 	v.bench.BottomFull[templates.CornerRight] = l.IsBottomFull(controller.SideRight)
 	v.toolsVersion = l.Version
@@ -224,10 +229,16 @@ func (v *View) handleBench(gtx layout.Context) {
 	for _, e := range v.bench.Update(gtx) {
 		v.handleBenchEvent(e)
 	}
-	// The template drops a maximized panel that is no longer shown.
+	// The template drops a maximized panel that is no longer shown. A
+	// window that is not registered yet (module still starting) keeps its
+	// stored maximize for when it registers.
 	if v.bench.Maximized != l.MaxPanel && v.toolsVersion == l.Version {
-		l.SetMaxPanel(v.bench.Maximized)
-		v.toolsVersion = l.Version
+		if v.maxDrawable {
+			l.SetMaxPanel(v.bench.Maximized)
+			v.toolsVersion = l.Version
+		} else {
+			v.bench.Maximized = l.MaxPanel
+		}
 	}
 }
 

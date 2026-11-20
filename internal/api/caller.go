@@ -101,9 +101,35 @@ func convert(v, result any) error {
 
 // callValue implements Caller.Call for a context that may carry a session.
 func (a *App) callValue(ctx context.Context, method string, params, result any) (err error) {
-	if t := a.forwardTarget(method); t != nil {
+	if t := a.forwardTarget(ctx, method); t != nil {
 		return t.callValue(ctx, method, params, result)
 	}
+	return a.callLocal(ctx, method, params, result)
+}
+
+// handlingKey marks a context as being inside a handler of an App: calls
+// made with it on that App are never forwarded to the active project.
+type handlingKey struct{}
+
+// withHandling marks ctx as running a handler of a.
+func (a *App) withHandling(ctx context.Context) context.Context {
+	if h, _ := ctx.Value(handlingKey{}).(*App); h == a {
+		return ctx
+	}
+	return context.WithValue(ctx, handlingKey{}, a)
+}
+
+// handling reports whether ctx runs inside a handler of a.
+func (a *App) handling(ctx context.Context) bool {
+	h, _ := ctx.Value(handlingKey{}).(*App)
+	return h == a
+}
+
+// CallLocal calls method on exactly this App, even when it hosts a
+// workspace whose active project is another App (see EnableWorkspace).
+// Modules use it to call the kernel for their own project, e.g. from a
+// handler or a background job; result is a pointer or nil.
+func (a *App) CallLocal(ctx context.Context, method string, params, result any) error {
 	return a.callLocal(ctx, method, params, result)
 }
 
@@ -115,6 +141,7 @@ func (a *App) callLocal(ctx context.Context, method string, params, result any) 
 		return err
 	}
 	defer a.recoverCall(method, &err)
+	ctx = a.withHandling(ctx)
 	if _, raw := params.(json.RawMessage); !raw && m.direct != nil {
 		if handled, err := m.direct(ctx, params, result); handled {
 			return err

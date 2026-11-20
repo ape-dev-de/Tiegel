@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 	"github.com/ape-dev-de/tiegel/internal/run"
+	"github.com/ape-dev-de/tiegel/internal/terminal"
 	"github.com/ape-dev-de/tiegel/internal/workspace"
 )
 
@@ -397,5 +399,149 @@ func TestProjectsHostCloseKeepsUnsaved(t *testing.T) {
 	}
 	if _, err := a.Workspace().Open(context.Background(), dirA); ErrorCode(err) != CodeUnavailable {
 		t.Fatalf("open after close: %v", err)
+	}
+}
+
+// Review wave 9 B2: with the workspace enabled, project.close and
+// project.open keep their legacy semantics: unsaved changes become
+// recovery points (disk untouched) and runs are not stopped.
+func TestProjectsLegacyCloseKeepsUnsavedAndRuns(t *testing.T) {
+	a := newTestApp(t)
+	if _, err := a.EnableWorkspace(WorkspaceOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	self := selfExe(t)
+	dirA, dirB := projectDir(t, "alpha"), projectDir(t, "beta")
+	call(t, a, "project.open", PathParams{Path: dirA}, nil)
+	var info run.Info
+	call(t, a, "run.start", RunStartParams{Spec: &run.Spec{Name: "sleeper", Program: self, Env: []string{runHelperEnv + "=sleep"}}}, &info)
+	defer func() { _ = tryCall(a, "run.stop", RunIDParams{RunID: info.ID}, nil) }()
+	call(t, a, "doc.open", DocOpenParams{Path: "alpha.php"}, nil)
+	call(t, a, "doc.insert", DocInsertParams{Path: "alpha.php", At: Pos{Line: 1}, Text: "echo 1;\n"}, nil)
+
+	// project.open replaces alpha by beta.
+	call(t, a, "project.open", PathParams{Path: dirB}, nil)
+	if b, _ := os.ReadFile(filepath.Join(dirA, "alpha.php")); string(b) != "<?php\n" {
+		t.Fatalf("project.open saved the replaced project: %q", b)
+	}
+	var list []run.Info
+	call(t, a, "run.list", RunListParams{Active: true}, &list)
+	if len(list) != 1 || list[0].ID != info.ID {
+		t.Fatalf("project.open stopped the run: %+v", list)
+	}
+	call(t, a, "doc.open", DocOpenParams{Path: "beta.php"}, nil)
+	call(t, a, "doc.insert", DocInsertParams{Path: "beta.php", At: Pos{Line: 1}, Text: "echo 2;\n"}, nil)
+	call(t, a, "project.close", nil, nil)
+	if b, _ := os.ReadFile(filepath.Join(dirB, "beta.php")); string(b) != "<?php\n" {
+		t.Fatalf("project.close saved: %q", b)
+	}
+	call(t, a, "run.list", RunListParams{Active: true}, &list)
+	if len(list) != 1 {
+		t.Fatalf("project.close stopped the run: %+v", list)
+	}
+	call(t, a, "project.open", PathParams{Path: dirA}, nil)
+	var rec []RecoveryPoint
+	call(t, a, "history.recovery", nil, &rec)
+	if len(rec) == 0 {
+		t.Fatal("no recovery point for the unsaved change")
+	}
+}
+
+// Review wave 9 B8: terminals with a foreground job and running plugin
+// launches (docker compose up, ssh) block hibernation.
+func TestTerminalBlockers(t *testing.T) {
+	infos := []terminal.Info{
+		{Name: "Local", Kind: terminal.KindShell, Running: true},
+		{Name: "Local (2)", Kind: terminal.KindShell, Running: true, Busy: true, Process: "vim"},
+		{Name: "app", Kind: "docker.service", Target: "app", Running: true},
+		{Kind: "ssh", Target: "host", Running: true},
+		{Name: "done", Kind: "docker.service", Running: false},
+		{Name: "other", Kind: terminal.KindShell, Running: true, Busy: true, Process: "top", Project: "/elsewhere"},
+	}
+	got := strings.Join(terminalBlockers(infos, "/p"), ",")
+	if got != "terminal: vim,terminal: app,terminal: ssh host" {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestProjectsBusyTerminal(t *testing.T) {
+	needSh(t)
+	a := newTestApp(t)
+	HookTerminalLaunch.On(a.Hooks(), 0, func(_ context.Context, q TerminalLaunch) (TerminalLaunch, error) {
+		if q.Kind == "test.kind" {
+			q.Program, q.Args, q.Name = "/bin/sh", []string{"-c", "sleep 30"}, "compose up"
+		}
+		return q, nil
+	}, hooks.WithOwner("test"))
+	dirA := projectDir(t, "alpha")
+	call(t, a, "projects.open", PathParams{Path: dirA}, nil)
+	var info terminal.Info
+	call(t, a, "terminal.open", TerminalOpenParams{Kind: "test.kind", Target: "app"}, &info)
+	var busy ProjectsBusyResult
+	call(t, a, "projects.busy", ProjectsNameParams{Name: "alpha"}, &busy)
+	if len(busy.Busy) != 1 || busy.Busy[0] != "terminal: compose up" {
+		t.Fatalf("%+v", busy)
+	}
+	wantCode(t, a, "projects.hibernate", ProjectsHibernateParams{Name: "alpha"}, CodeConflict)
+	call(t, a, "terminal.close", TerminalIDParams{ID: info.ID}, nil)
+	call(t, a, "projects.busy", ProjectsNameParams{Name: "alpha"}, &busy)
+	if len(busy.Busy) != 0 {
+		t.Fatalf("%+v", busy)
+	}
+}
+
+// Review wave 9 B4: calls from inside a handler of the host (and module
+// calls through App.CallLocal) stay with the host's project while another
+// project is active.
+func TestProjectsNestedCallsStayLocal(t *testing.T) {
+	ext := func(a *App) error {
+		// git.status reports the App's project as the branch.
+		if err := Handle(a, "git.status", "fake", func(context.Context, json.RawMessage) (map[string]any, error) {
+			return map[string]any{"branch": a.ProjectRoot(), "files": []any{}}, nil
+		}); err != nil {
+			return err
+		}
+		if err := Handle(a, "test.nestedRoot", "nested call", func(ctx context.Context, _ struct{}) (string, error) {
+			var info ProjectInfo
+			err := a.callValue(ctx, "project.info", nil, &info)
+			return info.Root, err
+		}); err != nil {
+			return err
+		}
+		return Handle(a, "test.moduleRoot", "module call", func(context.Context, struct{}) (string, error) {
+			var info ProjectInfo
+			// A module job outside the handler's context.
+			err := a.CallLocal(context.Background(), "project.info", nil, &info)
+			return info.Root, err
+		})
+	}
+	a := newTestApp(t, ext)
+	dirA, dirB := projectDir(t, "alpha"), projectDir(t, "beta")
+	call(t, a, "projects.open", PathParams{Path: dirA}, nil)
+	call(t, a, "projects.open", PathParams{Path: dirB}, nil)
+	if a.ProjectRoot() != dirA || a.Workspace().ActiveApp() == a {
+		t.Fatal("alpha not in the background on the host")
+	}
+	ctx := context.Background()
+	local := NewLocalInProcess(a)
+	defer local.Close()
+	var root string
+	for _, m := range []string{"test.nestedRoot", "test.moduleRoot"} {
+		if err := local.Call(ctx, m, nil, &root); err != nil || root != dirA {
+			t.Errorf("%s: %q %v", m, root, err)
+		}
+	}
+	var ch VcsChangesResult
+	if err := local.Call(ctx, "vcs.changes", nil, &ch); err != nil || ch.Branch != dirA {
+		t.Fatalf("vcs.changes of alpha: %q %v", ch.Branch, err)
+	}
+	// The forwarding client still reaches beta, also through the nested call.
+	fwd := NewInProcess(a)
+	defer fwd.Close()
+	if err := fwd.Call(ctx, "test.nestedRoot", nil, &root); err != nil || root != dirB {
+		t.Fatalf("forwarded: %q %v", root, err)
+	}
+	if err := fwd.Call(ctx, "vcs.changes", nil, &ch); err != nil || ch.Branch != dirB {
+		t.Fatalf("vcs.changes of beta: %q %v", ch.Branch, err)
 	}
 }

@@ -176,6 +176,10 @@ func (s *Sessions) Post(fn func()) {
 	s.invalidate()
 }
 
+// Shown returns the view shown now (UI goroutine; unlike Current it
+// applies nothing).
+func (s *Sessions) Shown() *View { return s.shown.view }
+
 // Current applies pending results and workspace changes and returns the
 // view to draw.
 func (s *Sessions) Current() *View {
@@ -254,6 +258,8 @@ func (s *Sessions) sync() {
 			prev.ctl.Autosave("focusLost")
 		}
 		s.shown = target
+		// The keyboard goes to the shown project's editor.
+		target.view.focusEditor = true
 		if list.Active != "" && target.root == list.Active {
 			target.ctl.Activated()
 		}
@@ -264,13 +270,14 @@ func (s *Sessions) sync() {
 
 // release ends the slot of a project that was hibernated or closed. A
 // hibernation the GUI did not ask for (auto-hibernation) gets the tabs
-// and carets as client state afterwards.
+// and carets as client state afterwards – only while it is still
+// hibernated, so a resume that came first is never undone.
 func (s *Sessions) release(sl *sessionSlot) {
 	root := sl.root
 	if s.stateOf(root) == workspace.StateHibernated && !s.stored[root] {
 		cs := sl.view.clientState()
-		s.background(func(ctx context.Context) func() {
-			_, err := s.ws.Hibernate(ctx, api.ProjectsHibernateParams{Name: root, ClientState: cs})
+		s.background(func(context.Context) func() {
+			_, err := s.ws.AttachClientState(root, cs)
 			return func() { s.notice(err) }
 		})
 	}
