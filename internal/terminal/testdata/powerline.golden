@@ -1,0 +1,33 @@
+size 60x6 history 0
+--- screen
+ /home/dev/app   main  ls --color              12:00
+src  run.sh  composer.json
+ /home/dev/app   main                          12:00
+
+
+
+--- styles
+0: {"col":0,"width":15,"text":" /home/dev/app ","fg":"#ffffff","bg":"#005f87"}
+0: {"col":15,"width":1,"text":"","fg":"#005f87","bg":"#444444"}
+0: {"col":16,"width":8,"text":"  main ","fg":"#dcdcdc","bg":"#444444"}
+0: {"col":24,"width":1,"text":"","fg":"#444444"}
+0: {"col":49,"width":1,"text":"","fg":"p242"}
+0: {"col":50,"width":7,"text":" 12:00 ","fg":"p255","bg":"p242"}
+0: mark 3
+1: {"col":0,"width":3,"text":"src","fg":"p4","bold":true}
+1: {"col":5,"width":6,"text":"run.sh","fg":"p2","bold":true}
+1: mark 4
+2: {"col":0,"width":15,"text":" /home/dev/app ","fg":"#ffffff","bg":"#005f87"}
+2: {"col":15,"width":1,"text":"","fg":"#005f87","bg":"#444444"}
+2: {"col":16,"width":8,"text":"  main ","fg":"#dcdcdc","bg":"#444444"}
+2: {"col":24,"width":1,"text":"","fg":"#444444"}
+2: {"col":49,"width":1,"text":"","fg":"p242"}
+2: {"col":50,"width":7,"text":" 12:00 ","fg":"p255","bg":"p242"}
+2: mark 11
+--- state
+cursor {"row":2,"col":26,"visible":true}
+modes {"altScroll":true}
+title "zsh /home/dev/app"
+cwd "/home/dev/app"
+lastExit 0
+replies ""

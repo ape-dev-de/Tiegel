@@ -30,17 +30,19 @@ func init() {
 	flagSpec["target"] = true
 	flagSpec["scrollback"] = false
 	flagSpec["kinds"] = false
+	flagSpec["find"] = true
 	register(&command{name: "terminal",
-		usage:   "terminal --kinds | terminal [--shell SH] [--arg A]... [--dir DIR] [--service S | --kind K --target T] [--send TEXT]... [--idle 300ms] [--timeout 10s] [--cols N] [--rows N] [--scrollback] [--env K=V]...",
-		summary: "open a terminal session (project shell or a shell in a compose service), send input (\\n, \\r, \\t, \\e, \\xHH escapes), print the screen, close it; --kinds lists the session kinds of the plugins",
+		usage:   "terminal --kinds | terminal [--shell SH] [--arg A]... [--dir DIR] [--service S | --kind K --target T] [--send TEXT]... [--idle 300ms] [--timeout 10s] [--cols N] [--rows N] [--scrollback] [--find TEXT] [--env K=V]...",
+		summary: "open a terminal session (project shell or a shell in a compose service), send input (\\n, \\r, \\t, \\e, \\xHH escapes), print the screen (--find: the matches of TEXT in scrollback and screen), close it; --kinds lists the session kinds of the plugins",
 		maxArgs: 0, cwdProject: true, run: runTerminal})
 }
 
 // terminalOutput is the JSON output of "terminal".
 type terminalOutput struct {
-	Terminal terminal.Info   `json:"terminal"`
-	Screen   terminal.Screen `json:"screen"`
-	Text     string          `json:"text"`
+	Terminal terminal.Info        `json:"terminal"`
+	Screen   terminal.Screen      `json:"screen"`
+	Text     string               `json:"text"`
+	Find     *terminal.FindResult `json:"find,omitempty"`
 }
 
 // unescapeSend interprets the escapes of --send: \n \r \t \e \\ \xHH and
@@ -251,6 +253,13 @@ func runTerminal(c *cli) error {
 	if err := bg.call("terminal.text", api.TerminalTextParams{ID: info.ID, Screen: !c.p.has("scrollback")}, &txt); err != nil {
 		return err
 	}
+	var found *terminal.FindResult
+	if q := c.p.value("find"); q != "" {
+		found = &terminal.FindResult{}
+		if err := bg.call("terminal.find", api.TerminalFindParams{ID: info.ID, FindOptions: terminal.FindOptions{Query: q}}, found); err != nil {
+			return err
+		}
+	}
 	var list []terminal.Info
 	if err := bg.call("terminal.list", nil, &list); err == nil {
 		for _, i := range list {
@@ -259,7 +268,13 @@ func runTerminal(c *cli) error {
 			}
 		}
 	}
-	return c.emit(terminalOutput{Terminal: info, Screen: sc, Text: txt.Text}, func(w io.Writer) {
+	return c.emit(terminalOutput{Terminal: info, Screen: sc, Text: txt.Text, Find: found}, func(w io.Writer) {
+		if found != nil {
+			for _, m := range found.Matches {
+				fmt.Fprintf(w, "%d:%d-%d:%d\n", m.Line, m.Col, m.EndLine, m.EndCol)
+			}
+			return
+		}
 		fmt.Fprintln(w, txt.Text)
 		if !info.Running {
 			fmt.Fprintf(c.env.Stderr, "[exited with code %d]\n", info.ExitCode)

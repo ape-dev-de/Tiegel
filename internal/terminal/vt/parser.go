@@ -23,7 +23,9 @@ const (
 
 const (
 	maxParams = 32
-	maxOSC    = 4096
+	// maxOSC bounds an OSC string (OSC 52 carries base64 clipboard
+	// text).
+	maxOSC = 1 << 20
 )
 
 // parser holds the state between Write calls.
@@ -40,6 +42,27 @@ type parser struct {
 	// charset designation: which G set (0 or 1).
 	gset int
 	osc  []byte
+	// oscBEL: the OSC string ended with BEL (replies use the same
+	// terminator).
+	oscBEL bool
+}
+
+// pushParam ends the current parameter group, reusing the backing
+// arrays of earlier sequences (no allocation per sequence).
+func (p *parser) pushParam() {
+	if len(p.cur) == 0 {
+		p.cur = append(p.cur, -1)
+	}
+	if len(p.params) < maxParams {
+		n := len(p.params)
+		if n < cap(p.params) {
+			p.params = p.params[:n+1]
+			p.params[n] = append(p.params[n][:0], p.cur...)
+		} else {
+			p.params = append(p.params, append([]int(nil), p.cur...))
+		}
+	}
+	p.cur = p.cur[:0]
 }
 
 func (p *parser) resetCSI() {
@@ -81,9 +104,7 @@ func (t *Terminal) Write(b []byte) (int, error) {
 				for i < len(b) && b[i] >= 0x20 && b[i] < 0x7f {
 					i++
 				}
-				for _, ch := range b[:i] {
-					t.printRune(rune(ch))
-				}
+				t.printASCII(b[:i])
 				b = b[i:]
 				continue
 			}
@@ -198,13 +219,7 @@ func (t *Terminal) csiByte(c byte) {
 			*v = *v*10 + int(c-'0')
 		}
 	case c == ';':
-		if len(p.cur) == 0 {
-			p.cur = append(p.cur, -1)
-		}
-		if len(p.params) < maxParams {
-			p.params = append(p.params, append([]int(nil), p.cur...))
-		}
-		p.cur = p.cur[:0]
+		p.pushParam()
 	case c == ':':
 		if len(p.cur) == 0 {
 			p.cur = append(p.cur, -1)
@@ -222,12 +237,7 @@ func (t *Terminal) csiByte(c byte) {
 		p.inter = append(p.inter, c)
 	case c >= 0x40 && c <= 0x7e:
 		if len(p.cur) > 0 || len(p.params) > 0 {
-			if len(p.cur) == 0 {
-				p.cur = append(p.cur, -1)
-			}
-			if len(p.params) < maxParams {
-				p.params = append(p.params, append([]int(nil), p.cur...))
-			}
+			p.pushParam()
 		}
 		p.state = stGround
 		t.csiDispatch(c)
@@ -243,6 +253,7 @@ func (t *Terminal) stringByte(c byte) {
 	case stOSC:
 		switch c {
 		case 0x07:
+			p.oscBEL = true
 			t.oscDispatch()
 			p.state = stGround
 		case 0x1b:
@@ -255,6 +266,7 @@ func (t *Terminal) stringByte(c byte) {
 			}
 		}
 	case stOSCEsc:
+		p.oscBEL = false
 		if c == '\\' {
 			t.oscDispatch()
 			p.state = stGround

@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -29,7 +30,12 @@ type Screen struct {
 	Title   string    `json:"title,omitempty"`
 	Running bool      `json:"running"`
 	// ExitCode is valid when Running is false.
-	ExitCode int    `json:"exitCode"`
+	ExitCode int `json:"exitCode"`
+	// Bells counts BEL characters (a client flashes when it grows).
+	Bells int `json:"bells,omitempty"`
+	// LastExit is the exit code of the last command reported by shell
+	// integration (OSC 133;D), -1 when unknown.
+	LastExit int    `json:"lastExit"`
 	Seq      uint64 `json:"seq"`
 }
 
@@ -39,7 +45,11 @@ type ScreenLine struct {
 	Text    string `json:"text"`
 	Spans   []Span `json:"spans,omitempty"`
 	Wrapped bool   `json:"wrapped,omitempty"`
-	// Links are file locations in the line (columns, end exclusive).
+	// Mark holds shell integration marks (vt.Mark bits: 1 prompt,
+	// 2 input, 4 output, 8 command done).
+	Mark int `json:"mark,omitempty"`
+	// Links are file locations and URLs in the line (columns, end
+	// exclusive).
 	Links []Link `json:"links,omitempty"`
 }
 
@@ -55,20 +65,29 @@ type Span struct {
 	Faint     bool   `json:"faint,omitempty"`
 	Italic    bool   `json:"italic,omitempty"`
 	Underline bool   `json:"underline,omitempty"`
-	Blink     bool   `json:"blink,omitempty"`
-	Inverse   bool   `json:"inverse,omitempty"`
-	Hidden    bool   `json:"hidden,omitempty"`
-	Strike    bool   `json:"strike,omitempty"`
+	// UnderlineStyle is set for underlines other than single (2 double,
+	// 3 curly, 4 dotted, 5 dashed); UL is the underline color.
+	UnderlineStyle int    `json:"underlineStyle,omitempty"`
+	UL             string `json:"ul,omitempty"`
+	Overline       bool   `json:"overline,omitempty"`
+	Blink          bool   `json:"blink,omitempty"`
+	Inverse        bool   `json:"inverse,omitempty"`
+	Hidden         bool   `json:"hidden,omitempty"`
+	Strike         bool   `json:"strike,omitempty"`
+	// URL is the target of a hyperlink (OSC 8).
+	URL string `json:"url,omitempty"`
 }
 
-// Link is a file location in a line.
+// Link is a file location or a URL in a line.
 type Link struct {
 	Col    int    `json:"col"`
 	EndCol int    `json:"endCol"`
-	Path   string `json:"path"`
-	File   string `json:"file"`
-	Line   int    `json:"line"`
+	Path   string `json:"path,omitempty"`
+	File   string `json:"file,omitempty"`
+	Line   int    `json:"line,omitempty"`
 	Column int    `json:"column,omitempty"`
+	// URL is set for web links (printed or OSC 8); File is empty then.
+	URL string `json:"url,omitempty"`
 }
 
 // ColorString encodes c for Span.
@@ -104,11 +123,16 @@ func ParseColor(s string) (index int, r, g, b uint8, ok bool) {
 	return -1, 0, 0, 0, false
 }
 
-func spanOf(s vt.Span) Span {
+func spanOf(t *vt.Terminal, s vt.Span) Span {
 	a := s.Style.Attr
-	return Span{Col: s.Col, Width: s.Width, Text: s.Text, FG: ColorString(s.Style.FG), BG: ColorString(s.Style.BG),
+	sp := Span{Col: s.Col, Width: s.Width, Text: s.Text, FG: ColorString(s.Style.FG), BG: ColorString(s.Style.BG),
 		Bold: a&vt.Bold != 0, Faint: a&vt.Faint != 0, Italic: a&vt.Italic != 0, Underline: a&vt.Underline != 0,
-		Blink: a&vt.Blink != 0, Inverse: a&vt.Inverse != 0, Hidden: a&vt.Hidden != 0, Strike: a&vt.Strike != 0}
+		Overline: a&vt.Overline != 0, Blink: a&vt.Blink != 0, Inverse: a&vt.Inverse != 0, Hidden: a&vt.Hidden != 0,
+		Strike: a&vt.Strike != 0, UL: ColorString(s.Style.UL), URL: t.LinkURL(s.Style.Link)}
+	if u := a.UnderlineStyle(); u > vt.ULSingle {
+		sp.UnderlineStyle = int(u)
+	}
+	return sp
 }
 
 // ScreenOptions select the lines of a snapshot.
@@ -118,19 +142,21 @@ type ScreenOptions struct {
 	Top, Count int
 	// NoSpans leaves out the styled spans (text only).
 	NoSpans bool
-	// Linker finds file locations in the lines; nil: no links. The
+	// URLs adds web links (printed http(s) URLs and OSC 8 hyperlinks).
+	URLs bool
+	// Linker finds file locations in the lines; nil: no file links. The
 	// session's working directory (OSC 7) and start directory are tried
 	// before the linker's own directories.
 	Linker *run.Linker
 }
 
-// Screen returns a snapshot of the session.
-func (s *Session) Screen(o ScreenOptions) Screen {
-	s.mu.Lock()
-	t := s.term
+// snapshot builds a Screen of t (the caller holds the lock of t). The
+// returned column maps (byte offset → column per line) serve the link
+// search outside the lock.
+func snapshot(t *vt.Terminal, o ScreenOptions) (Screen, [][]int) {
 	cols, rows := t.Size()
-	sc := Screen{ID: s.info.ID, Cols: cols, Rows: rows, History: t.History(), Total: t.Total(), Dropped: t.Dropped(),
-		Cursor: t.Cursor(), Modes: t.Modes(), Title: t.Title(), Running: s.info.Running, ExitCode: s.info.ExitCode, Seq: t.Seq()}
+	sc := Screen{Cols: cols, Rows: rows, History: t.History(), Total: t.Total(), Dropped: t.Dropped(),
+		Cursor: t.Cursor(), Modes: t.Modes(), Title: t.Title(), Bells: t.Bells(), LastExit: t.LastExit(), Seq: t.Seq()}
 	top, count := o.Top, o.Count
 	if top < 0 {
 		top = sc.History
@@ -139,7 +165,7 @@ func (s *Session) Screen(o ScreenOptions) Screen {
 		count = rows
 	}
 	top = max(0, min(top, sc.Total))
-	count = min(count, sc.Total-top, 2000)
+	count = max(0, min(count, sc.Total-top, 2000))
 	sc.Top = top
 	sc.Lines = make([]ScreenLine, count)
 	colMaps := make([][]int, count)
@@ -147,32 +173,127 @@ func (s *Session) Screen(o ScreenOptions) Screen {
 		idx := top + i
 		l := t.Line(idx)
 		text, cm := lineText(t, l)
-		sc.Lines[i] = ScreenLine{Index: idx, Text: text, Wrapped: l.Wrapped}
+		sc.Lines[i] = ScreenLine{Index: idx, Text: text, Wrapped: l.Wrapped, Mark: int(l.Mark)}
 		colMaps[i] = cm
+		spans := t.Spans(idx)
 		if !o.NoSpans {
-			for _, sp := range t.Spans(idx) {
-				sc.Lines[i].Spans = append(sc.Lines[i].Spans, spanOf(sp))
+			sc.Lines[i].Spans = make([]Span, 0, len(spans))
+			for _, sp := range spans {
+				sc.Lines[i].Spans = append(sc.Lines[i].Spans, spanOf(t, sp))
 			}
 		}
+		if o.URLs {
+			sc.Lines[i].Links = hyperlinks(t, spans)
+		}
 	}
-	cwd, dir := t.Dir(), s.info.Dir
-	s.mu.Unlock()
+	return sc, colMaps
+}
 
-	// File checks happen outside the session lock (slow file systems).
-	if o.Linker != nil {
-		lk := *o.Linker
-		lk.Dirs = append(nonEmpty(cwd, dir), lk.Dirs...)
-		for i := range sc.Lines {
-			for _, l := range lk.Links(sc.Lines[i].Text) {
-				cm := colMaps[i]
-				if l.Start >= len(cm) || l.End >= len(cm) {
+// hyperlinks returns the OSC 8 links of a line (adjacent spans with the
+// same target merged).
+func hyperlinks(t *vt.Terminal, spans []vt.Span) []Link {
+	var out []Link
+	for _, s := range spans {
+		u := t.LinkURL(s.Style.Link)
+		if u == "" {
+			continue
+		}
+		if n := len(out); n > 0 && out[n-1].URL == u && out[n-1].EndCol == s.Col {
+			out[n-1].EndCol = s.Col + s.Width
+			continue
+		}
+		out = append(out, Link{Col: s.Col, EndCol: s.Col + s.Width, URL: u})
+	}
+	return out
+}
+
+// urlRe matches printed web links.
+var urlRe = regexp.MustCompile(`\bhttps?://[^\s<>"'` + "`" + `]+`)
+
+// findURLs returns the printed URLs of a line as byte ranges; trailing
+// punctuation and unbalanced closing brackets are not part of a URL.
+func findURLs(text string) [][2]int {
+	var out [][2]int
+	for _, m := range urlRe.FindAllStringIndex(text, -1) {
+		s, e := m[0], m[1]
+		for e > s {
+			c := text[e-1]
+			if strings.IndexByte(".,;:!?'\"", c) >= 0 {
+				e--
+				continue
+			}
+			if open := strings.IndexByte(")]}", c); open >= 0 {
+				o := "([{"[open]
+				if strings.Count(text[s:e], string(o)) < strings.Count(text[s:e], string(c)) {
+					e--
 					continue
 				}
-				sc.Lines[i].Links = append(sc.Lines[i].Links, Link{Col: cm[l.Start], EndCol: cm[l.End], Path: l.Path,
-					File: l.File, Line: l.Line, Column: l.Column})
 			}
+			break
+		}
+		if e-s > len("https://") {
+			out = append(out, [2]int{s, e})
 		}
 	}
+	return out
+}
+
+// addLinks finds printed URLs and file locations (with lk) in the lines
+// of sc; it runs outside the session lock (file checks may be slow).
+func addLinks(sc *Screen, colMaps [][]int, urls bool, lk *run.Linker) {
+	for i := range sc.Lines {
+		l := &sc.Lines[i]
+		cm := colMaps[i]
+		taken := func(c0, c1 int) bool {
+			for _, x := range l.Links {
+				if c0 < x.EndCol && c1 > x.Col {
+					return true
+				}
+			}
+			return false
+		}
+		if urls {
+			for _, m := range findURLs(l.Text) {
+				if m[1] >= len(cm) {
+					continue
+				}
+				c0, c1 := cm[m[0]], cm[m[1]]
+				if !taken(c0, c1) {
+					l.Links = append(l.Links, Link{Col: c0, EndCol: c1, URL: l.Text[m[0]:m[1]]})
+				}
+			}
+		}
+		if lk == nil {
+			continue
+		}
+		for _, f := range lk.Links(l.Text) {
+			if f.Start >= len(cm) || f.End >= len(cm) {
+				continue
+			}
+			c0, c1 := cm[f.Start], cm[f.End]
+			if taken(c0, c1) {
+				continue
+			}
+			l.Links = append(l.Links, Link{Col: c0, EndCol: c1, Path: f.Path, File: f.File, Line: f.Line, Column: f.Column})
+		}
+	}
+}
+
+// Screen returns a snapshot of the session.
+func (s *Session) Screen(o ScreenOptions) Screen {
+	s.mu.Lock()
+	sc, colMaps := snapshot(s.term, o)
+	sc.ID, sc.Running, sc.ExitCode = s.info.ID, s.info.Running, s.info.ExitCode
+	cwd, dir := s.term.Dir(), s.info.Dir
+	s.mu.Unlock()
+
+	var lk *run.Linker
+	if o.Linker != nil {
+		x := *o.Linker
+		x.Dirs = append(nonEmpty(cwd, dir), x.Dirs...)
+		lk = &x
+	}
+	addLinks(&sc, colMaps, o.URLs, lk)
 	return sc
 }
 
@@ -190,7 +311,7 @@ func nonEmpty(ss ...string) []string {
 // column of every byte offset (len(text)+1 entries).
 func lineText(t *vt.Terminal, l vt.Line) (string, []int) {
 	var b strings.Builder
-	var cols []int
+	cols := make([]int, 0, len(l.Cells)+1)
 	for c, cell := range l.Cells {
 		if cell.Width == 0 {
 			continue

@@ -5,8 +5,10 @@ import "strings"
 // sgr applies Select Graphic Rendition parameters to the pen.
 func (t *Terminal) sgr() {
 	ps := t.p.params
+	// SGR 0 keeps an open hyperlink (OSC 8 ends it).
+	reset := Style{Link: t.pen.Link}
 	if len(ps) == 0 {
-		t.pen = Style{}
+		t.pen = reset
 		return
 	}
 	for i := 0; i < len(ps); i++ {
@@ -17,7 +19,7 @@ func (t *Terminal) sgr() {
 		}
 		switch {
 		case v == 0:
-			t.pen = Style{}
+			t.pen = reset
 		case v == 1:
 			t.pen.Attr |= Bold
 		case v == 2:
@@ -25,12 +27,13 @@ func (t *Terminal) sgr() {
 		case v == 3:
 			t.pen.Attr |= Italic
 		case v == 4:
-			// 4:0 turns underline off, other styles count as underline.
-			if len(g) > 1 && g[1] == 0 {
-				t.pen.Attr &^= Underline
-			} else {
-				t.pen.Attr |= Underline
+			// 4:n selects the style (0 off, 1 single, 2 double, 3 curly,
+			// 4 dotted, 5 dashed).
+			st := ULSingle
+			if len(g) > 1 && g[1] >= 0 {
+				st = UnderlineStyle(min(g[1], 255))
 			}
+			t.pen.Attr = t.pen.Attr.withUnderline(st)
 		case v == 5 || v == 6:
 			t.pen.Attr |= Blink
 		case v == 7:
@@ -40,13 +43,13 @@ func (t *Terminal) sgr() {
 		case v == 9:
 			t.pen.Attr |= Strike
 		case v == 21:
-			t.pen.Attr |= Underline
+			t.pen.Attr = t.pen.Attr.withUnderline(ULDouble)
 		case v == 22:
 			t.pen.Attr &^= Bold | Faint
 		case v == 23:
 			t.pen.Attr &^= Italic
 		case v == 24:
-			t.pen.Attr &^= Underline
+			t.pen.Attr = t.pen.Attr.withUnderline(ULNone)
 		case v == 25:
 			t.pen.Attr &^= Blink
 		case v == 27:
@@ -65,6 +68,8 @@ func (t *Terminal) sgr() {
 				t.pen.FG = c
 			case 48:
 				t.pen.BG = c
+			case 58:
+				t.pen.UL = c
 			}
 		case v == 39:
 			t.pen.FG = Default
@@ -72,6 +77,12 @@ func (t *Terminal) sgr() {
 			t.pen.BG = Indexed(uint8(v - 40))
 		case v == 49:
 			t.pen.BG = Default
+		case v == 53:
+			t.pen.Attr |= Overline
+		case v == 55:
+			t.pen.Attr &^= Overline
+		case v == 59:
+			t.pen.UL = Default
 		case v >= 90 && v <= 97:
 			t.pen.FG = Indexed(uint8(v - 90 + 8))
 		case v >= 100 && v <= 107:

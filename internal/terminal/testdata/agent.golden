@@ -1,0 +1,26 @@
+size 32x8 history 0
+--- screen
+$ agent
+✻ Welcome see docs
+
+╭────────────────────────────╮
+│ > fix the bug              │
+╰────────────────────────────╯
+? for shortcuts
+
+--- styles
+1: {"col":0,"width":9,"text":"✻ Welcome","bold":true}
+1: {"col":14,"width":4,"text":"docs","underline":true,"url":"https://example.com/docs"}
+1: link 14-18 https://example.com/docs
+3: {"col":0,"width":30,"text":"╭────────────────────────────╮","fg":"p244"}
+4: {"col":0,"width":1,"text":"│","fg":"p244"}
+4: {"col":29,"width":1,"text":"│","fg":"p244"}
+5: {"col":0,"width":30,"text":"╰────────────────────────────╯","fg":"p244"}
+6: {"col":0,"width":15,"text":"? for shortcuts","faint":true}
+--- state
+cursor {"row":6,"col":15,"visible":false}
+modes {"bracketedPaste":true,"focusEvents":true,"altScroll":true}
+title ""
+cwd ""
+lastExit -1
+replies "\x1b[?2026;2$y\x1b[?62;22c\x1b]11;rgb:1e1e/1f1f/2222\x1b\\\x1bP>|Tiegel\x1b\\"

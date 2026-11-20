@@ -1,0 +1,36 @@
+size 40x10 history 0
+--- screen
+ 0[||||||||||||||      ]
+ 1[||||||||||||||||||| ]
+ 2[||||                ]
+ 3[|||||||||           ]
+
+  PID USER      CPU% frame 2
+  100 app        3.0 php-fpm
+  101 app        4.5 php-fpm
+  102 app        6.0 php-fpm
+F1Help F10Quit
+--- styles
+0: {"col":2,"width":1,"text":"[","fg":"p245","bold":true}
+0: {"col":3,"width":14,"text":"||||||||||||||","fg":"p40","bold":true}
+0: {"col":17,"width":7,"text":"      ]","fg":"p245","bold":true}
+1: {"col":2,"width":1,"text":"[","fg":"p245","bold":true}
+1: {"col":3,"width":19,"text":"|||||||||||||||||||","fg":"p40","bold":true}
+1: {"col":22,"width":2,"text":" ]","fg":"p245","bold":true}
+2: {"col":2,"width":1,"text":"[","fg":"p245","bold":true}
+2: {"col":3,"width":4,"text":"||||","fg":"p40","bold":true}
+2: {"col":7,"width":17,"text":"                ]","fg":"p245","bold":true}
+3: {"col":2,"width":1,"text":"[","fg":"p245","bold":true}
+3: {"col":3,"width":9,"text":"|||||||||","fg":"p40","bold":true}
+3: {"col":12,"width":12,"text":"           ]","fg":"p245","bold":true}
+5: {"col":0,"width":28,"text":"  PID USER      CPU% frame 2","fg":"p0","bg":"p6"}
+5: {"col":28,"width":12,"text":"            ","bg":"p6"}
+9: {"col":0,"width":2,"text":"F1","fg":"p0","bg":"p6"}
+9: {"col":7,"width":3,"text":"F10","fg":"p0","bg":"p6"}
+--- state
+cursor {"row":9,"col":14,"visible":false}
+modes {"altScreen":true,"mouse":1000,"mouseSgr":true,"altScroll":true}
+title ""
+cwd ""
+lastExit -1
+replies ""

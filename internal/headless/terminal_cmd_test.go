@@ -26,6 +26,11 @@ func TestTerminalCommand(t *testing.T) {
 	if code != 0 || json.Unmarshal([]byte(out), &res) != nil || res.Terminal.Running || res.Terminal.ExitCode != 3 || res.Screen.Top != 0 {
 		t.Fatalf("json: %d %q %q", code, out, errOut)
 	}
+	code, out, errOut = run(t, "", "terminal", "--project", dir, "--shell", "/bin/sh", "--env", "PS1=$ ",
+		"--send", `echo needle; echo needle\r`, "--find", "NEEDLE", "--cols", "40", "--rows", "6", "--idle", "200ms")
+	if code != 0 || strings.Count(out, ":") < 4 {
+		t.Fatalf("find: %d %q %q", code, out, errOut)
+	}
 	for _, bad := range [][]string{
 		{"terminal", "--project", dir, "--cols", "x"},
 		{"terminal", "--project", dir, "--idle", "0"},

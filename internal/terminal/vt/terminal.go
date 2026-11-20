@@ -2,7 +2,6 @@ package vt
 
 import (
 	"strconv"
-	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -51,6 +50,8 @@ type Terminal struct {
 	wrapNext bool
 	pen      Style
 	cursor   Cursor
+	// blinkMode is mode 12 (blinking cursor for the default shape).
+	blinkMode bool
 
 	top, bottom int // scroll region (inclusive)
 	tabs        []bool
@@ -62,12 +63,19 @@ type Terminal struct {
 	activeG1 bool
 
 	title, cwd string
+	titles     []string // title stack (CSI 22/23 t)
 	bells      int
+	// lastExit is the exit code of the last command (OSC 133;D), -1
+	// when unknown.
+	lastExit int
 
 	// graphemes interns base+combining sequences; Cell.R values from
 	// graphemeBase on index it.
 	graphemes []string
 	gindex    map[string]rune
+	// links interns hyperlink targets (OSC 8); Style.Link is index+1.
+	links     []string
+	linkIndex map[string]uint16
 
 	p   parser
 	seq uint64
@@ -77,6 +85,50 @@ type Terminal struct {
 	// OSC receives operating system commands the emulator does not
 	// handle itself (number and text); may be nil.
 	OSC func(num, text string)
+	// Clipboard receives clipboard writes of programs (OSC 52: target
+	// such as "c" or "p", decoded text). Nil ignores them; clipboard
+	// reads are never answered.
+	Clipboard func(target, text string)
+	// Colors answer color queries (OSC 4/10/11/12).
+	Colors Colors
+}
+
+// Colors are the colors the terminal reports to programs that ask (vim
+// and others pick a light or dark scheme from the background).
+type Colors struct {
+	FG, BG, Cursor [3]uint8
+	// ANSI are palette entries 0–15; 16–255 follow the xterm scheme.
+	ANSI [16][3]uint8
+}
+
+// DefaultColors are a dark scheme with the xterm palette.
+func DefaultColors() Colors {
+	c := Colors{FG: [3]uint8{0xd0, 0xd0, 0xd0}, BG: [3]uint8{0x1e, 0x1f, 0x22}, Cursor: [3]uint8{0xd0, 0xd0, 0xd0}}
+	for i := range c.ANSI {
+		c.ANSI[i] = PaletteRGB(uint8(i))
+	}
+	return c
+}
+
+// xtermANSI is the xterm default palette 0–15.
+var xtermANSI = [16][3]uint8{
+	{0, 0, 0}, {205, 0, 0}, {0, 205, 0}, {205, 205, 0}, {0, 0, 238}, {205, 0, 205}, {0, 205, 205}, {229, 229, 229},
+	{127, 127, 127}, {255, 0, 0}, {0, 255, 0}, {255, 255, 0}, {92, 92, 255}, {255, 0, 255}, {0, 255, 255}, {255, 255, 255},
+}
+
+var cubeLevels = [6]uint8{0, 0x5f, 0x87, 0xaf, 0xd7, 0xff}
+
+// PaletteRGB returns the xterm default RGB of palette entry i.
+func PaletteRGB(i uint8) [3]uint8 {
+	switch {
+	case i < 16:
+		return xtermANSI[i]
+	case i < 232:
+		n := i - 16
+		return [3]uint8{cubeLevels[n/36], cubeLevels[n/6%6], cubeLevels[n%6]}
+	}
+	g := 8 + 10*(i-232)
+	return [3]uint8{g, g, g}
 }
 
 const graphemeBase = 0x110000
@@ -87,7 +139,7 @@ func New(cols, rows, scrollback int) *Terminal {
 	if scrollback < 0 {
 		scrollback = DefaultScrollback
 	}
-	t := &Terminal{maxScroll: scrollback, gindex: map[string]rune{}}
+	t := &Terminal{maxScroll: scrollback, gindex: map[string]rune{}, Colors: DefaultColors()}
 	t.cols, t.rows = max(1, cols), max(1, rows)
 	t.reset()
 	return t
@@ -102,9 +154,12 @@ func (t *Terminal) reset() {
 	t.row, t.col, t.wrapNext = 0, 0, false
 	t.top, t.bottom = 0, t.rows-1
 	t.autowrap, t.origin, t.insert, t.newline = true, false, false, false
-	t.modes = Modes{}
+	t.modes = Modes{AltScroll: true}
 	t.cursor = Cursor{Visible: true}
+	t.blinkMode = false
 	t.charsets, t.activeG1 = [2]bool{}, false
+	t.titles = nil
+	t.lastExit = -1
 	t.resetTabs()
 }
 
@@ -132,6 +187,12 @@ func (t *Terminal) Size() (cols, rows int) { return t.cols, t.rows }
 func (t *Terminal) Cursor() Cursor {
 	c := t.cursor
 	c.Row, c.Col = t.row, min(t.col, t.cols-1)
+	switch {
+	case c.Shape == 0:
+		c.Blink = t.blinkMode
+	default:
+		c.Blink = c.Shape%2 == 1
+	}
 	return c
 }
 
@@ -151,6 +212,10 @@ func (t *Terminal) Dir() string { return t.cwd }
 
 // Bells returns how often BEL was received.
 func (t *Terminal) Bells() int { return t.bells }
+
+// LastExit returns the exit code of the last command the shell reported
+// through OSC 133;D (-1 when unknown).
+func (t *Terminal) LastExit() int { return t.lastExit }
 
 // Seq increases with every Write and Resize.
 func (t *Terminal) Seq() uint64 { return t.seq }
@@ -190,8 +255,26 @@ func (t *Terminal) Grapheme(c Cell) string {
 			return t.graphemes[i]
 		}
 		return " "
+	case c.R < utf8.RuneSelf:
+		return asciiStrings[c.R]
 	}
 	return string(c.R)
+}
+
+// asciiStrings avoids an allocation per ASCII cell in Grapheme.
+var asciiStrings = func() (s [utf8.RuneSelf]string) {
+	for i := range s {
+		s[i] = string(rune(i))
+	}
+	return s
+}()
+
+// LinkURL returns the target of hyperlink id (Style.Link), "" for none.
+func (t *Terminal) LinkURL(id uint16) string {
+	if id == 0 || int(id) > len(t.links) {
+		return ""
+	}
+	return t.links[id-1]
 }
 
 // ---- printing --------------------------------------------------------------
@@ -204,8 +287,10 @@ var decGraphics = map[rune]rune{
 	'x': '│', 'y': '≤', 'z': '≥', '{': 'π', '|': '≠', '}': '£', '~': '·',
 }
 
-// runeWidth returns the column width of r (0 for combining marks).
-func runeWidth(r rune) int {
+// RuneWidth returns the column width of r: 0 for combining marks and
+// format characters, 2 for East Asian wide and fullwidth characters and
+// emoji presentation, else 1.
+func RuneWidth(r rune) int {
 	if r < 0x300 {
 		return 1
 	}
@@ -213,6 +298,44 @@ func runeWidth(r rune) int {
 		return 0
 	}
 	return max(1, min(2, uniseg.StringWidth(string(r))))
+}
+
+// printASCII prints a run of printable ASCII (the common case): cells
+// are written directly as long as no special state (charsets, insert
+// mode, pending wrap) or wide character is involved.
+func (t *Terminal) printASCII(b []byte) {
+	for len(b) > 0 {
+		g := 0
+		if t.activeG1 {
+			g = 1
+		}
+		if t.charsets[g] || t.insert || t.wrapNext {
+			t.printRune(rune(b[0]))
+			b = b[1:]
+			continue
+		}
+		cells := t.cur.lines[t.row].Cells
+		n := min(len(b), t.cols-t.col)
+		pen := t.pen
+		i := 0
+		for ; i < n; i++ {
+			c := &cells[t.col+i]
+			if c.Width != 1 {
+				break // half of a wide character
+			}
+			*c = Cell{R: rune(b[i]), Style: pen, Width: 1}
+		}
+		t.col += i
+		b = b[i:]
+		switch {
+		case t.col >= t.cols:
+			t.col = t.cols - 1
+			t.wrapNext = true
+		case i < n:
+			t.printRune(rune(b[0]))
+			b = b[1:]
+		}
+	}
 }
 
 func (t *Terminal) printRune(r rune) {
@@ -225,7 +348,7 @@ func (t *Terminal) printRune(r rune) {
 			r = m
 		}
 	}
-	w := runeWidth(r)
+	w := RuneWidth(r)
 	if w == 0 {
 		t.combine(r)
 		return
@@ -240,7 +363,7 @@ func (t *Terminal) printRune(r rune) {
 	}
 	if w == 2 && t.col == t.cols-1 {
 		// A wide character does not fit: wrap (or stay) first.
-		if t.autowrap {
+		if t.autowrap && t.cols > 1 {
 			t.put(t.col, Cell{Style: t.pen, Width: 1})
 			t.cur.lines[t.row].Wrapped = true
 			t.col = 0
@@ -385,8 +508,48 @@ func (t *Terminal) reverseIndex() {
 	}
 }
 
-// scrollUp scrolls rows top..bottom up by n; lines leaving the full main
-// screen go to the scrollback.
+// rotate moves the first n lines of ls to its end (no allocation).
+func rotate(ls []Line, n int) {
+	if n <= 0 || n >= len(ls) {
+		return
+	}
+	if n <= 4 {
+		var tmp [4]Line
+		copy(tmp[:n], ls[:n])
+		copy(ls, ls[n:])
+		copy(ls[len(ls)-n:], tmp[:n])
+		return
+	}
+	if m := len(ls) - n; m <= 4 {
+		var tmp [4]Line
+		copy(tmp[:m], ls[n:])
+		copy(ls[m:], ls[:n])
+		copy(ls, tmp[:m])
+		return
+	}
+	rev := func(s []Line) {
+		for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+			s[i], s[j] = s[j], s[i]
+		}
+	}
+	rev(ls[:n])
+	rev(ls[n:])
+	rev(ls)
+}
+
+// clearLine blanks line l in place (keeping its cells array).
+func (t *Terminal) clearLine(l *Line, st Style) {
+	if len(l.Cells) != t.cols {
+		*l = newLine(t.cols, st)
+		return
+	}
+	fillBlank(l.Cells, st)
+	l.Wrapped, l.Mark = false, 0
+}
+
+// scrollUp scrolls rows top..bottom up by n; lines leaving the top of
+// the main screen go to the scrollback. The cells of the leaving lines
+// are reused for the new blank lines.
 func (t *Terminal) scrollUp(top, bottom, n int) {
 	n = min(n, bottom-top+1)
 	if n <= 0 {
@@ -398,9 +561,9 @@ func (t *Terminal) scrollUp(top, bottom, n int) {
 			t.pushScrollback(ls[i])
 		}
 	}
-	copy(ls[top:], ls[top+n:bottom+1])
+	rotate(ls[top:bottom+1], n)
 	for i := bottom - n + 1; i <= bottom; i++ {
-		ls[i] = newLine(t.cols, t.pen)
+		t.clearLine(&ls[i], t.pen)
 	}
 }
 
@@ -410,23 +573,26 @@ func (t *Terminal) scrollDown(top, bottom, n int) {
 		return
 	}
 	ls := t.cur.lines
-	copy(ls[top+n:bottom+1], ls[top:bottom+1-n])
+	rotate(ls[top:bottom+1], bottom+1-top-n)
 	for i := top; i < top+n; i++ {
-		ls[i] = newLine(t.cols, t.pen)
+		t.clearLine(&ls[i], t.pen)
 	}
 }
 
+// pushScrollback appends a copy of l (without trailing blanks) to the
+// scrollback; a full ring reuses the cells of the line it drops.
 func (t *Terminal) pushScrollback(l Line) {
 	if t.maxScroll <= 0 {
 		t.dropped++
 		return
 	}
-	l = l.trimmed()
+	n := l.contentLen()
 	if len(t.scrollback) < t.maxScroll {
-		t.scrollback = append(t.scrollback, l)
+		t.scrollback = append(t.scrollback, Line{Cells: append([]Cell(nil), l.Cells[:n]...), Wrapped: l.Wrapped, Mark: l.Mark})
 		return
 	}
-	t.scrollback[t.sbStart] = l
+	old := &t.scrollback[t.sbStart]
+	*old = Line{Cells: append(old.Cells[:0], l.Cells[:n]...), Wrapped: l.Wrapped, Mark: l.Mark}
 	t.sbStart = (t.sbStart + 1) % len(t.scrollback)
 	t.dropped++
 }
@@ -503,162 +669,6 @@ func (t *Terminal) restoreCursor() {
 	t.pen, t.origin, t.charsets, t.activeG1, t.wrapNext = s.style, s.origin, s.charsets, s.activeG1, s.pendingEOL
 }
 
-// ---- CSI -------------------------------------------------------------------
-
-func (t *Terminal) csiDispatch(final byte) {
-	p := &t.p
-	if len(p.inter) > 0 {
-		t.csiIntermediate(final)
-		return
-	}
-	switch p.priv {
-	case '?':
-		switch final {
-		case 'h', 'l':
-			for i := range p.params {
-				t.setPrivateMode(p.rawParam(i, 0), final == 'h')
-			}
-		case 'J':
-			t.eraseDisplay(p.rawParam(0, 0))
-		case 'K':
-			t.eraseLine(p.rawParam(0, 0))
-		}
-		return
-	case '>':
-		if final == 'c' { // secondary DA: VT220-ish, version 10
-			t.reply("\x1b[>1;10;0c")
-		}
-		return
-	case 0:
-	default:
-		return
-	}
-	n := p.param(0, 1)
-	switch final {
-	case '@':
-		t.insertBlanks(n)
-	case 'A':
-		t.moveTo(t.row-n, t.col, true)
-	case 'B', 'e':
-		t.moveTo(t.row+n, t.col, true)
-	case 'C', 'a':
-		t.moveTo(t.row, t.col+n, true)
-	case 'D':
-		t.moveTo(t.row, t.col-n, true)
-	case 'E':
-		t.moveTo(t.row+n, 0, true)
-	case 'F':
-		t.moveTo(t.row-n, 0, true)
-	case 'G', '`':
-		t.moveTo(t.row, n-1, true)
-	case 'H', 'f':
-		row := p.param(0, 1) - 1
-		col := p.param(1, 1) - 1
-		if t.origin {
-			row += t.top
-		}
-		t.moveTo(row, col, false)
-	case 'I':
-		t.tabForward(n)
-	case 'J':
-		t.eraseDisplay(p.rawParam(0, 0))
-	case 'K':
-		t.eraseLine(p.rawParam(0, 0))
-	case 'L':
-		t.insertLines(n)
-	case 'M':
-		t.deleteLines(n)
-	case 'P':
-		t.deleteChars(n)
-	case 'S':
-		t.scrollUp(t.top, t.bottom, n)
-	case 'T':
-		t.scrollDown(t.top, t.bottom, n)
-	case 'X':
-		t.eraseChars(n)
-	case 'Z':
-		t.tabBackward(n)
-	case 'b':
-		t.repeat(n)
-	case 'c':
-		if p.rawParam(0, 0) == 0 {
-			t.reply("\x1b[?62;22c") // VT220 with ANSI color
-		}
-	case 'd':
-		row := n - 1
-		if t.origin {
-			row += t.top
-		}
-		t.moveTo(row, t.col, false)
-	case 'g':
-		switch p.rawParam(0, 0) {
-		case 0:
-			if t.col < t.cols {
-				t.tabs[t.col] = false
-			}
-		case 3:
-			clear(t.tabs)
-		}
-	case 'h', 'l':
-		for i := range p.params {
-			switch p.rawParam(i, 0) {
-			case 4:
-				t.insert = final == 'h'
-			case 20:
-				t.newline = final == 'h'
-			}
-		}
-	case 'm':
-		t.sgr()
-	case 'n':
-		switch p.rawParam(0, 0) {
-		case 5:
-			t.reply("\x1b[0n")
-		case 6:
-			row := t.row + 1
-			if t.origin {
-				row -= t.top
-			}
-			t.reply("\x1b[" + strconv.Itoa(row) + ";" + strconv.Itoa(min(t.col, t.cols-1)+1) + "R")
-		}
-	case 'r':
-		top := p.param(0, 1) - 1
-		bottom := p.param(1, t.rows) - 1
-		bottom = min(bottom, t.rows-1)
-		if top < bottom {
-			t.top, t.bottom = top, bottom
-			t.moveTo(0, 0, false)
-			if t.origin {
-				t.row = t.top
-			}
-		}
-	case 's':
-		t.saveCursor()
-	case 'u':
-		t.restoreCursor()
-	}
-}
-
-// csiIntermediate handles CSI sequences with intermediate bytes.
-func (t *Terminal) csiIntermediate(final byte) {
-	p := &t.p
-	switch string(p.inter) {
-	case " ":
-		if final == 'q' { // DECSCUSR
-			t.cursor.Shape = p.rawParam(0, 0)
-		}
-	case "!":
-		if final == 'p' { // DECSTR soft reset
-			t.pen = Style{}
-			t.insert, t.origin, t.autowrap = false, false, true
-			t.top, t.bottom = 0, t.rows-1
-			t.cursor.Visible = true
-			t.modes.AppCursor, t.modes.AppKeypad = false, false
-			t.charsets, t.activeG1 = [2]bool{}, false
-		}
-	}
-}
-
 func (t *Terminal) reply(s string) {
 	if t.Reply != nil {
 		t.Reply([]byte(s))
@@ -679,50 +689,6 @@ func (t *Terminal) moveTo(row, col int, relative bool) {
 	t.col = max(0, min(t.cols-1, col))
 }
 
-func (t *Terminal) setPrivateMode(mode int, on bool) {
-	switch mode {
-	case 1:
-		t.modes.AppCursor = on
-	case 5:
-		t.modes.ReverseVideo = on
-	case 6:
-		t.origin = on
-		t.moveTo(0, 0, false)
-		if on {
-			t.row = t.top
-		}
-	case 7:
-		t.autowrap = on
-		if !on {
-			t.wrapNext = false
-		}
-	case 25:
-		t.cursor.Visible = on
-	case 47, 1047:
-		t.switchScreen(on, false)
-	case 1048:
-		if on {
-			t.saveCursor()
-		} else {
-			t.restoreCursor()
-		}
-	case 1049:
-		t.switchScreen(on, true)
-	case 1000, 1002, 1003:
-		if on {
-			t.modes.Mouse = mode
-		} else if t.modes.Mouse == mode {
-			t.modes.Mouse = 0
-		}
-	case 1004:
-		t.modes.FocusEvents = on
-	case 1006:
-		t.modes.MouseSGR = on
-	case 2004:
-		t.modes.BracketedPaste = on
-	}
-}
-
 // switchScreen enters or leaves the alternate screen; with save (1049)
 // the cursor is saved before entering and restored after leaving, and
 // the alternate screen is cleared on entry.
@@ -738,12 +704,14 @@ func (t *Terminal) switchScreen(alt, save bool) {
 		t.alt.saved = t.main.saved
 		if save {
 			for i := range t.alt.lines {
-				t.alt.lines[i] = newLine(t.cols, Style{})
+				t.clearLine(&t.alt.lines[i], Style{})
 			}
 		}
 		return
 	}
-	t.alt.lines = t.blankLines(t.rows)
+	for i := range t.alt.lines {
+		t.clearLine(&t.alt.lines[i], Style{})
+	}
 	t.cur = &t.main
 	if save {
 		t.restoreCursor()
@@ -759,16 +727,16 @@ func (t *Terminal) eraseDisplay(mode int) {
 	case 0:
 		t.eraseLine(0)
 		for r := t.row + 1; r < t.rows; r++ {
-			t.cur.lines[r] = newLine(t.cols, t.pen)
+			t.clearLine(&t.cur.lines[r], t.pen)
 		}
 	case 1:
 		t.eraseLine(1)
 		for r := 0; r < t.row; r++ {
-			t.cur.lines[r] = newLine(t.cols, t.pen)
+			t.clearLine(&t.cur.lines[r], t.pen)
 		}
 	case 2:
 		for r := range t.cur.lines {
-			t.cur.lines[r] = newLine(t.cols, t.pen)
+			t.clearLine(&t.cur.lines[r], t.pen)
 		}
 	case 3:
 		t.ClearScrollback()
@@ -850,9 +818,9 @@ func (t *Terminal) deleteLines(n int) {
 	// Lines deleted inside the screen never go to the scrollback.
 	ls := t.cur.lines
 	n = min(n, t.bottom-t.row+1)
-	copy(ls[t.row:], ls[t.row+n:t.bottom+1])
+	rotate(ls[t.row:t.bottom+1], n)
 	for i := t.bottom - n + 1; i <= t.bottom; i++ {
-		ls[i] = newLine(t.cols, t.pen)
+		t.clearLine(&ls[i], t.pen)
 	}
 	t.col, t.wrapNext = 0, false
 }
@@ -881,178 +849,12 @@ func (t *Terminal) repeat(n int) {
 	}
 }
 
-// ---- OSC -------------------------------------------------------------------
-
-func (t *Terminal) oscDispatch() {
-	s := string(t.p.osc)
-	num, rest, _ := strings.Cut(s, ";")
-	switch num {
-	case "0", "2":
-		t.title = sanitize(rest)
-	case "7":
-		t.cwd = fileURLPath(rest)
-	default:
-		if t.OSC != nil {
-			t.OSC(num, rest)
-		}
+// markLine sets a shell integration mark on the cursor line.
+func (t *Terminal) markLine(m Mark) {
+	if t.cur == &t.main {
+		t.cur.lines[t.row].Mark |= m
 	}
 }
 
-// sanitize drops control characters from a title.
-func sanitize(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f || r == utf8.RuneError {
-			return -1
-		}
-		return r
-	}, s)
-}
-
-// fileURLPath extracts the path of a file:// URL (OSC 7); the host part
-// is ignored, percent escapes are decoded.
-func fileURLPath(u string) string {
-	if !strings.HasPrefix(u, "file://") {
-		return ""
-	}
-	u = u[len("file://"):]
-	i := strings.IndexByte(u, '/')
-	if i < 0 {
-		return ""
-	}
-	p := u[i:]
-	var b strings.Builder
-	for j := 0; j < len(p); j++ {
-		if p[j] == '%' && j+2 < len(p) {
-			if v, err := strconv.ParseUint(p[j+1:j+3], 16, 8); err == nil {
-				b.WriteByte(byte(v))
-				j += 2
-				continue
-			}
-		}
-		b.WriteByte(p[j])
-	}
-	return sanitize(b.String())
-}
-
-// ---- resize ----------------------------------------------------------------
-
-// Resize changes the screen size. Lines are not reflowed: shrinking the
-// width cuts them, growing pads them. When the screen loses rows below
-// the cursor they are dropped; rows above it move to the scrollback.
-func (t *Terminal) Resize(cols, rows int) {
-	cols, rows = max(1, cols), max(1, rows)
-	if cols == t.cols && rows == t.rows {
-		return
-	}
-	t.seq++
-	for _, s := range []*screen{&t.main, &t.alt} {
-		for i := range s.lines {
-			s.lines[i] = fitLine(s.lines[i], cols)
-		}
-	}
-	t.cols = cols
-	// Rows: shrink from the bottom while the rows there are below the
-	// cursor, then push the top into the scrollback.
-	if rows < t.rows {
-		extra := t.rows - rows
-		for _, s := range []*screen{&t.main, &t.alt} {
-			// Each screen is cut at its own cursor: the active one at
-			// the cursor, the main screen behind the alternate one at
-			// the cursor saved on entry (1049), where it continues.
-			r := t.row
-			if s != t.cur && s.saved.valid {
-				r = s.saved.row
-			}
-			below := max(0, len(s.lines)-1-r)
-			cut := min(extra, below)
-			s.lines = s.lines[:len(s.lines)-cut]
-			over := max(0, len(s.lines)-rows)
-			if over > 0 {
-				if s == &t.main {
-					for _, l := range s.lines[:over] {
-						t.pushScrollback(l)
-					}
-				}
-				s.lines = s.lines[over:]
-			}
-			// Positions move up with the content.
-			if s == t.cur {
-				t.row = max(0, t.row-over)
-			}
-			if s.saved.valid {
-				s.saved.row = max(0, s.saved.row-over)
-			}
-		}
-	} else if rows > t.rows {
-		// Pull lines back from the scrollback (main screen) so the
-		// content stays at the bottom, like xterm.
-		add := rows - t.rows
-		pull := 0
-		if t.cur == &t.main {
-			pull = min(add, len(t.scrollback))
-		}
-		if pull > 0 {
-			back := make([]Line, 0, rows)
-			h := len(t.scrollback)
-			for i := h - pull; i < h; i++ {
-				back = append(back, fitLine(t.Line(i), cols))
-			}
-			t.dropScrollbackTail(pull)
-			t.main.lines = append(back, t.main.lines...)
-			t.row += pull
-			if t.main.saved.valid {
-				t.main.saved.row += pull
-			}
-		}
-		for len(t.main.lines) < rows {
-			t.main.lines = append(t.main.lines, newLine(cols, Style{}))
-		}
-		for len(t.alt.lines) < rows {
-			t.alt.lines = append(t.alt.lines, newLine(cols, Style{}))
-		}
-	}
-	t.rows = rows
-	t.row = max(0, min(rows-1, t.row))
-	t.col = max(0, min(cols-1, t.col))
-	t.wrapNext = false
-	t.top, t.bottom = 0, rows-1
-	t.resetTabs()
-	for _, s := range []*screen{&t.main, &t.alt} {
-		s.saved.row = min(s.saved.row, rows-1)
-		s.saved.col = min(s.saved.col, cols-1)
-	}
-}
-
-// dropScrollbackTail removes the newest n scrollback lines.
-func (t *Terminal) dropScrollbackTail(n int) {
-	h := len(t.scrollback)
-	if n <= 0 || h == 0 {
-		return
-	}
-	// Linearise the ring, then cut.
-	lin := make([]Line, 0, h)
-	for i := 0; i < h; i++ {
-		lin = append(lin, t.scrollback[(t.sbStart+i)%h])
-	}
-	t.scrollback, t.sbStart = lin[:h-n], 0
-}
-
-// fitLine returns l with exactly cols cells.
-func fitLine(l Line, cols int) Line {
-	switch {
-	case len(l.Cells) == cols:
-		return l
-	case len(l.Cells) > cols:
-		c := append([]Cell(nil), l.Cells[:cols]...)
-		if c[cols-1].Width == 2 {
-			c[cols-1] = Cell{Style: c[cols-1].Style, Width: 1}
-		}
-		return Line{Cells: c, Wrapped: false}
-	}
-	c := make([]Cell, cols)
-	copy(c, l.Cells)
-	for i := len(l.Cells); i < cols; i++ {
-		c[i] = Cell{Width: 1}
-	}
-	return Line{Cells: c, Wrapped: l.Wrapped}
-}
+// itoa is strconv.Itoa (short name for the reply builders).
+func itoa(n int) string { return strconv.Itoa(n) }
