@@ -244,6 +244,14 @@ type Sizes struct {
 	TabH        unit.Dp // height of editor tabs
 	IndentStep  unit.Dp // tree indentation per level
 	BorderWidth unit.Dp
+	// Workbench chrome: stripes, panel headers, footer, toolbar.
+	StripeW      unit.Dp // width of the left/right tool window stripes
+	StripeButton unit.Dp // square hit target of a stripe button
+	StripeIcon   unit.Dp // icon size in a stripe button
+	ActionButton unit.Dp // square hit target of icon buttons in headers
+	PanelHeaderH unit.Dp // height of a tool window panel header
+	StatusH      unit.Dp // minimum height of the status bar (footer)
+	ToolbarH     unit.Dp // height of the main toolbar (header slot)
 }
 
 // Theme bundles all tokens. Treat a Theme as read-only; to switch modes,
@@ -282,8 +290,10 @@ func New(mode Mode, shaper *text.Shaper) *Theme {
 		Space:  Spacing{XXS: 2, XS: 4, S: 8, M: 12, L: 16, XL: 24, XXL: 32},
 		Radius: Radii{S: 3, M: 5, L: 8, Pill: 999},
 		Size: Sizes{
-			Icon: 16, IconSmall: 12, Checkbox: 14, ControlH: 28, RowH: 24, TabH: 32,
+			Icon: 16, IconSmall: 14, Checkbox: 14, ControlH: 28, RowH: 24, TabH: 32,
 			IndentStep: 16, BorderWidth: 1,
+			StripeW: 40, StripeButton: 32, StripeIcon: 18, ActionButton: 24,
+			PanelHeaderH: 32, StatusH: 26, ToolbarH: 40,
 		},
 		Shaper: shaper,
 	}

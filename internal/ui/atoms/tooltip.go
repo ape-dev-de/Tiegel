@@ -26,6 +26,8 @@ const tooltipMaxWidth = unit.Dp(320)
 // text. It is a value component; Tooltip positions it on hover.
 type TooltipBubble struct {
 	Text string
+	// Shortcut (optional) is shown dimmed after the text ("Cmd+1").
+	Shortcut string
 }
 
 // Layout draws the bubble.
@@ -35,7 +37,18 @@ func (b TooltipBubble) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimen
 	maxW := min(gtx.Dp(tooltipMaxWidth), draw.Width(gtx, gtx.Dp(tooltipMaxWidth)))
 	cgtx.Constraints = layout.Constraints{Max: image.Pt(max(0, maxW-2*padX), draw.Unbounded)}
 	m := op.Record(gtx.Ops)
-	td := Label{Text: b.Text, Role: RoleSmall, Color: th.Color.TooltipText}.Layout(cgtx, th)
+	var td layout.Dimensions
+	if b.Shortcut == "" {
+		td = Label{Text: b.Text, Role: RoleSmall, Color: th.Color.TooltipText}.Layout(cgtx, th)
+	} else {
+		dim := tokens.Mix(th.Color.TooltipText, th.Color.TooltipBg, 0.35)
+		td = layout.Flex{Alignment: layout.Baseline}.Layout(cgtx,
+			layout.Rigid(Label{Text: b.Text, Role: RoleSmall, Color: th.Color.TooltipText, MaxLines: 1}.Fn(th)),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: th.Space.S}.Layout(gtx, Label{Text: b.Shortcut, Role: RoleSmall, Color: dim, MaxLines: 1}.Fn(th))
+			}),
+		)
+	}
 	call := m.Stop()
 	size := image.Pt(td.Size.X+2*padX, td.Size.Y+2*padY)
 	draw.RRect(gtx.Ops, image.Rectangle{Max: size}, gtx.Dp(th.Radius.M), th.Color.TooltipBg)
