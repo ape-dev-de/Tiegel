@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
 	"testing"
@@ -199,7 +200,15 @@ func (e *env) takeEvents(t *testing.T) []string {
 	return out
 }
 
-func root(name string) string { return filepath.Join(string(filepath.Separator), "src", name) }
+// root returns an absolute fake project root ("C:\\src\\name" on
+// Windows, where a leading separator alone is not absolute).
+func root(name string) string {
+	base := string(filepath.Separator)
+	if runtime.GOOS == "windows" {
+		base = `C:\`
+	}
+	return filepath.Join(base, "src", name)
+}
 
 func states(m *Manager) string {
 	s := ""

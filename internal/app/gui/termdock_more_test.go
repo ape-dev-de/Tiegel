@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
@@ -116,8 +117,18 @@ func TestTerminalFindBusyClipboard(t *testing.T) {
 	d.closeFind()
 
 	// A running job makes the tab busy; closing asks first.
+	// Busy detection needs job control (the job in its own foreground
+	// process group); some shells/CI ptys run it in the shell's group,
+	// like TestRealForeground in internal/terminal, which skips then.
 	ts.SendText(id, "sleep 30\r")
-	e.waitFor("busy", func() bool { x := ts.Tab(id); return x != nil && x.Info.Busy && x.Info.Process == "sleep" })
+	busy := func() bool { x := ts.Tab(id); return x != nil && x.Info.Busy && x.Info.Process == "sleep" }
+	for deadline := time.Now().Add(10 * time.Second); !busy(); {
+		if time.Now().After(deadline) {
+			t.Skip("job control not available (no foreground job seen)")
+		}
+		e.ctl.Settle(200 * time.Millisecond)
+		e.frame()
+	}
 	if got := tabTitle(ts.Tab(id).Info); got != "sleep" {
 		t.Fatalf("title %q", got)
 	}
