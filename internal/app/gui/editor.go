@@ -134,6 +134,10 @@ func (v *View) session(g *controller.EditorGroup, t *controller.Tab) *editorSess
 	hl := tshighlight.New(buf, tshighlight.Options{Path: t.File, Invalidate: func() { v.Invalidate() }})
 	ed.Highlighter = hl
 	ed.SetFoldRanges(highlight.BraceFolds(buf.Snapshot()))
+	if off, ok := v.restoreCarets[t.File]; ok {
+		delete(v.restoreCarets, t.File)
+		ed.SetCaret(min(max(off, 0), buf.Len()))
+	}
 	t.Doc.Unlock()
 	s := &editorSession{tab: t, file: t.File, doc: t.Doc, ed: ed, hl: hl, group: g}
 	v.editors[k] = s

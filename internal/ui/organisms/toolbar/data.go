@@ -101,7 +101,7 @@ func QuickActions(bs []actions.ToolbarButton) []QuickAction {
 type Icons struct {
 	Chevron, Branch, Run, Debug, Stop, Listen, Search, Settings *atoms.Glyph
 	// Popup rows.
-	Folder, Add, Tag, Open, Hibernate, Resume, Check *atoms.Glyph
+	Folder, Add, Tag, Open, Hibernate, Resume, Check, Close *atoms.Glyph
 }
 
 // DefaultIcons returns the atoms glyphs.
@@ -111,7 +111,7 @@ func DefaultIcons() Icons {
 		Debug: atoms.GlyphDebug, Stop: atoms.GlyphStop, Listen: atoms.GlyphListen,
 		Search: atoms.GlyphSearch, Settings: atoms.GlyphSettings,
 		Folder: atoms.GlyphFolder, Add: atoms.GlyphAdd, Tag: atoms.GlyphTag, Open: atoms.GlyphFolderOpen,
-		Hibernate: atoms.GlyphPause, Resume: atoms.GlyphRun, Check: atoms.GlyphCheck,
+		Hibernate: atoms.GlyphPause, Resume: atoms.GlyphRun, Check: atoms.GlyphCheck, Close: atoms.GlyphClose,
 	}
 }
 

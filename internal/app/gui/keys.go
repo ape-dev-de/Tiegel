@@ -50,6 +50,14 @@ const (
 	ActAbout           keymap.Action = "app.about"
 )
 
+// Project actions of a window with several projects (D477).
+const (
+	ActSwitchProject    keymap.Action = "project.switch"
+	ActNextProject      keymap.Action = "project.next"
+	ActPrevProject      keymap.Action = "project.previous"
+	ActHibernateProject keymap.Action = "project.hibernate"
+)
+
 // editorMenuAction is an Edit menu entry running an editor keymap action.
 // Its ID is the keymap action: the editor binds the keys, the window does
 // not; menus show the keymap's chord.
@@ -67,6 +75,10 @@ func defaultActions() []Action {
 		{ID: ActRecentProjects, Title: "Recent Projects…", Menu: "File", Section: "open", Run: (*View).openRecentProjects},
 		{ID: ActNewWindow, Title: "New Window", Menu: "File", Section: "open", Run: func(v *View) { v.openWindow("") }},
 		{ID: ActCloseProject, Title: "Close Project", Menu: "File", Section: "open", Run: (*View).closeProject},
+		{ID: ActSwitchProject, Title: "Switch Project…", Menu: "File", Section: "projects", Run: (*View).openProjectSwitcher},
+		{ID: ActNextProject, Title: "Next Project", Mac: "Cmd+Alt+Shift+Right", PC: "Ctrl+Alt+Shift+Right", Menu: "File", Section: "projects", Run: func(v *View) { v.hdr.Sessions.Cycle(1) }},
+		{ID: ActPrevProject, Title: "Previous Project", Mac: "Cmd+Alt+Shift+Left", PC: "Ctrl+Alt+Shift+Left", Menu: "File", Section: "projects", Run: func(v *View) { v.hdr.Sessions.Cycle(-1) }},
+		{ID: ActHibernateProject, Title: "Hibernate Project", Menu: "File", Section: "projects", Run: (*View).hibernateProject},
 		{ID: ActSaveAll, Title: "Save All", Mac: "Cmd+Alt+S", PC: "Ctrl+Alt+Shift+S", Menu: "File", Section: "save", Run: func(v *View) { v.ctl.Autosave("focusLost") }},
 		{ID: ActSettings, Title: "Settings…", Mac: "Cmd+,", PC: "Ctrl+Alt+S", Menu: "File", Section: "settings", Run: (*View).openSettings},
 		{ID: ActImportSettings, Title: "Import Settings…", Menu: "File", Section: "settings", Run: (*View).openImportSettings},

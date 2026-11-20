@@ -12,15 +12,21 @@
 //
 // # Windows and projects
 //
-// Every window shows one project and owns one api.App (an App holds one
-// project); Run starts further windows with their own App in the same
-// process, sharing the global settings (api.Options.GlobalSettings).
-// Closing a window saves its documents and closes its App; the process
-// ends with the last window. File → Open… uses the native folder dialog
-// on macOS (package native, D110), elsewhere a folder browser built from
-// the chooser. Opening a project while one is open asks "This Window" or
-// "New Window" (WindowHost); a project already open in another window is
-// brought to the front.
+// Every window owns one api.App hosting a multi-project workspace
+// (api.Workspace, D468): one active project, others in the background
+// (everything keeps running) or hibernated. Sessions (sessions.go, D477)
+// keeps one controller and one View per project App, so switching keeps
+// each project's tabs, editors, tool layout and tree; a hibernated
+// project's tabs and carets travel as the workspace's clientState. Run
+// starts further windows with their own App in the same process, sharing
+// the global settings (api.Options.GlobalSettings). Closing a window
+// saves its documents and closes its App (and with it every project);
+// the process ends with the last window. File → Open… uses the native
+// folder dialog on macOS (package native, D110), elsewhere a folder
+// browser built from the chooser. Opening a project while one is open
+// asks "This Window" (next to the open ones) or "New Window"
+// (WindowHost); a project already open in another window is brought to
+// the front.
 //
 // # Tool windows
 //

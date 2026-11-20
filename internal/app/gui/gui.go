@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,11 +30,13 @@ var processStart = time.Now()
 // closed or ctx is cancelled. With projectPath the project is shown (it
 // may already be open in app); without it the welcome screen appears.
 //
-// Every window shows one project and has its own api.App (an App holds
-// one project); newApp creates the App of further windows ("New Window",
-// "open in new window"). Their global settings are shared with app (see
+// Every window has its own api.App hosting a multi-project workspace
+// (api.Workspace, D468/D477): one active project, others in the
+// background or hibernated, each in its own App created by newApp. newApp
+// also creates the App of further windows ("New Window", "open in new
+// window"). Their global settings are shared with app (see
 // api.Options.GlobalSettings). newApp may be nil: then projects always
-// open in the current window.
+// open in the current window (with the workspace's default Apps).
 //
 // Gio's app.Main must own the main goroutine and never returns, so the
 // window loops run on goroutines; when the last window closed (modified
@@ -66,8 +69,10 @@ type windows struct {
 type window struct {
 	m    *windows
 	w    *app.Window
-	view *View
-	root string // project root (guarded by windows.mu)
+	view *View // the view drawn (guarded by windows.mu)
+	sess *Sessions
+	// roots are the window's open projects (guarded by windows.mu).
+	roots []string
 }
 
 // open starts a window for a showing project (may be "").
@@ -78,7 +83,7 @@ func (m *windows) open(a *api.App, project string) {
 	m.mu.Unlock()
 	go func() {
 		win.w.Option(app.Title("Tiegel"), app.Size(unit.Dp(1280), unit.Dp(820)), app.MinSize(unit.Dp(640), unit.Dp(400)))
-		err := win.loop(controller.NewInProcess(a), project)
+		err := win.loop(a, project)
 		if cerr := a.Close(); err == nil && cerr != nil {
 			fmt.Fprintf(os.Stderr, "tiegel: %v\n", cerr)
 		}
@@ -119,15 +124,20 @@ func (m *windows) OpenWindow(path string) {
 	}()
 }
 
-// FocusProject implements WindowHost.
+// FocusProject implements WindowHost: the other window that has root
+// open is raised and switches to it.
 func (m *windows) FocusProject(v *View, root string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for win := range m.wins {
-		if win.view != v && win.root == root && root != "" {
-			win.w.Perform(system.ActionRaise)
-			return true
+		if win.view == v || root == "" || !slices.Contains(win.roots, root) {
+			continue
 		}
+		win.w.Perform(system.ActionRaise)
+		if sess := win.sess; sess != nil {
+			sess.Post(func() { sess.Switch(root) })
+		}
+		return true
 	}
 	return false
 }
@@ -160,7 +170,7 @@ func exitCode(err error) int {
 }
 
 // loop runs the window event loop.
-func (win *window) loop(be controller.Backend, projectPath string) error {
+func (win *window) loop(a *api.App, projectPath string) error {
 	w, m, ctx := win.w, win.m, win.m.ctx
 	// Background work may finish before the native window exists; Gio's
 	// window must not be poked (Invalidate) before its first event – the
@@ -171,22 +181,25 @@ func (win *window) loop(be controller.Backend, projectPath string) error {
 			w.Invalidate()
 		}
 	}
-	ctl := controller.New(be)
-	defer ctl.Close()
-	ctl.Invalidate = invalidate
-	v := NewView(ctl, runtime.GOOS)
-	v.Invalidate = invalidate
-	v.Raise = func() {
-		if live.Load() {
-			w.Perform(system.ActionRaise)
-		}
+	ws, err := a.EnableWorkspace(api.WorkspaceOptions{NewApp: m.newApp})
+	if err != nil {
+		return err
 	}
-	v.Host, v.Quit = m, m.quit
+	sess := newSessions(a, ws, runtime.GOOS, invalidate, func(v *View) {
+		v.ctl.Invalidate = invalidate
+		v.Invalidate = invalidate
+		v.Raise = func() {
+			if live.Load() {
+				w.Perform(system.ActionRaise)
+			}
+		}
+		v.Host, v.Quit = m, m.quit
+	})
+	defer sess.Shutdown()
 	m.mu.Lock()
-	win.view = v
+	win.sess, win.view = sess, sess.Current()
 	m.mu.Unlock()
-	defer v.Close()
-	ctl.Start(projectPath)
+	sess.Start(projectPath)
 	go func() {
 		<-ctx.Done()
 		w.Perform(system.ActionClose)
@@ -201,9 +214,10 @@ func (win *window) loop(be controller.Backend, projectPath string) error {
 		live.Store(true)
 		switch e := ev.(type) {
 		case app.DestroyEvent:
-			saveOnClose(ctl)
+			saveAllOnClose(sess)
 			return e.Err
 		case app.ConfigEvent:
+			ctl := sess.Current().ctl
 			if focused && !e.Config.Focused {
 				ctl.Autosave("focusLost")
 			}
@@ -217,11 +231,12 @@ func (win *window) loop(be controller.Backend, projectPath string) error {
 			}
 		case app.FrameEvent:
 			if ctx.Err() != nil {
-				saveOnClose(ctl)
+				saveAllOnClose(sess)
 				return nil
 			}
 			frameStart := time.Now()
 			gtx := app.NewContext(&ops, e)
+			v := sess.Current()
 			v.Frame(gtx)
 			layoutDone := time.Now()
 			e.Frame(gtx.Ops)
@@ -232,21 +247,29 @@ func (win *window) loop(be controller.Backend, projectPath string) error {
 			}
 			v.syncNativeMenu(focused, m.route)
 			m.mu.Lock()
-			win.root = ctl.Project.Root
+			win.view, win.roots = v, sess.Roots()
 			m.mu.Unlock()
-			if t := windowTitle(ctl); t != title {
+			if t := windowTitle(v.ctl); t != title {
 				title = t
 				w.Option(app.Title(t))
 			}
 			if first {
 				first = false
 				d := time.Since(processStart)
-				ctl.Status.Notice = ""
+				v.ctl.Status.Notice = ""
 				if os.Getenv("TIEGEL_STARTUP_TRACE") != "" {
 					fmt.Fprintf(os.Stderr, "tiegel: first frame after %v\n", d.Round(time.Millisecond))
 				}
 			}
 		}
+	}
+}
+
+// saveAllOnClose saves the modified documents of every project of the
+// window.
+func saveAllOnClose(sess *Sessions) {
+	for _, ctl := range sess.Controllers() {
+		saveOnClose(ctl)
 	}
 }
 

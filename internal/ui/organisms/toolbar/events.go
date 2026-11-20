@@ -41,6 +41,10 @@ type HibernateProject struct{ ID string }
 // ResumeProject: "Resume <project>" was chosen for a hibernated project.
 type ResumeProject struct{ ID string }
 
+// CloseProject: "Close <project>" or a project of the "Close Other
+// Project" submenu was chosen (the host confirms running work).
+type CloseProject struct{ ID string }
+
 // CheckoutBranch: "Checkout" in a branch's submenu. Remote branches are
 // checked out as a new tracking branch by the host.
 type CheckoutBranch struct {
@@ -108,6 +112,7 @@ func (OpenProject) toolbarEvent()        {}
 func (OpenRecentProject) toolbarEvent()  {}
 func (HibernateProject) toolbarEvent()   {}
 func (ResumeProject) toolbarEvent()      {}
+func (CloseProject) toolbarEvent()       {}
 func (CheckoutBranch) toolbarEvent()     {}
 func (NewBranch) toolbarEvent()          {}
 func (CheckoutRevision) toolbarEvent()   {}

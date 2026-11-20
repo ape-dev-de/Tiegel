@@ -17,38 +17,60 @@ import (
 // The header (D465, D471): one toolbar.Bar in the workbench's header
 // slot, filled from the controller every frame. Its events map to the
 // existing commands; "…" entries open the existing dialogs. The project
-// switcher shows the current project and the recent projects
-// (toolbarProjects); switching, hibernating and resuming go through
-// ProjectSessions so the multi-project workspace (AP18.5, api.Workspace)
-// can be wired in without touching the header.
+// switcher shows the window's open projects with their state and the
+// recent projects (toolbarProjects); switching, hibernating, resuming and
+// closing go through ProjectSessions (the window's Sessions, D477).
 
 // ActBranches opens the branch popup of the header.
 const ActBranches keymap.Action = "git.branches"
 
 // ProjectSessions performs the project switcher's life-cycle intents.
-// IDs are the toolbar.Project IDs returned by toolbarProjects (today the
-// project root).
+// IDs are project roots (toolbar.Project IDs). A window with the
+// multi-project workspace uses *Sessions (D477); singleProject is the
+// fallback of a view without one (tests, embedders).
 type ProjectSessions interface {
+	// Projects returns the open projects and the ID of the active one.
+	Projects() (open []toolbar.Project, current string)
 	// Switch shows project id in this window.
 	Switch(id string)
 	// Hibernate releases the processes and memory of project id.
 	Hibernate(id string)
 	// Resume brings a hibernated project back.
 	Resume(id string)
+	// Close closes project id.
+	Close(id string)
+	// Cycle switches to the next (1) or previous (-1) running project.
+	Cycle(delta int)
 }
 
-// singleProject is the ProjectSessions of a window with one project:
+// singleProject is the ProjectSessions of a view without a workspace:
 // switching opens the project (asking "this window or new window"),
-// hibernation is not available yet.
+// hibernation is not available.
 type singleProject struct{ v *View }
+
+func (s singleProject) Projects() ([]toolbar.Project, string) {
+	c := s.v.ctl
+	if !c.Project.Open {
+		return nil, ""
+	}
+	name := c.Project.Name
+	if name == "" {
+		name = filepath.Base(c.Project.Root)
+	}
+	return []toolbar.Project{{ID: c.Project.Root, Name: name, Path: homeShort(c.Project.Root), State: toolbar.ProjectActive}}, c.Project.Root
+}
 
 func (s singleProject) Switch(id string) { s.v.requestProject(id) }
 
 func (s singleProject) Hibernate(string) {
-	s.v.ctl.Status.Notice = "Hibernate: needs the multi-project workspace (not wired in this window yet)"
+	s.v.ctl.Status.Notice = "Hibernate: this window has no multi-project workspace"
 }
 
 func (s singleProject) Resume(id string) { s.v.requestProject(id) }
+
+func (s singleProject) Close(string) { s.v.closeProject() }
+
+func (s singleProject) Cycle(int) {}
 
 // header is the state of the header toolbar.
 type header struct {
@@ -97,22 +119,17 @@ func headerIcons() toolbar.Icons {
 	return ic
 }
 
-// toolbarProjects is the adapter between the project model and the
-// project switcher: the open projects (today only the current one) and
-// the recent projects. AP18.5 replaces it with the workspace's sessions
-// (api.Workspace: background and hibernated projects).
+// toolbarProjects is the adapter between the sessions and the project
+// switcher: the open projects with their state and the recent projects
+// that are not open.
 func (h *header) toolbarProjects() (open []toolbar.Project, current string, recent []toolbar.RecentProject) {
-	c := h.v.ctl
-	if c.Project.Open {
-		name := c.Project.Name
-		if name == "" {
-			name = filepath.Base(c.Project.Root)
-		}
-		open = append(open, toolbar.Project{ID: c.Project.Root, Name: name, Path: homeShort(c.Project.Root), State: toolbar.ProjectActive})
-		current = c.Project.Root
+	open, current = h.Sessions.Projects()
+	isOpen := map[string]bool{}
+	for _, p := range open {
+		isOpen[p.ID] = true
 	}
-	for _, p := range c.RecentProjects {
-		if p == current {
+	for _, p := range h.v.ctl.RecentProjects {
+		if isOpen[p] {
 			continue
 		}
 		recent = append(recent, toolbar.RecentProject{Name: filepath.Base(p), Path: homeShort(p)})
@@ -209,8 +226,14 @@ func (h *header) handle(ev toolbar.Event) {
 			c.ReloadRecentProjects()
 		}
 	case toolbar.SwitchProject:
-		if e.ID != c.Project.Root {
+		if e.ID != h.bar.Current {
 			h.Sessions.Switch(e.ID)
+		}
+	case toolbar.CloseProject:
+		if e.ID == c.Project.Root {
+			v.closeProject()
+		} else {
+			h.Sessions.Close(e.ID)
 		}
 	case toolbar.HibernateProject:
 		h.Sessions.Hibernate(e.ID)

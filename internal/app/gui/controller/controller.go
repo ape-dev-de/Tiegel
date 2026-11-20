@@ -816,7 +816,7 @@ func (c *Controller) refreshGit() {
 // startLSP starts the language server if one is installed; otherwise the
 // status bar shows a hint. Nothing is downloaded.
 func (c *Controller) startLSP() {
-	c.Status.LSP = "LSP: starting…"
+	c.Status.LSP = lspStarting
 	c.Go(func(ctx context.Context) func() {
 		var st LSPStatus
 		err := c.call(ctx, "lsp.start", map[string]any{}, &st)
@@ -826,7 +826,7 @@ func (c *Controller) startLSP() {
 
 // RestartLSP restarts the language server (also after a crash loop).
 func (c *Controller) RestartLSP() {
-	c.Status.LSP = "LSP: starting…"
+	c.Status.LSP = lspStarting
 	c.lspCall("lsp.restart", nil)
 }
 
