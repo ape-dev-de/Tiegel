@@ -51,6 +51,7 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 			v.global.process(gtx, v)
 		}
 	}
+	v.hdr.update(gtx)
 	v.handleBench(gtx)
 	v.handleTree(gtx)
 	v.handleStatus(gtx)
@@ -64,6 +65,7 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 		Editor: v.layoutEditorArea,
 		Status: func(gtx layout.Context) layout.Dimensions { return v.status.Layout(gtx, th) },
 	}
+	slots.Header = func(gtx layout.Context) layout.Dimensions { return v.hdr.layout(gtx, th) }
 	if !native.MenuSupported() {
 		slots.Menu = func(gtx layout.Context) layout.Dimensions { return v.menuBar.layout(gtx, th, v) }
 	}

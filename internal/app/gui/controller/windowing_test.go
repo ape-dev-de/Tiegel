@@ -78,6 +78,83 @@ func TestToolLayout(t *testing.T) {
 	}
 }
 
+// Every side has a primary and a split slot; groups, split sizes and the
+// maximized panel are stored.
+func TestToolLayoutSlots(t *testing.T) {
+	l := NewToolLayout()
+	l.Register("project", SideLeft)
+	l.RegisterIn("structure", SideLeft, GroupSplit)
+	l.Register("problems", SideBottom)
+	l.Register("terminal", SideBottom)
+	l.Show("project")
+	l.Show("structure")
+	if !l.Visible("project") || !l.Visible("structure") || l.Shown(SideLeft, GroupSplit) != "structure" {
+		t.Fatal("project and structure should share the left side")
+	}
+	l.Show("problems")
+	l.MoveTo("terminal", SideBottom, GroupSplit)
+	l.Show("terminal")
+	if !l.Visible("problems") || !l.Visible("terminal") || l.GroupOf("terminal") != GroupSplit {
+		t.Fatal("bottom split")
+	}
+	// Moving a shown window to an occupied slot replaces the one there.
+	l.MoveTo("structure", SideBottom, GroupSplit)
+	if l.Visible("terminal") || !l.Visible("structure") || l.Shown(SideLeft, GroupSplit) != "" {
+		t.Fatalf("move to occupied slot: %+v", l.Splits[SideBottom])
+	}
+	l.MoveTo("structure", SideLeft, GroupSplit)
+	l.MoveTo("bogus", SideLeft, "middle") // ignored
+	l.SetSplitSize(SideLeft, 0.95)
+	if l.SplitSize(SideLeft) != 0.9 || l.SplitSize(SideRight) != DefaultSplitSize {
+		t.Fatalf("split sizes %v %v", l.SplitSize(SideLeft), l.SplitSize(SideRight))
+	}
+	l.SetMaxPanel("problems")
+	// Maximizing the editor closes both slots and forgets a maximized
+	// panel; restoring reopens both slots.
+	l.ToggleMaximize()
+	if l.AnyOpen() || l.MaxPanel != "" {
+		t.Fatal("maximize editor")
+	}
+	l.ToggleMaximize()
+	if !l.Visible("structure") || !l.Visible("project") {
+		t.Fatal("restore both slots")
+	}
+	l.SetMaxPanel("problems")
+	raw, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"structure":"split"`) {
+		t.Fatalf("default group stored: %s", raw)
+	}
+	n := NewToolLayout()
+	if err := json.Unmarshal(raw, n); err != nil {
+		t.Fatal(err)
+	}
+	n.Register("project", SideLeft)
+	n.RegisterIn("structure", SideLeft, GroupSplit)
+	n.Register("problems", SideBottom)
+	n.Register("terminal", SideBottom)
+	if n.GroupOf("terminal") != GroupSplit || n.GroupOf("structure") != GroupSplit || !n.Visible("structure") ||
+		n.SplitSize(SideLeft) != 0.9 || n.MaxPanel != "problems" {
+		t.Fatalf("restored %s", raw)
+	}
+	// Hiding the maximized panel restores the layout; HideSide closes
+	// both slots.
+	n.Hide("problems")
+	if n.MaxPanel != "" {
+		t.Fatal("hidden maximized panel")
+	}
+	n.HideSide(SideLeft)
+	if n.Visible("project") || n.Visible("structure") {
+		t.Fatal("hide side")
+	}
+	n.Unregister("structure")
+	if n.Shown(SideLeft, GroupSplit) != "" {
+		t.Fatal("unregister")
+	}
+}
+
 // The layout is loaded per project (default: project tree open) and
 // stored when it changed.
 func TestToolLayoutPersisted(t *testing.T) {

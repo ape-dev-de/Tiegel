@@ -22,6 +22,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/dbgp"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
 	gitui "github.com/ape-dev-de/tiegel/internal/ui/organisms/git"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/toolbar"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 	"github.com/ape-dev-de/tiegel/internal/ui/uitest"
 )
@@ -451,15 +452,12 @@ func TestDebugEndToEnd(t *testing.T) {
 	e.key("F8", key.ModCommand)
 	e.waitFor("caret breakpoint removed", func() bool { _, ok := d.BreakpointAt(file, 1); return !ok })
 
-	// Status item click starts the listener.
-	if !e.v.dbgd.status()[0].Clickable {
-		t.Fatal("listener status not clickable")
+	// The header toggle starts the listener; the footer shows it only
+	// while it runs.
+	if len(e.v.dbgd.status()) != 0 || e.v.hdr.bar.NoListen {
+		t.Fatal("listener: footer item while off or no header toggle")
 	}
-	for _, h := range e.v.Registry.statusClicks {
-		if h(e.v, statusDebugID) {
-			break
-		}
-	}
+	e.v.hdr.handle(toolbar.ToggleListen{On: true})
 	e.waitFor("listening", func() bool { return d.Listening && d.Addr != "" })
 
 	engine := dialXdebug(t, d.Addr, dbgp.PathToURI(file))

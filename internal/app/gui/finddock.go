@@ -13,7 +13,6 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
-	"github.com/ape-dev-de/tiegel/internal/ui/organisms/filetree"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
 
@@ -266,7 +265,7 @@ func (f *findDock) fileNode(p, file string, ms []api.SearchMatch, repl []api.Rep
 		dir = ""
 	}
 	n := len(ms) + len(repl)
-	fn := &resultNode{Name: path.Base(p), Value: dir, Detail: plural(n, "match"), Glyph: filetree.Glyph(&filetree.Node{Name: path.Base(p)}), Expanded: true}
+	fn := &resultNode{Name: path.Base(p), Value: dir, Detail: plural(n, "match"), Glyph: fileGlyph(p), Expanded: true}
 	add := func(m api.SearchMatch, text string) {
 		loc := controller.At(file, m.Start)
 		fn.Children = append(fn.Children, &resultNode{Name: fmt.Sprintf("%d:%d", m.Line, m.Col), Value: text,

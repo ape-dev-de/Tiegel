@@ -7,7 +7,6 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
-	"github.com/ape-dev-de/tiegel/internal/ui/organisms/filetree"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/palette"
 )
 
@@ -179,7 +178,7 @@ func (sc *symbolChooser) items() []palette.Item {
 				if dir == "." {
 					dir = ""
 				}
-				add(symEntry{file: p}, palette.Item{Label: path.Base(p), Detail: dir, Glyph: filetree.Glyph(&filetree.Node{Name: path.Base(p)}), Group: "Files"})
+				add(symEntry{file: p}, palette.Item{Label: path.Base(p), Detail: dir, Glyph: fileGlyph(p), Group: "Files"})
 			}
 		}
 	}
