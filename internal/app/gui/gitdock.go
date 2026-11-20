@@ -16,6 +16,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/filetree"
 	gitui "github.com/ape-dev-de/tiegel/internal/ui/organisms/git"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/palette"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/statusbar"
@@ -71,6 +72,10 @@ type gitDock struct {
 	merges     map[string]*gitui.MergeView
 	blockDiff  *gitui.DiffView
 	blockShown uint64
+
+	// focusDiff asks the changes diff tab to take the keyboard focus once
+	// (opened from the commit window).
+	focusDiff bool
 }
 
 func installGit(v *View) *gitDock {
@@ -83,6 +88,8 @@ func installGit(v *View) *gitDock {
 	d.detailSplit = molecules.Split{Vertical: true, Ratio: 0.3, MinPane: 40}
 	d.commitDiff.Placeholder = "Select a commit to see its changes"
 	d.blockDiff.HideToolbar = true
+	// The change tree uses the project tree's file icons.
+	d.panel.FileGlyph = func(p string) *atoms.Glyph { return filetree.Glyph(&filetree.Node{Name: path.Base(p)}) }
 	d.tabBtns[0].Text, d.tabBtns[1].Text, d.tabBtns[2].Text = "Log", "Branches", "Stashes"
 	r := v.Registry
 	r.AddFrameHandler(d.frame)
@@ -210,6 +217,7 @@ func (d *gitDock) syncPanel() {
 		}
 		p.SetChanges(changes)
 		p.SetHistory(g.History)
+		g.Grouping = p.Grouping()
 		d.applyUntrackedDiffs()
 	}
 	if d.seen.diffs != g.DiffsVersion {
@@ -229,6 +237,7 @@ func (d *gitDock) syncPanel() {
 		p.SetProblem(problemOf(g.Problem))
 	}
 	p.SetBusy(g.Busy)
+	p.SetBranch(g.Info.Branch)
 }
 
 // applyUntrackedDiffs supplies the loaded diffs of new files that are
@@ -269,7 +278,7 @@ func problemOf(pr *controller.GitProblem) *gitui.Problem {
 
 // commitRequest converts the panel's request.
 func commitRequest(e gitui.CommitRequested) controller.GitCommitRequest {
-	req := controller.GitCommitRequest{Message: e.Message, Amend: e.Amend, Push: e.Push}
+	req := controller.GitCommitRequest{Message: e.Message, Amend: e.Amend, Push: e.Push, SignOff: e.SignOff, NoVerify: e.NoVerify}
 	for _, f := range e.Files {
 		req.Files = append(req.Files, controller.GitFileSelection{Path: f.Path, OrigPath: f.OrigPath, Untracked: f.Untracked, Whole: f.Whole, Hunks: f.Hunks})
 	}
@@ -291,8 +300,29 @@ func (d *gitDock) handlePanel(gtx layout.Context) {
 		case gitui.RefreshRequested:
 			g.LoadChanges()
 		case gitui.FileOpenRequested:
-			// Double click: the diff against HEAD (editable work tree).
-			d.v.work.compareWithHead(e.Path)
+			d.v.ctl.OpenFile(d.v.ctl.Abs(e.Path), nil)
+			d.v.focusEditor = true
+		case gitui.DiffOpenRequested:
+			d.openChangeDiff(e.Path)
+		case gitui.RollbackRequested:
+			if d.v.work != nil {
+				paths := e.Paths
+				d.v.Post(func() { d.v.work.rollback(paths) })
+			}
+		case gitui.UpdateRequested:
+			if d.v.work != nil {
+				d.v.Post(func() { d.v.work.openPullDialog(true) })
+			}
+		case gitui.StashRequested:
+			if d.v.work != nil {
+				d.v.Post(d.v.work.openStashDialog)
+			}
+		case gitui.StashTabShown:
+			if e.Shown {
+				d.v.ctl.Work.LoadStashes()
+			}
+		case gitui.GroupingChanged:
+			g.Grouping = e.Grouping
 		}
 	}
 }
@@ -303,7 +333,18 @@ func (d *gitDock) handleCommitRequest(e gitui.CommitRequested) {
 	d.git().Commit(commitRequest(e))
 }
 
+// openChangeDiff opens the diff of a change as the changes editor tab
+// (HEAD ↔ work tree) and focuses it.
+func (d *gitDock) openChangeDiff(p string) {
+	d.git().Grouping = d.panel.Grouping()
+	d.v.ctl.Work.OpenChangeDiff(p, gitcli.DiffLocal)
+	d.focusDiff = true
+}
+
 func (d *gitDock) layoutCommit(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	if d.panel.Stash == nil && d.v.work != nil {
+		d.panel.Stash = d.v.work.layoutStashes
+	}
 	d.syncPanel()
 	d.handlePanel(gtx)
 	return d.panel.Layout(gtx, th)

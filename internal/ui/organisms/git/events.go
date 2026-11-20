@@ -30,7 +30,11 @@ type CommitRequested struct {
 	Message string
 	Amend   bool
 	Push    bool
-	Files   []FileSelection
+	// SignOff and NoVerify are the commit options of the settings gear
+	// (Signed-off-by trailer, skip git hooks).
+	SignOff  bool
+	NoVerify bool
+	Files    []FileSelection
 }
 
 // AmendMessageRequested asks the host for the message of the last commit
@@ -50,9 +54,38 @@ type DiffRequested struct {
 // toolbar).
 type RefreshRequested struct{}
 
-// FileOpenRequested asks to open a file in the editor (double click in the
-// commit panel's file list).
+// FileOpenRequested asks to open a file in the editor (F4 on a file of
+// the commit panel's change tree).
 type FileOpenRequested struct{ Path string }
+
+// DiffOpenRequested asks the host to open the diff of a change as an
+// editor tab and focus it (double click or Enter on a file, "Show Diff"
+// in the toolbar). The tab steps through the changes in the panel's
+// order (CommitPanel.Order).
+type DiffOpenRequested struct {
+	Path      string
+	Untracked bool
+}
+
+// RollbackRequested asks to roll back changes (toolbar): the checked
+// tracked files, or the selected file when none is checked. The host
+// confirms first.
+type RollbackRequested struct{ Paths []string }
+
+// UpdateRequested asks to update the project (fetch and integrate the
+// upstream; toolbar).
+type UpdateRequested struct{}
+
+// StashRequested asks to stash the local changes (toolbar).
+type StashRequested struct{}
+
+// GroupingChanged reports the grouping chosen in the view options; the
+// host keeps it for the diff tab's file order.
+type GroupingChanged struct{ Grouping gitcli.ChangeGrouping }
+
+// StashTabShown reports that the "Stash" tab was selected (load the stash
+// list); Shown is false when the panel returns to "Commit".
+type StashTabShown struct{ Shown bool }
 
 // CommitSelected reports that the user selected a commit in the LogView.
 type CommitSelected struct{ Hash string }
@@ -100,6 +133,12 @@ func (AmendMessageRequested) gitEvent() {}
 func (DiffRequested) gitEvent()         {}
 func (RefreshRequested) gitEvent()      {}
 func (FileOpenRequested) gitEvent()     {}
+func (DiffOpenRequested) gitEvent()     {}
+func (RollbackRequested) gitEvent()     {}
+func (UpdateRequested) gitEvent()       {}
+func (StashRequested) gitEvent()        {}
+func (GroupingChanged) gitEvent()       {}
+func (StashTabShown) gitEvent()         {}
 func (CommitSelected) gitEvent()        {}
 func (LogPageRequested) gitEvent()      {}
 func (CheckoutRequested) gitEvent()     {}

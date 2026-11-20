@@ -58,6 +58,11 @@ type HistoryPageRequested struct {
 	Loaded int
 }
 
+// FileNavRequested asks the host to show the next (Delta 1) or previous
+// (Delta -1) file of the change set in the same window (the file
+// navigation set with DiffWindow.SetFileNav).
+type FileNavRequested struct{ Delta int }
+
 // CommitClicked reports a click on the annotation of a line in a
 // BlameGutter.
 type CommitClicked struct {
@@ -74,6 +79,7 @@ func (OpenFileRequested) diffEvent()       {}
 func (HistoryDiffRequested) diffEvent()    {}
 func (HistoryPageRequested) diffEvent()    {}
 func (CommitClicked) diffEvent()           {}
+func (FileNavRequested) diffEvent()        {}
 
 // Keymap actions of the diff window.
 const (

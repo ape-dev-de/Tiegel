@@ -69,7 +69,10 @@ type GitCommitRequest struct {
 	Message string
 	Amend   bool
 	Push    bool
-	Files   []GitFileSelection
+	// SignOff adds a Signed-off-by trailer, NoVerify skips the git hooks.
+	SignOff  bool
+	NoVerify bool
+	Files    []GitFileSelection
 }
 
 // GitProblem describes a failed commit or push for the commit window.
@@ -135,6 +138,9 @@ type Git struct {
 
 	Changes        []GitChange
 	ChangesVersion uint64
+	// Grouping is the grouping of the commit window's change tree; the
+	// diff tab steps through the changes in its order.
+	Grouping gitcli.ChangeGrouping
 	// Diffs are diffs loaded later (untracked files), keyed by path.
 	Diffs        map[string]*gitcli.FileDiff
 	DiffsVersion uint64
@@ -385,6 +391,12 @@ func CommitParams(req GitCommitRequest) map[string]any {
 	}
 	if req.Push {
 		p["push"] = true
+	}
+	if req.SignOff {
+		p["signOff"] = true
+	}
+	if req.NoVerify {
+		p["noVerify"] = true
 	}
 	return p
 }

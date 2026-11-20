@@ -249,6 +249,7 @@ func commitPanelPage() *page {
 	panel := gitui.NewCommitPanel()
 	sample, _ := gitsample.Changes()
 	panel.SetChanges(toChanges(sample))
+	panel.SetBranch("feature/invoices")
 	panel.SetHistory([]string{
 		"Add invoice aggregate and numbering",
 		"Send welcome mail after registration",
@@ -257,7 +258,7 @@ func commitPanelPage() *page {
 	var log eventLog
 	return &page{
 		Level: "Organisms", Name: "CommitPanel", Glyph: atoms.GlyphCommit,
-		Summary: "Commit tool window: grouped changes with checkboxes per file, hunk and line, diff preview, message history, Amend, Commit / Commit and Push (Cmd/Ctrl+Enter).",
+		Summary: "Commit tool window: Commit | Stash tabs, toolbar, change tree grouped by directory/module with tri-state checkboxes per group, directory, file, hunk and line, branch badge, message history, Amend, growing message editor, Commit / Commit and Push… (Cmd/Ctrl+Enter), commit options. Diffs open as editor tabs (DiffOpenRequested).",
 		Variants: func(th *tokens.Theme) []variant {
 			problems := []layout.Widget{}
 			for _, err := range []error{

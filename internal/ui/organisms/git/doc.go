@@ -12,9 +12,11 @@
 //	Organism      data in (setters)                          events out
 //	-----------   ----------------------------------------   ------------------------------------------
 //	CommitPanel   SetChanges([]Change), SetDiff(path, diff), CommitRequested, AmendMessageRequested,
-//	              SetHistory(msgs), SetAmendMessage(msg),    DiffRequested, RefreshRequested,
-//	              SetBusy(bool), SetProblem(*Problem),       FileOpenRequested
-//	              Reset()
+//	              SetBranch, SetGrouping, SetLastCommit,     DiffRequested, DiffOpenRequested,
+//	              SetHistory(msgs), SetAmendMessage(msg),    RefreshRequested, RollbackRequested,
+//	              SetBusy(bool), SetProblem(*Problem),       UpdateRequested, StashRequested,
+//	              Reset(); FileGlyph, Stash (host hooks)     GroupingChanged, StashTabShown,
+//	                                                         FileOpenRequested
 //	DiffView      SetDiff(*gitcli.FileDiff),                 – (pure view; navigation is internal)
 //	              WholeFileDiff(...) for complete files
 //	LogView       SetCommits(c, more), AppendCommits(c, more) CommitSelected, LogPageRequested
@@ -23,7 +25,11 @@
 //	MergeView     SetMerge(path, *gitcli.MergeResult, lbl)   MergeApplied, MergeCancelled
 //
 // gitcli types (FileStatus, FileDiff, Hunk, HunkSelection, Commit, Branch,
-// MergeResult, MergeBlock, PushError) are used purely as data types.
+// MergeResult, MergeBlock, PushError) are used as data types; the change
+// tree is grouped with gitcli's pure BuildChangeTree, the same function
+// the API (vcs.changes) and the diff tab's file order use. The commit
+// panel shows no diff: DiffOpenRequested asks the host for an editor tab
+// (organisms/diff.DiffWindow with file navigation).
 //
 // Every organism follows the component convention of internal/ui
 // (Layout(gtx, th)). Update(gtx) returns the events produced since the

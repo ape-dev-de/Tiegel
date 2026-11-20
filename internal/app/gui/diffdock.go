@@ -200,7 +200,7 @@ func (d *workDock) showDiff() {
 	}
 	if v.ToolShown(ToolCommit) && v.gitd != nil {
 		if p := v.gitd.panel.SelectedPath(); p != "" && (v.activeTool == ToolCommit || v.ctl.ActiveTab() == nil) {
-			d.compareWithHead(p)
+			v.gitd.openChangeDiff(p)
 			return
 		}
 	}
@@ -318,8 +318,29 @@ func (d *workDock) layoutDiffTab(gtx layout.Context, th *tokens.Theme, tab *cont
 		d.applyDiff(dt, dv)
 	}
 	w := d.work()
+	if nav := dt.Nav; nav != nil {
+		dv.win.SetFileNav(diff.FileNav{Index: nav.Index, Total: nav.Total(),
+			Prev: path.Base(nav.Neighbor(dt.Spec.Path, -1)), Next: path.Base(nav.Neighbor(dt.Spec.Path, 1))})
+		if g := d.v.gitd; g != nil && g.focusDiff && dv.seen == dt.Version && !dt.Loading {
+			g.focusDiff = false
+			if l, r := dv.win.Editors(); r != nil {
+				r.Focus(gtx)
+			} else if l != nil {
+				l.Focus(gtx)
+			}
+		}
+	}
 	for _, e := range dv.win.Update(gtx) {
 		switch e := e.(type) {
+		case diff.FileNavRequested:
+			delta := e.Delta
+			d.v.Post(func() {
+				if w.StepChangeDiff(dt, delta) {
+					if g := d.v.gitd; g != nil {
+						g.panel.Select(dt.Spec.Path)
+					}
+				}
+			})
 		case diff.RevertRequested:
 			// One undoable edit of the shared document (the lock is held).
 			if err := dv.win.ApplyRevert(e); err != nil {
