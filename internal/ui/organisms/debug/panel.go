@@ -13,8 +13,11 @@ import (
 
 // DebugPanel is the debugger tool window template: the toolbar on top, the
 // sessions (when more than one) and the call stack plus breakpoints on the
-// left, variables and watches on the right. Each part is an exported
-// organism the host fills with data; Update collects all their events.
+// left, variables and watches on the right. Narrower than two columns of
+// tokens.ShellSizes.PanelColumnMin (docked at a side) the columns are
+// stacked, so section titles and placeholders never get squeezed. Each
+// part is an exported organism the host fills with data; Update collects
+// all their events.
 type DebugPanel struct {
 	Toolbar     DebugToolbar
 	Sessions    SessionList
@@ -23,18 +26,24 @@ type DebugPanel struct {
 	Watches     WatchesList
 	Breakpoints BreakpointsList
 
-	main, left, right, top molecules.Split
+	// main divides the columns side by side, stacked when narrow.
+	main, stacked, left, right, top molecules.Split
+	isStacked                       bool
 }
 
 // NewDebugPanel returns a panel with default split ratios.
 func NewDebugPanel() *DebugPanel {
 	p := &DebugPanel{}
 	p.main = molecules.Split{Ratio: 0.38}
-	p.left = molecules.Split{Vertical: true, Ratio: 0.6, MinPane: 48}
-	p.right = molecules.Split{Vertical: true, Ratio: 0.65, MinPane: 48}
-	p.top = molecules.Split{Vertical: true, Ratio: 0.3, MinPane: 48}
+	p.stacked = molecules.Split{Vertical: true, Ratio: 0.45}
+	p.left = molecules.Split{Vertical: true, Ratio: 0.6}
+	p.right = molecules.Split{Vertical: true, Ratio: 0.65}
+	p.top = molecules.Split{Vertical: true, Ratio: 0.3}
 	return p
 }
+
+// Stacked reports whether the last Layout stacked the columns.
+func (p *DebugPanel) Stacked() bool { return p.isStacked }
 
 // Update returns the events of all parts since the last call.
 func (p *DebugPanel) Update(gtx layout.Context) []Event {
@@ -51,13 +60,19 @@ func (p *DebugPanel) Update(gtx layout.Context) []Event {
 // Layout draws the panel; it fills the available space.
 func (p *DebugPanel) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	p.Update(gtx)
+	sh := th.Shell()
 	size := gtx.Constraints.Max
 	if size.X > unbounded {
-		size.X = gtx.Dp(720)
+		size.X = gtx.Dp(sh.PanelFallbackW)
 	}
 	if size.Y > unbounded {
-		size.Y = gtx.Dp(420)
+		size.Y = gtx.Dp(sh.PanelFallbackH)
 	}
+	p.isStacked = size.X < 2*gtx.Dp(sh.PanelColumnMin)+gtx.Dp(th.Size.BorderWidth)
+	for _, sp := range []*molecules.Split{&p.stacked, &p.left, &p.right, &p.top} {
+		sp.MinPane = sh.PanelSectionMin
+	}
+	p.main.MinPane = sh.PanelColumnMin
 	gtx.Constraints = layout.Exact(size)
 	atoms.Surface{}.Paint(gtx, th)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -75,6 +90,9 @@ func (p *DebugPanel) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensi
 		}),
 		layout.Rigid(atoms.Divider{}.Fn(th)),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if p.isStacked {
+				return p.stacked.Layout(gtx, th, p.layoutLeft(th), p.layoutRight(th))
+			}
 			return p.main.Layout(gtx, th, p.layoutLeft(th), p.layoutRight(th))
 		}),
 	)

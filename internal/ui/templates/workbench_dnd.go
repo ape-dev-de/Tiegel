@@ -8,7 +8,6 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/unit"
 
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/internal/draw"
@@ -17,18 +16,12 @@ import (
 
 // Drag and drop of tool windows (D474): a stripe button or a panel
 // header (or one of its tabs) is pressed and moved further than
-// dragThreshold; from then on the template shows a translucent preview of
-// the rectangle the window would occupy and, on release, reports a
-// MoveEvent. Escape cancels the drag; a press without movement stays a
-// click.
-
-// dragThreshold is the distance a press has to move to become a drag.
-const dragThreshold = unit.Dp(6)
-
-// fullWidthStrip is the height of the zone along the bottom edge of the
-// main area (over the whole window width) that docks a window at the
-// bottom with the bottom panel spanning the full width.
-const fullWidthStrip = unit.Dp(24)
+// tokens.ShellSizes.DragThreshold; from then on the template shows a
+// translucent preview of the rectangle the window would occupy and, on
+// release, reports a MoveEvent. Escape cancels the drag; a press without movement stays a
+// click. A drop in the strip along the bottom edge of the main area
+// (tokens.ShellSizes.FullWidthStrip) docks the window at the bottom with
+// the bottom panel spanning the full width.
 
 // dropTarget is where a dragged window would go.
 type dropTarget struct {
@@ -166,7 +159,7 @@ type dragResult struct {
 // (id and title) at a position, or "" to ignore the press.
 func (w *Workbench) pointerDrag(gtx layout.Context, tag *int, from slotRef, origin image.Point,
 	press func(pos f32.Point) (id, title string)) dragResult {
-	thr := gtx.Dp(dragThreshold)
+	thr := gtx.Dp(tokens.DefaultShell().DragThreshold)
 	var r dragResult
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel})
@@ -219,7 +212,7 @@ func (w *Workbench) dropAt(p image.Point) (dropTarget, bool) {
 	if m.Empty() {
 		return dropTarget{}, false
 	}
-	if p.Y >= m.Max.Y-w.metric.Dp(fullWidthStrip) {
+	if p.Y >= m.Max.Y-w.metric.Dp(tokens.DefaultShell().FullWidthStrip) {
 		g := GroupPrimary
 		if p.X >= (m.Min.X+m.Max.X)/2 {
 			g = GroupSplit
@@ -315,7 +308,7 @@ func (w *Workbench) layoutDragPreview(gtx layout.Context, th *tokens.Theme) {
 			fill = 24 // the panel stays readable; the header band marks it
 		}
 		draw.Rect(gtx.Ops, r, tokens.WithAlpha(th.Color.Accent, fill))
-		bw := gtx.Dp(2)
+		bw := gtx.Dp(th.Shell().DropOutline)
 		draw.Border(gtx.Ops, r, 0, bw, tokens.WithAlpha(th.Color.Accent, 200))
 		if d.target.tab {
 			// The header band marks "as tab".
@@ -333,12 +326,12 @@ func (w *Workbench) layoutDragPreview(gtx layout.Context, th *tokens.Theme) {
 	}
 	bubble := atoms.TooltipBubble{Text: label}
 	bg := gtx
-	bg.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(320), draw.Unbounded)}
+	bg.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(th.Shell().TooltipMaxW), draw.Unbounded)}
 	rec := op.Record(gtx.Ops)
 	bd := bubble.Layout(bg, th)
 	call := rec.Stop()
 	// Below right of the pointer, kept inside the window.
-	gap := gtx.Dp(14)
+	gap := gtx.Dp(th.Shell().PointerGap)
 	at := d.pos.Add(image.Pt(gap, gap))
 	if at.X+bd.Size.X > w.size.X {
 		at.X = d.pos.X - gap - bd.Size.X

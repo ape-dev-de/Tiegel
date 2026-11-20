@@ -134,6 +134,9 @@ type Controller struct {
 	Git map[string]GitFile
 	// GitVersion changes whenever Git changes.
 	GitVersion uint64
+	// RolesVersion changes whenever the folder roles (RoleOf) change.
+	RolesVersion uint64
+	roles        map[string]string
 
 	// Tabs are the open editors of the active editor group in tab order;
 	// Active indexes Tabs (-1: none). See groups.go for splits.
@@ -581,6 +584,8 @@ func (c *Controller) projectOpened(info ProjectInfo) {
 	c.addRecentProject(info.Root)
 	c.loadToolLayout()
 	c.LoadDir("")
+	c.roles = nil
+	c.LoadRoles()
 	c.refreshGit()
 	c.refreshRuntime()
 	c.RefreshQA()
@@ -663,6 +668,7 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 		if json.Unmarshal(payload, &ev) == nil && ev.File != "" {
 			c.Tests.FileChanged(ev.File)
 			c.Composer.FileChanged(ev.File)
+			c.rolesFileChanged(ev.File)
 		}
 	}
 	if strings.HasPrefix(topic, "qa.") {

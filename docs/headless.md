@@ -127,6 +127,8 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `git-fetch [--remote R] [--prune] [--tags]` | alle Remotes (oder eines) holen; Ausgabe `new`/`updated`/`pruned` + Ref + Hash je geänderter Ref (Netzwerkzugriff nur hier) | `git.fetch` |
 | `git-pull [--remote R] [--branch B] [--strategy merge\|rebase\|ff-only] [--autostash] [--prune]` | holen und in den aktuellen Branch integrieren; Konflikte als `U pfad`, dann Exit 1 (weiter mit `git.conflicts`/`git.mergeData`/`git.resolve`) | `git.pull` |
 | `git-update [--strategy S] [--autostash] [--prune]` | Update Project: Dokumente speichern, Upstream holen, integrieren, offene Dokumente neu laden; Exit 1 bei Konflikten | `git.updateProject` |
+| `git-merge BRANCH [--no-ff\|--ff-only] \| --continue \| --abort` | BRANCH in den aktuellen Branch mergen (Standardverhalten von git); hält git bei Konflikten an: Liste der Dateien und Exit 1 (auflösen mit `git.mergeData`/`git.resolve`, dann `--continue`) | `git.merge` |
+| `git-rebase BRANCH \| --continue \| --abort` | aktuellen Branch auf BRANCH rebasen; Konflikte wie bei `git-merge` | `git.rebase` |
 | `git-stash [list \| push [-m MSG] [--untracked] [--keep-index] [DATEI...] \| apply [N] [--restore-index] \| pop [N] [--restore-index] \| drop [N]]` | Stash verwalten (`N` oder `stash@{N}`, ohne Unterbefehl: Liste); Exit 1 bei Konflikten von `apply`/`pop` | `git.stash*` |
 | `usages DATEI ZEILE:SPALTE [--no-declaration] [--server ID] [--command PATH]` | Find Usages über den Language Server: `pfad:zeile:spalte: zeile`; Exit 1 ohne Treffer | `lsp.start`, `lsp.references` |
 | `inlay-hints DATEI [--server ID] [--command PATH]` | Inlay Hints des Language Servers (Parameternamen, abgeleitete Typen) als `DATEI:ZEILE:SPALTE: [parameter\|type\|other] LABEL`; bietet der Server keine, Hinweis auf stderr | `lsp.inlayHints` |
@@ -161,6 +163,7 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `toggle-case DATEI --from ZEILE[:SPALTE] [--to ZEILE[:SPALTE]] [--write]` | Groß/Klein umschalten (ohne `--to`: Wort an der Position) | `doc.open`, `edit.toggleCase`, `doc.save` |
 | `index-status [--rebuild [--full]]` | baut den Index (bzw. aktualisiert ihn aus dem Cache) und zeigt Zustand und Zahlen; `--full` verwirft Index und Cache | `index.status`, `index.rebuild` |
 | `watch [--backend auto\|fsevents\|fsnotify\|poll] [--exclude DIR]...` | Projekt beobachten und Änderungen zeilenweise ausgeben, bis Strg+C: `watching ROOT (backend, N files in M directories, T ms)`, dann `created/modified/deleted PFAD`, `renamed ALT -> NEU` (Ordner mit `/`), `git PFADE` (HEAD, index, refs …). `--json`: ein Event pro Zeile `{"topic", "payload"}`. `--exclude` ersetzt die Einstellung `watch.exclude` (Standard `node_modules`) | `watch.start`, Events `files.changed`, `git.changed`, `watch.status` |
+| `project-roles` | Ordnerrollen: Quell-/Test-Wurzeln aus `autoload`/`autoload-dev` der `composer.json`, Bibliothek aus `config.vendor-dir`, sonst übliche Ordnernamen (Herkunft in Klammern) | `project.roles` |
 | `projects [list \| open DIR \| switch NAME \| hibernate NAME [--force] \| resume NAME \| close NAME [--force] \| busy NAME]` | Mehrere offene Projekte (AP18.5, D468): genau eines aktiv, die übrigen im Hintergrund (alles läuft weiter) oder im Ruhezustand (Sprachserver, Watcher, Index und Dokumente freigegeben; Dokumente vorher gespeichert). NAME = Wurzel oder eindeutiger Ordnername. Laufende Prozesse/Debug-Sitzungen und nicht speicherbare Dokumente verhindern Ruhezustand und Schließen ohne `--force`. Der Zustand gilt pro Prozess – über mehrere Aufrufe hinweg mit `serve` | `projects.*` |
 | `serve [--framing ndjson\|lsp] [--concurrent] [--listen ADDR [--token-file F] [--token T] [--allow-remote]]` | JSON-RPC 2.0 über stdin/stdout, mit `--listen unix:PFAD` oder `tcp:127.0.0.1:PORT` über einen Socket (Token-Authentisierung, siehe unten) | alle |
 | `call METHOD [JSON \| -]` | beliebige API-Methode aufrufen; `-` liest die Parameter von stdin; Ausgabe immer JSON | alle |
@@ -380,6 +383,7 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `events.publish` | `topic`, `payload?` | – |
 | `project.open` | `path` | Projektinfo (ein anderes offenes Projekt wird vorher wie mit `project.close` geschlossen) |
 | `project.info` / `project.close` | – | Projektinfo |
+| `project.roles` | – | `{roots: [{path, role: source\|test\|resource\|library, origin: composer\|name}], warning?}` (D499) |
 | `projects.list` | – | `{projects: [{name, root, state: active\|background\|hibernated, since, docs?, autoHibernateAt?}], active, autoHibernateMinutes}` |
 | `projects.open` | `path` | Sitzung (`{name, root, state, …}`); öffnet das Projekt neben den anderen und macht es aktiv (ist es offen: wechselt) |
 | `projects.switch` / `projects.resume` | `name` (Wurzel oder eindeutiger Ordnername) | Sitzung; ein Projekt im Ruhezustand wird wiederhergestellt (Dokumente wieder geöffnet), `clientState` aus `projects.hibernate` kommt einmal zurück. `resume` stellt im Hintergrund wieder her (aktiv, wenn keines aktiv ist) |
@@ -652,6 +656,8 @@ Headless: `terminal [--send TEXT]… [--find TEXT]` öffnet eine Sitzung (siehe 
 | `git.checkout` | `ref` | Status (offene, ungeänderte Dokumente werden neu geladen) |
 | `git.createBranch` / `git.deleteBranch` | `name`, `start?`, `checkout?` / `force?` | Branches |
 | `git.conflicts` | – | Dateien mit Konflikt |
+| `git.merge` | `branch` \| `continue` \| `abort`, `noFF?`, `ffOnly?` | `{op, head, state, conflicts, upToDate?, fastForward?, aborted?}` – Konflikte sind kein Fehler (`state: merging`) (D500) |
+| `git.rebase` | `onto` \| `continue` \| `abort` | wie `git.merge` (`state: rebasing`) |
 | `git.mergeData` | `path` | `base`, `ours`, `theirs`, `has*`, `blocks[{index, kind, conflict, base, ours, theirs, *Start}]`, `merged` (mit Markern), `conflicts` |
 | `git.fetch` | `remote?` (ohne: alle), `prune?`, `tags?` | `{remotes, updated[{ref, old?, new?}]}` (Netzwerkzugriff nur hier) |
 | `git.pull` | `remote?`, `branch?` (Standard: Upstream), `strategy?` (`merge`, `rebase`, `ff-only`; ohne Angabe die Einstellung `git.updateMethod`, Standard `merge`), `autostash?`, `prune?` | `{branch, remote, remoteBranch, before, after, upToDate, fastForward, changed, conflicts, state, fetched, ahead, behind}`; vorher werden offene Dokumente gespeichert, das Holen läuft außerhalb, das Integrieren unter der Speicher-Sperre, danach werden offene, ungeänderte Dokumente neu geladen. Konflikte sind kein Fehler (`conflicts`, `state` `merging`/`rebasing`) |

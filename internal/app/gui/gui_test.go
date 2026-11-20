@@ -137,7 +137,10 @@ func (e *env) settle() {
 
 func (e *env) waitFor(what string, cond func() bool) {
 	e.t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	// Generous: the deadline only matters when the condition never
+	// holds; under load (go test -race ./... on CI) events can take
+	// seconds.
+	deadline := time.Now().Add(30 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
 			e.t.Fatalf("timeout waiting for %s (notice %q)", what, e.ctl.Status.Notice)

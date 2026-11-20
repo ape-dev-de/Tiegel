@@ -36,7 +36,7 @@ func (v *View) breadcrumb() ([]statusbar.Crumb, []string) {
 	for i, p := range parts {
 		cur := path.Join(parts[:i+1]...)
 		last := i == len(parts)-1
-		cr := statusbar.Crumb{Text: p, Glyph: treeIcon(&filetree.Node{Name: p, Path: cur, Dir: !last}, false)}
+		cr := statusbar.Crumb{Text: p, Glyph: v.treeIcon(&filetree.Node{Name: p, Path: cur, Dir: !last}, false)}
 		if last {
 			cr.Tooltip = "Select in Project View"
 		}

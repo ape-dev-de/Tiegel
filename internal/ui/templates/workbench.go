@@ -707,7 +707,7 @@ func (w *Workbench) layoutHeaderTabs(gtx layout.Context, th *tokens.Theme, hd *p
 	c := clip.Rect{Max: image.Pt(limit, h)}.Push(gtx.Ops)
 	defer c.Pop()
 	padX := gtx.Dp(th.Space.M)
-	mark := gtx.Dp(2)
+	mark := gtx.Dp(th.Shell().TabMark)
 	x := gtx.Dp(th.Space.XS)
 	for _, tab := range p.Tabs {
 		if x >= limit {
@@ -896,7 +896,7 @@ func (w *Workbench) stripeTooltip(gtx layout.Context, th *tokens.Theme, side Sid
 	}
 	bubble := atoms.TooltipBubble{Text: text, Shortcut: sb.Shortcut}
 	bg := gtx
-	bg.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(320), draw.Unbounded)}
+	bg.Constraints = layout.Constraints{Max: image.Pt(gtx.Dp(th.Shell().TooltipMaxW), draw.Unbounded)}
 	m := op.Record(gtx.Ops)
 	bd := draw.Measure(bg, bubble.Fn(th))
 	x := bs + gtx.Dp(th.Space.S)

@@ -27,6 +27,7 @@ func (m *Module) registerOps(p *api.Provider) {
 	api.Add(p, "git.conflicts", "Files with merge conflicts", m.gitConflicts)
 	api.Add(p, "git.mergeData", "Base/ours/theirs of a conflicted file with three-way merge blocks", m.gitMergeData)
 	api.Add(p, "git.resolve", "Resolve a conflicted file with content or per-block resolutions", m.gitResolve)
+	m.registerMerge(p)
 }
 
 // changed publishes git.changed.
