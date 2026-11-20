@@ -7,7 +7,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/gitcli"
 )
 
-// Kernel methods of the commit tool window (D464,
+// Kernel methods of the commit tool window (D467,
 // AP18.4): "vcs.changes" groups git.status into the change tree and
 // "vcs.diffTab" resolves what the diff editor tab of one change compares,
 // its neighbours for next/previous file, and loads the diff

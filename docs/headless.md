@@ -574,9 +574,9 @@ Die `$File…$`-Makros brauchen eine aktuelle Datei; ohne sie scheitert der Star
 
 **diff.texts** (Kern, D313) – `{left, right, leftLabel?, rightLabel?, ignoreWhitespace?}` → Änderungsblöcke im Format von `git.fileDiff` (`{left, right, blocks, identical}`); damit zeigt das Diff-Fenster expected/actual eines Tests.
 
-**vcs.changes** (Kern, D464) – `{groupBy?}` → `{branch, tree: {grouping, changes, unversioned}, order}`; Knoten `{kind: group|dir|file, name, path, count, badge?, state?, origPath?, dir?, children}`.
+**vcs.changes** (Kern, D467) – `{groupBy?}` → `{branch, tree: {grouping, changes, unversioned}, order}`; Knoten `{kind: group|dir|file, name, path, count, badge?, state?, origPath?, dir?, children}`.
 
-**vcs.diffTab** (Kern, D464) – `{path, mode?: local|staged|unstaged, step?: ±1, groupBy?, ignoreWhitespace?}` → `{path, mode, state, base, target, basePath?, title, index, total, prev, next, diff}` (`diff` = Ergebnis von `git.fileDiff`).
+**vcs.diffTab** (Kern, D467) – `{path, mode?: local|staged|unstaged, step?: ±1, groupBy?, ignoreWhitespace?}` → `{path, mode, state, base, target, basePath?, title, index, total, prev, next, diff}` (`diff` = Ergebnis von `git.fileDiff`).
 
 **test** (Plugin `phpunit`, AP15.2–15.4, D310–D318) – Tests finden, ausführen und Ergebnisse lesen; der Kern kennt kein Test-Framework, die Typen stehen in `internal/api/testcontract.go`.
 
