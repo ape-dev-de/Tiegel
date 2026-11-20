@@ -172,6 +172,7 @@ func (m metrics) colX(col int) int { return (fixed.Int26_6(col) * m.cellW).Round
 
 // Layout draws the terminal filling the constraints.
 func (v *View) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	v.syncDropped()
 	v.updateMetrics(gtx, th)
 	size := gtx.Constraints.Max
 	pad := gtx.Dp(th.Space.XS)
@@ -612,14 +613,14 @@ func (v *View) drawCursor(gtx layout.Context, th *tokens.Theme, top, rows, pad i
 	cell := cursorCell(line, cur.Col)
 	w := max(1, cell.Width)
 	r := image.Rect(x, y, pad+m.colX(cur.Col+w), y+m.lineH)
-	bw := max(1, gtx.Dp(1))
+	bw := max(1, gtx.Dp(th.Size.BorderWidth))
 	switch {
 	case !v.focused:
 		draw.Border(gtx.Ops, r, 0, bw, tp.Cursor)
 	case cur.Shape >= 5:
-		draw.Rect(gtx.Ops, image.Rect(x, y, x+max(1, gtx.Dp(2)), y+m.lineH), tp.Cursor)
+		draw.Rect(gtx.Ops, image.Rect(x, y, x+max(1, gtx.Dp(th.Space.XXS)), y+m.lineH), tp.Cursor)
 	case cur.Shape == 3 || cur.Shape == 4:
-		draw.Rect(gtx.Ops, image.Rect(x, y+m.lineH-max(1, gtx.Dp(2)), r.Max.X, y+m.lineH), tp.Cursor)
+		draw.Rect(gtx.Ops, image.Rect(x, y+m.lineH-max(1, gtx.Dp(th.Space.XXS)), r.Max.X, y+m.lineH), tp.Cursor)
 	default:
 		draw.Rect(gtx.Ops, r, tp.Cursor)
 		if strings.TrimSpace(cell.Text) != "" && !cell.Hidden {

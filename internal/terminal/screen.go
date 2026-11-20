@@ -135,6 +135,9 @@ func spanOf(t *vt.Terminal, s vt.Span) Span {
 	return sp
 }
 
+// MaxScreenLines bounds the lines of one snapshot.
+const MaxScreenLines = 2000
+
 // ScreenOptions select the lines of a snapshot.
 type ScreenOptions struct {
 	// Top is the first line (absolute index); negative: the screen
@@ -165,7 +168,7 @@ func snapshot(t *vt.Terminal, o ScreenOptions) (Screen, [][]int) {
 		count = rows
 	}
 	top = max(0, min(top, sc.Total))
-	count = max(0, min(count, sc.Total-top, 2000))
+	count = max(0, min(count, sc.Total-top, MaxScreenLines))
 	sc.Top = top
 	sc.Lines = make([]ScreenLine, count)
 	colMaps := make([][]int, count)

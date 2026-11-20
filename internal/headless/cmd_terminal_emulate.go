@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -87,8 +88,10 @@ func runTerminalEmulate(c *cli) error {
 		}
 	}
 	if c.p.has("scrollback") {
+		// All lines from the oldest one through the screen: Text has
+		// them all, the JSON lines the last ones (see "omitted").
 		zero := 0
-		p.Top, p.Count = &zero, 2000
+		p.Top, p.Count = &zero, math.MaxInt32
 	}
 	var res terminal.EmulateResult
 	if err := c.call("terminal.emulate", p, &res); err != nil {

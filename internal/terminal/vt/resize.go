@@ -202,6 +202,13 @@ func (t *Terminal) reflowMain(cols, rows int) {
 				line++
 			}
 			for off >= cols {
+				if j < len(all)-1 && line == len(out)-1 {
+					// Past the content of a line with more lines
+					// below: stay on its last row (inserting blank
+					// rows would split the output).
+					off = cols - 1
+					break
+				}
 				// Past the content: further rows of the same line.
 				off -= cols
 				line++
@@ -213,9 +220,6 @@ func (t *Terminal) reflowMain(cols, rows int) {
 		}
 		i = j + 1
 	}
-	for i := range out {
-		out[i] = fitLine(out[i], cols)
-	}
 	// The screen shows the last rows lines (the cursor must be on it).
 	startScreen := max(0, len(out)-rows)
 	if newPts[0].valid && newPts[0].line < startScreen {
@@ -223,7 +227,11 @@ func (t *Terminal) reflowMain(cols, rows int) {
 	}
 	screenLines := out[startScreen:min(len(out), startScreen+rows)]
 	s.lines = make([]Line, 0, rows)
-	s.lines = append(s.lines, screenLines...)
+	for _, l := range screenLines {
+		// Only screen lines are padded to the full width; the
+		// scrollback keeps its lines trimmed to their content.
+		s.lines = append(s.lines, fitLine(l, cols))
+	}
 	for len(s.lines) < rows {
 		s.lines = append(s.lines, newLine(cols, Style{}))
 	}
@@ -238,8 +246,8 @@ func (t *Terminal) reflowMain(cols, rows int) {
 	}
 	t.scrollback, t.sbStart = make([]Line, 0, len(sb)), 0
 	for _, l := range sb {
-		n := l.contentLen()
-		t.scrollback = append(t.scrollback, Line{Cells: l.Cells[:n:n], Wrapped: l.Wrapped, Mark: l.Mark})
+		n := min(l.contentLen(), cols)
+		t.scrollback = append(t.scrollback, Line{Cells: append([]Cell(nil), l.Cells[:n]...), Wrapped: l.Wrapped, Mark: l.Mark})
 	}
 	if newPts[0].valid {
 		t.row = newPts[0].line - startScreen

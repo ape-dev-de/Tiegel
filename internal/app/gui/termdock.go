@@ -2,12 +2,14 @@ package gui
 
 import (
 	"fmt"
+	"image"
 	"image/color"
 	"regexp"
 	"strings"
 
 	"gioui.org/io/key"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -394,7 +396,7 @@ func (d *termDock) layout(gtx layout.Context, th *tokens.Theme) layout.Dimension
 	if cur == nil {
 		children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			hint := "No terminal. + opens a shell in the project; Services › Open Shell opens one in a compose service."
-			return layout.Inset{Left: th.Space.S, Top: th.Space.S}.Layout(gtx, atoms.Muted(hint).Fn(th))
+			return layout.Inset{Left: th.Space.M, Right: th.Space.M, Top: th.Space.S}.Layout(gtx, atoms.Muted(hint).Fn(th))
 		}))
 	} else {
 		if d.find.open {
@@ -439,15 +441,30 @@ func (d *termDock) layoutTabs(gtx layout.Context, th *tokens.Theme) layout.Dimen
 			delete(d.views, id)
 		}
 	}
-	children = append(children,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return d.addBtn.Layout(gtx, th) }),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if cur == nil {
-				return layout.Dimensions{}
-			}
-			return d.renameBt.Layout(gtx, th)
-		}))
-	return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
+	// Icon buttons as in panel headers (D464): ActionButton squares
+	// with an XXS gap.
+	d.addBtn.Size, d.renameBt.Size = th.Size.ActionButton, th.Size.ActionButton
+	gap := layout.Rigid(layout.Spacer{Width: th.Space.XXS}.Layout)
+	children = append(children, gap,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return d.addBtn.Layout(gtx, th) }))
+	if cur != nil {
+		children = append(children, gap,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions { return d.renameBt.Layout(gtx, th) }))
+	}
+	// One row of the panel header height, padded like the headers, the
+	// content vertically centered.
+	h := gtx.Dp(th.Size.PanelHeaderH)
+	pad := gtx.Dp(th.Space.XS)
+	width := gtx.Constraints.Max.X
+	cgtx := gtx
+	cgtx.Constraints = layout.Constraints{Max: image.Pt(max(0, width-2*pad), h)}
+	rec := op.Record(gtx.Ops)
+	dims := layout.Flex{Alignment: layout.Middle}.Layout(cgtx, children...)
+	call := rec.Stop()
+	t := op.Offset(image.Pt(pad, (h-dims.Size.Y)/2)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	t.Pop()
+	return layout.Dimensions{Size: image.Pt(width, h)}
 }
 
 // view returns the organism of a tab.

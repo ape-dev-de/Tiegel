@@ -15,14 +15,18 @@ const (
 	stCSI
 	stCSIIgnore
 	stOSC
-	stOSCEsc  // ESC inside an OSC string (ST is ESC \)
-	stString  // DCS, SOS, PM, APC: consumed until ST
-	stStrEsc  // ESC inside such a string
-	stCharset // ESC ( X and friends: one designator byte follows
+	stOSCEsc       // ESC inside an OSC string (ST is ESC \)
+	stString       // DCS, SOS, PM, APC: consumed until ST
+	stStrEsc       // ESC inside such a string
+	stCharset      // ESC ( X and friends: one designator byte follows
+	stEscapeIgnore // ESC sequence with too many intermediates: dropped
 )
 
 const (
 	maxParams = 32
+	// maxInter bounds the intermediate bytes of an ESC or CSI sequence;
+	// longer sequences are consumed and ignored (no unbounded growth).
+	maxInter = 2
 	// maxOSC bounds an OSC string (OSC 52 carries base64 clipboard
 	// text).
 	maxOSC = 1 << 20
@@ -152,11 +156,19 @@ func (t *Terminal) step(c byte) {
 		t.escape(c)
 	case stEscapeInter:
 		if c >= 0x20 && c <= 0x2f {
+			if len(p.inter) >= maxInter {
+				p.state = stEscapeIgnore
+				return
+			}
 			p.inter = append(p.inter, c)
 			return
 		}
 		t.escDispatch(c)
 		p.state = stGround
+	case stEscapeIgnore:
+		if c > 0x2f {
+			p.state = stGround
+		}
 	case stCharset:
 		t.designate(p.gset, c)
 		p.state = stGround
@@ -234,6 +246,10 @@ func (t *Terminal) csiByte(c byte) {
 		}
 		p.state = stCSIIgnore
 	case c >= 0x20 && c <= 0x2f:
+		if len(p.inter) >= maxInter {
+			p.state = stCSIIgnore
+			return
+		}
 		p.inter = append(p.inter, c)
 	case c >= 0x40 && c <= 0x7e:
 		if len(p.cur) > 0 || len(p.params) > 0 {
