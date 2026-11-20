@@ -223,7 +223,7 @@ func TestSelectionLinksAndScroll(t *testing.T) {
 		t.Fatal("typing did not return to the bottom")
 	}
 	// Alternate screen: the wheel sends arrow keys.
-	r.v.Screen.Modes.AltScreen = true
+	r.v.Screen.Modes.AltScreen, r.v.Screen.Modes.AltScroll = true, true
 	r.take()
 	h.Router.Queue(pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: f32.Pt(50, 50), Scroll: f32.Pt(0, float32(2*m.lineH))})
 	h.Frame(r.frame)
@@ -238,11 +238,11 @@ func TestSelectionLinksAndScroll(t *testing.T) {
 
 func TestColors(t *testing.T) {
 	th := tokens.Dark(nil)
-	fg, _, set := colors(th, terminal.Span{FG: "p1", Bold: true})
+	fg, _, set := colors(th, terminal.Span{FG: "p1", Bold: true}, false)
 	if fg != th.Terminal.ANSI[9] || set {
 		t.Fatalf("bold brightens: %v", fg)
 	}
-	fg, bg, set := colors(th, terminal.Span{FG: "#010203", Inverse: true})
+	fg, bg, set := colors(th, terminal.Span{FG: "#010203", Inverse: true}, false)
 	if bg.R != 1 || fg != th.Terminal.Background || !set {
 		t.Fatalf("inverse %v %v", fg, bg)
 	}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/base64"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -110,4 +111,24 @@ func TestTerminalFindMouseClipboard(t *testing.T) {
 		t.Fatal("two inputs", err)
 	}
 	call(t, a, "terminal.close", TerminalIDParams{ID: info.ID}, nil)
+}
+
+func TestTerminalOpenURL(t *testing.T) {
+	a := newTestApp(t)
+	var got []string
+	a.start = func(name string, args ...string) error { got = append([]string{name}, args...); return nil }
+	var res TerminalURLResult
+	call(t, a, "terminal.openURL", TerminalURLParams{URL: "https://example.com/x"}, &res)
+	if len(got) < 2 || got[len(got)-1] != "https://example.com/x" || len(res.Command) != len(got) {
+		t.Fatalf("started %q result %+v", got, res)
+	}
+	for _, bad := range []string{"file:///etc/passwd", "javascript:alert(1)", "https://"} {
+		if err := callErr(a, "terminal.openURL", TerminalURLParams{URL: bad}); ErrorCode(err) != CodeInvalidParams {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+	a.start = func(string, ...string) error { return errors.New("no browser") }
+	if err := callErr(a, "terminal.openURL", TerminalURLParams{URL: "http://h.test"}); ErrorCode(err) != CodeUnavailable {
+		t.Fatal(err)
+	}
 }

@@ -41,6 +41,9 @@ type TermSettings struct {
 	OverrideKeys   bool
 	CloseOnExit    bool
 	FontSize       float64
+	CopyOnSelect   bool
+	LineHeight     float64
+	ConfirmClose   bool
 }
 
 // Terminals is the terminal state of the window.
@@ -54,12 +57,17 @@ type Terminals struct {
 	Version uint64
 	// Opened is set when a session opened from this window (the view
 	// shows and focuses the tool window); the view clears it.
-	Opened  bool
-	project string
+	Opened bool
+	// Clipboard is text a program wrote to the clipboard (OSC 52, only
+	// with terminal.allowClipboardWrite); the view takes it.
+	Clipboard *string
+	project   string
+	// colors are the colors last sent with terminal.colors.
+	colors string
 }
 
 func newTerminals(c *Controller) *Terminals {
-	return &Terminals{c: c, Settings: TermSettings{EscapeToEditor: true, OverrideKeys: true, CloseOnExit: true}}
+	return &Terminals{c: c, Settings: TermSettings{EscapeToEditor: true, OverrideKeys: true, CloseOnExit: true, ConfirmClose: true}}
 }
 
 // Tab returns the tab of session id.
@@ -101,6 +109,9 @@ func (t *Terminals) LoadSettings() {
 			OverrideKeys:   getEffective(ctx, be, terminal.KeyOverrideKeys, true),
 			CloseOnExit:    getEffective(ctx, be, terminal.KeyCloseOnExit, true),
 			FontSize:       getEffective(ctx, be, terminal.KeyFontSize, 0.0),
+			CopyOnSelect:   getEffective(ctx, be, terminal.KeyCopyOnSelect, false),
+			LineHeight:     getEffective(ctx, be, terminal.KeyLineHeight, 0.0),
+			ConfirmClose:   getEffective(ctx, be, terminal.KeyConfirmClose, true),
 		}
 		return func() {
 			t.Settings = s
@@ -233,6 +244,50 @@ func (t *Terminals) Paste(id, s string) {
 	if s != "" {
 		t.queue(id, api.TerminalInputParams{Paste: s})
 	}
+}
+
+// SendMouse reports a mouse event to the program (the backend drops it
+// when the program did not ask for mouse reports).
+func (t *Terminals) SendMouse(id string, m vt.Mouse) {
+	t.queue(id, api.TerminalInputParams{Mouse: &m})
+}
+
+// SendFocus reports a focus change to the program (when it asked for
+// focus events).
+func (t *Terminals) SendFocus(id string, focused bool) {
+	t.queue(id, api.TerminalInputParams{Focus: &focused})
+}
+
+// Find searches scrollback and screen of a session and passes the
+// result to done (on the UI goroutine).
+func (t *Terminals) Find(id string, o terminal.FindOptions, done func(terminal.FindResult, error)) {
+	t.c.Go(func(ctx context.Context) func() {
+		var res terminal.FindResult
+		err := t.c.call(ctx, "terminal.find", api.TerminalFindParams{ID: id, FindOptions: o}, &res)
+		return func() { done(res, err) }
+	})
+}
+
+// OpenURL opens a link the user clicked in the browser.
+func (t *Terminals) OpenURL(url string) {
+	t.c.Go(func(ctx context.Context) func() {
+		err := t.c.call(ctx, "terminal.openURL", api.TerminalURLParams{URL: url}, nil)
+		return func() { t.c.notice(err) }
+	})
+}
+
+// SetColors tells the backend the theme colors programs may query
+// (OSC 10/11); unchanged colors are not sent again.
+func (t *Terminals) SetColors(p api.TerminalColorsParams) {
+	key := p.FG + p.BG + p.Cursor + strings.Join(p.ANSI, "")
+	if key == t.colors {
+		return
+	}
+	t.colors = key
+	t.c.Go(func(ctx context.Context) func() {
+		err := t.c.call(ctx, "terminal.colors", p, nil)
+		return func() { t.c.notice(err) }
+	})
 }
 
 // Resize sets the grid size of a session.
@@ -434,6 +489,12 @@ func (t *Terminals) handleEvent(topic string, payload json.RawMessage) {
 				return
 			}
 			t.refresh(x)
+		}
+	case api.TopicTerminalClipboard:
+		var p api.TerminalClipboard
+		if json.Unmarshal(payload, &p) == nil && t.Tab(p.ID) != nil {
+			t.Clipboard = &p.Text
+			t.Version++
 		}
 	case api.TopicTerminalClosed:
 		var p api.TerminalIDParams

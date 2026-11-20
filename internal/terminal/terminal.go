@@ -389,8 +389,23 @@ func (s *Session) checkForeground(now time.Time) bool {
 	return true
 }
 
-// fgInterval throttles foreground job lookups.
-const fgInterval = 250 * time.Millisecond
+// fgInterval throttles foreground job lookups; fgPoll is how often an
+// idle session looks.
+const (
+	fgInterval = 250 * time.Millisecond
+	fgPoll     = 500 * time.Millisecond
+)
+
+// pollForeground reports a changed foreground job of an idle session.
+func (s *Session) pollForeground() {
+	s.mu.Lock()
+	changed := s.checkForeground(time.Now())
+	info := s.infoLocked()
+	s.mu.Unlock()
+	if changed && s.m.OnChange != nil {
+		s.m.OnChange(info)
+	}
+}
 
 // maxSync bounds how long a synchronized update (mode 2026) holds back
 // output events.
@@ -481,9 +496,20 @@ func (s *Session) publish() {
 	if interval <= 0 {
 		interval = 16 * time.Millisecond
 	}
+	// A job started without output (sleep, a server) still changes the
+	// foreground: look at it now and then while idle.
+	var poll <-chan time.Time
+	if _, ok := s.proc.(foregrounder); ok {
+		t := time.NewTicker(fgPoll)
+		defer t.Stop()
+		poll = t.C
+	}
 	for {
 		select {
 		case <-s.notify:
+		case <-poll:
+			s.pollForeground()
+			continue
 		case <-s.stop:
 			s.flush()
 			return

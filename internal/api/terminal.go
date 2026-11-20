@@ -13,6 +13,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/core/shellenv"
+	"github.com/ape-dev-de/tiegel/internal/docker"
 	"github.com/ape-dev-de/tiegel/internal/run"
 	"github.com/ape-dev-de/tiegel/internal/terminal"
 	"github.com/ape-dev-de/tiegel/internal/terminal/vt"
@@ -177,6 +178,16 @@ type TerminalEmulateParams struct {
 	Links   bool `json:"links,omitempty"`
 }
 
+// TerminalURLParams are the params of "terminal.openURL".
+type TerminalURLParams struct {
+	URL string `json:"url"`
+}
+
+// TerminalURLResult is the result of "terminal.openURL".
+type TerminalURLResult struct {
+	Command []string `json:"command"`
+}
+
 // TerminalColorsParams are the params of "terminal.colors": the colors
 // reported to programs that query them (OSC 10/11/12/4), "#rrggbb".
 type TerminalColorsParams struct {
@@ -264,6 +275,7 @@ func (a *App) registerTerminal() {
 	mustHandle(a, "terminal.find", "Search scrollback and screen of a session (text or regular expression)", a.terminalFind)
 	mustHandle(a, "terminal.emulate", "Feed program output into a fresh terminal emulator (no program) and return the screen", a.terminalEmulate)
 	mustHandle(a, "terminal.colors", "Set the colors reported to programs that query them (OSC 10/11/12/4)", a.terminalColors)
+	mustHandle(a, "terminal.openURL", "Open an http(s) link from the terminal in the default browser (on a user click only)", a.terminalOpenURL)
 	mustHandle(a, "terminal.resize", "Change the size of a session (columns, rows)", a.terminalResize)
 	mustHandle(a, "terminal.rename", "Rename a terminal tab", a.terminalRename)
 	mustHandle(a, "terminal.screen", "Snapshot of screen or scrollback lines: text, styled spans, cursor, modes, file links", a.terminalScreen)
@@ -589,4 +601,17 @@ func (a *App) terminalKinds(ctx context.Context, _ struct{}) ([]TerminalKind, er
 func (a *App) closeForeignTerminals() {
 	root := a.ProjectRoot()
 	a.terms.CloseMatching(func(i terminal.Info) bool { return i.Project != root })
+}
+
+// terminalOpenURL opens a web link the user clicked in a terminal (the
+// only network-related action here: the browser fetches it).
+func (a *App) terminalOpenURL(_ context.Context, p TerminalURLParams) (TerminalURLResult, error) {
+	cmd, err := docker.BrowserCommand(a.opts.GOOS, p.URL)
+	if err != nil {
+		return TerminalURLResult{}, Errorf(CodeInvalidParams, "%w", err)
+	}
+	if err := a.start(cmd[0], cmd[1:]...); err != nil {
+		return TerminalURLResult{}, Errorf(CodeUnavailable, "open URL: %w", err)
+	}
+	return TerminalURLResult{Command: cmd}, nil
 }

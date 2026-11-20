@@ -34,6 +34,23 @@ func (p *fgProc) set(name string) {
 	p.mu.Unlock()
 }
 
+// TestForegroundPoll: a job that prints nothing still shows up.
+func TestForegroundPoll(t *testing.T) {
+	inner := newFake()
+	f := &fgProc{fakeProc: inner}
+	ev := &events{}
+	m := newManager(inner, ev)
+	m.Start = func(Command) (Process, error) { return f, nil }
+	info, _ := m.Open(Options{Command: Command{Program: "/bin/fake"}})
+	f.set("sleep")
+	eventually(t, "poll", func() bool {
+		ev.mu.Lock()
+		defer ev.mu.Unlock()
+		return len(ev.changed) > 0 && ev.changed[len(ev.changed)-1].Process == "sleep"
+	})
+	_ = m.Close(info.ID)
+}
+
 func TestSessionInputKinds(t *testing.T) {
 	f := newFake()
 	ev := &events{}

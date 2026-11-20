@@ -1,38 +1,33 @@
 // Package termview is the terminal organism: it draws a snapshot of a
-// terminal session (styled cells, cursor, selection, file links) on a
-// monospace grid and turns keyboard, mouse and clipboard input into
-// events for its owner. It holds no session state beyond the view (scroll
-// position, selection); the owner fetches the lines the view asks for
-// (Top, Rows) from the terminal service and sets Screen every frame.
+// terminal session (styled cells, cursor, selection, find matches, file
+// and web links) on a monospace grid and turns keyboard, mouse and
+// clipboard input into events for its owner. It holds no session state
+// beyond the view (scroll position, selection); the owner fetches the
+// lines the view asks for (Top, Rows) from the terminal service and sets
+// Screen every frame.
+//
+// Rendering is cached per row: a row whose spans, links and hover state
+// did not change since the last frame replays its recorded operations
+// instead of shaping its text again. Glyphs are placed on the cell grid
+// one by one, and box drawing, block elements and powerline separators
+// are drawn as geometry so that they join without gaps.
 package termview
 
 import (
 	"image"
-	"image/color"
 	"io"
-	"math"
 	"strings"
+	"time"
 
-	"gioui.org/f32"
-	"gioui.org/font"
 	"gioui.org/io/clipboard"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
-	"gioui.org/io/pointer"
 	"gioui.org/io/transfer"
 	"gioui.org/layout"
-	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
-	"gioui.org/text"
 	"gioui.org/unit"
-	"gioui.org/widget"
-	"golang.org/x/image/math/fixed"
 
 	"github.com/ape-dev-de/tiegel/internal/terminal"
 	"github.com/ape-dev-de/tiegel/internal/terminal/vt"
-	"github.com/ape-dev-de/tiegel/internal/ui/internal/draw"
-	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
 
 // Event is emitted by Update.
@@ -41,8 +36,12 @@ type Event interface{ isEvent() }
 // KeyEvent is a key press to encode for the program.
 type KeyEvent struct{ Key vt.Key }
 
-// TextEvent is typed text.
-type TextEvent struct{ Text string }
+// TextEvent is typed text. Erase > 0 first removes that many characters
+// typed before (an input method replaced its composition).
+type TextEvent struct {
+	Text  string
+	Erase int
+}
 
 // PasteEvent is text pasted from the clipboard.
 type PasteEvent struct{ Text string }
@@ -54,8 +53,18 @@ type CopyEvent struct{ From, To Pos }
 // LinkEvent is a click on a file location.
 type LinkEvent struct{ Link terminal.Link }
 
+// OpenURLEvent is a Cmd+click (Ctrl+click) on a web link.
+type OpenURLEvent struct{ URL string }
+
+// MouseEvent is a mouse event for a program that asked for mouse
+// reports (the owner sends it; the backend encodes it).
+type MouseEvent struct{ Mouse vt.Mouse }
+
 // ResizeEvent reports the grid size that fits the view.
 type ResizeEvent struct{ Cols, Rows int }
+
+// FindEvent asks the owner to open the find bar (Cmd+F, Ctrl+Shift+F).
+type FindEvent struct{}
 
 // EscapeEvent is Escape while it returns the focus to the editor;
 // HideEvent is Shift+Escape (hide the tool window).
@@ -67,20 +76,32 @@ type (
 // FocusEvent reports a change of the keyboard focus.
 type FocusEvent struct{ Focused bool }
 
-func (KeyEvent) isEvent()    {}
-func (TextEvent) isEvent()   {}
-func (PasteEvent) isEvent()  {}
-func (CopyEvent) isEvent()   {}
-func (LinkEvent) isEvent()   {}
-func (ResizeEvent) isEvent() {}
-func (EscapeEvent) isEvent() {}
-func (HideEvent) isEvent()   {}
-func (FocusEvent) isEvent()  {}
+func (KeyEvent) isEvent()     {}
+func (TextEvent) isEvent()    {}
+func (PasteEvent) isEvent()   {}
+func (CopyEvent) isEvent()    {}
+func (LinkEvent) isEvent()    {}
+func (OpenURLEvent) isEvent() {}
+func (MouseEvent) isEvent()   {}
+func (ResizeEvent) isEvent()  {}
+func (FindEvent) isEvent()    {}
+func (EscapeEvent) isEvent()  {}
+func (HideEvent) isEvent()    {}
+func (FocusEvent) isEvent()   {}
 
 // Pos is a cell position: absolute line (scrollback + screen) and column.
 type Pos struct{ Line, Col int }
 
 func (p Pos) before(q Pos) bool { return p.Line < q.Line || p.Line == q.Line && p.Col < q.Col }
+
+// selection granularity (single, double, triple click).
+type selUnit uint8
+
+const (
+	selChar selUnit = iota
+	selWord
+	selLine
+)
 
 // View is the terminal organism. Set the inputs before Update.
 type View struct {
@@ -94,12 +115,21 @@ type View struct {
 	// to the program.
 	EscapeToEditor bool
 	// Mac selects the clipboard keys: Cmd+C/Cmd+V on macOS, Ctrl+Shift+C/V
-	// elsewhere.
+	// elsewhere (and Cmd- or Ctrl-click for web links).
 	Mac bool
-	// FontSize is the text size (0: the theme's code size).
-	FontSize unit.Sp
+	// FontSize is the text size (0: the theme's code size); LineHeight
+	// the row height as a multiple of the font height (0: the theme's
+	// code line height).
+	FontSize   unit.Sp
+	LineHeight float32
+	// CopyOnSelect copies a mouse selection when the button is released.
+	CopyOnSelect bool
 	// Notice is shown as the last line (e.g. "process exited").
 	Notice string
+	// Matches are find results to highlight; Current indexes the one
+	// to emphasise (-1: none).
+	Matches []terminal.Match
+	Current int
 
 	focused  bool
 	focusReq bool
@@ -115,35 +145,40 @@ type View struct {
 		anchor, head     Pos
 		pressAt          Pos
 		pressLink        *terminal.Link
+		unit             selUnit
+		// lastPress and clicks count multi-clicks.
+		lastPress time.Duration
+		lastPos   Pos
+		clicks    int
 	}
-	hover *terminal.Link
+	hover   *terminal.Link
+	hoverAt Pos
+	// shortcut tells that the link modifier (Cmd, Ctrl) is held.
+	shortcut bool
 	// ctrlDown and altDown track the held modifiers: on macOS the text
 	// of a key (EditEvent) arrives before its key.Event.
 	ctrlDown, altDown bool
+	// mouse reporting: the held button and the last reported cell.
+	mouseBtn  vt.MouseButton
+	mouseCell image.Point
+	// imePos is the end of the text the input method knows (runes).
+	imePos int
+
+	blinkStart time.Time
+	bellSeen   int
+	bellInit   bool
+	bellUntil  time.Time
 
 	cols, rows int
 	met        metrics
 	origin     image.Point
 	events     []Event
 	filters    []event.Filter
+	rc         renderCache
 }
 
 // New returns a view that follows the output.
-func New() *View { return &View{follow: true} }
-
-// metrics are the cell measurements of the font.
-type metrics struct {
-	key   metricsKey
-	cellW fixed.Int26_6
-	lineH int
-	textH int
-}
-
-type metricsKey struct {
-	shaper *text.Shaper
-	font   font.Font
-	ppem   fixed.Int26_6
-}
+func New() *View { return &View{follow: true, Current: -1} }
 
 // Focus requests the keyboard focus on the next frame.
 func (v *View) Focus() { v.focusReq, v.blurReq = true, false }
@@ -179,6 +214,18 @@ func (v *View) Cols() int { return v.cols }
 // ScrollToBottom makes the view follow the output again.
 func (v *View) ScrollToBottom() { v.follow = true }
 
+// Reveal scrolls so that absolute line is visible (find results).
+func (v *View) Reveal(line int) {
+	if v.Screen == nil || v.rows <= 0 {
+		return
+	}
+	top := v.Top()
+	if line >= top && line < top+v.rows {
+		return
+	}
+	v.scrollLines(line - v.rows/2 - top)
+}
+
 // HasSelection reports whether text is selected.
 func (v *View) HasSelection() bool { return v.sel.active && v.sel.anchor != v.sel.head }
 
@@ -189,6 +236,11 @@ func (v *View) Selection() (from, to Pos) {
 		a, b = b, a
 	}
 	return a, b
+}
+
+// Select sets the selection (e.g. to a find match).
+func (v *View) Select(from, to Pos) {
+	v.sel.active, v.sel.anchor, v.sel.head = true, from, to
 }
 
 // ClearSelection removes the selection.
@@ -265,8 +317,10 @@ func (v *View) processKeys(gtx layout.Context) {
 				v.focused = e.Focus
 				v.emit(FocusEvent{Focused: e.Focus})
 			}
+			v.imePos = 0
 			if e.Focus {
 				gtx.Execute(key.SoftKeyboardCmd{Show: true})
+				v.blinkStart = gtx.Now
 			} else {
 				v.ctrlDown, v.altDown = false, false
 			}
@@ -276,10 +330,7 @@ func (v *View) processKeys(gtx layout.Context) {
 				v.handleKey(gtx, e)
 			}
 		case key.EditEvent:
-			if t := v.editText(e.Text); t != "" {
-				v.typed()
-				v.emit(TextEvent{Text: t})
-			}
+			v.edit(e)
 		case transfer.DataEvent:
 			r := e.Open()
 			data, err := io.ReadAll(io.LimitReader(r, 1<<20))
@@ -291,6 +342,24 @@ func (v *View) processKeys(gtx layout.Context) {
 		}
 	}
 	v.focused = gtx.Focused(v)
+}
+
+// edit handles text from the keyboard or an input method. An input
+// method replaces its composition (e.g. a dead key ´ followed by e
+// becomes é): text it replaces at the end of what it knows is erased
+// first.
+func (v *View) edit(e key.EditEvent) {
+	t := v.editText(e.Text)
+	erase := 0
+	if e.Range.End == v.imePos && e.Range.Start < e.Range.End && e.Range.Start >= 0 {
+		erase = e.Range.End - e.Range.Start
+	}
+	v.imePos = max(0, e.Range.Start) + len([]rune(e.Text))
+	if t == "" && erase == 0 {
+		return
+	}
+	v.typed()
+	v.emit(TextEvent{Text: t, Erase: erase})
 }
 
 // trackModifiers follows the held Ctrl and Alt keys.
@@ -328,10 +397,11 @@ func (v *View) editText(t string) string {
 }
 
 // typed scrolls to the bottom and drops the selection (input goes to the
-// prompt).
+// prompt); the cursor stops blinking for a moment.
 func (v *View) typed() {
 	v.follow = true
 	v.sel.active = false
+	v.blinkStart = time.Time{}
 }
 
 func (v *View) handleKey(gtx layout.Context, e key.Event) {
@@ -348,14 +418,21 @@ func (v *View) handleKey(gtx layout.Context, e key.Event) {
 			gtx.Execute(clipboard.ReadCmd{Tag: v})
 		case "A":
 			v.SelectAll()
+		case "F":
+			v.emit(FindEvent{})
 		}
 		// Other Cmd chords belong to the IDE (handled before the view).
 		return
-	case !v.Mac && ctrl && shift && !alt && (e.Name == "C" || e.Name == "V"):
-		if e.Name == "C" {
+	case !v.Mac && ctrl && shift && !alt && (e.Name == "C" || e.Name == "V" || e.Name == "F" || e.Name == "A"):
+		switch e.Name {
+		case "C":
 			v.copySelection()
-		} else {
+		case "V":
 			gtx.Execute(clipboard.ReadCmd{Tag: v})
+		case "F":
+			v.emit(FindEvent{})
+		case "A":
+			v.SelectAll()
 		}
 		return
 	case e.Name == key.NameEscape && !ctrl && !alt:
@@ -375,13 +452,21 @@ func (v *View) handleKey(gtx layout.Context, e key.Event) {
 		}
 		v.scrollLines(n)
 		return
+	case shift && !ctrl && !alt && (e.Name == key.NameHome || e.Name == key.NameEnd) && v.Screen != nil && !v.Screen.Modes.AltScreen:
+		// Shift+Home/End jump to the start and end of the scrollback.
+		if e.Name == key.NameHome {
+			v.follow, v.top = false, 0
+		} else {
+			v.follow = true
+		}
+		return
 	}
 	k := vt.Key{Ctrl: ctrl, Alt: alt, Shift: shift}
 	if name, ok := namedKeys[e.Name]; ok {
 		if name == "Space" && !ctrl && !(alt && v.metaAlt()) {
 			return // typed text
 		}
-		if alt && !v.metaAlt() && name != "Left" && name != "Right" && name != "Backspace" {
+		if alt && !v.metaAlt() && name != "Left" && name != "Right" && name != "Backspace" && name != "Enter" {
 			// Option on macOS without Meta: the layout types the key.
 			k.Alt = false
 		}
@@ -435,317 +520,4 @@ func (v *View) scrollLines(n int) {
 	}
 	v.follow = false
 	v.top = max(0, top)
-}
-
-// ---- pointer ---------------------------------------------------------------
-
-// cellAt returns the position at p: the nearest cell boundary (for
-// selections), or with inCell the cell containing p (for links).
-func (v *View) cellAt(p f32.Point, inCell bool) Pos {
-	if v.met.lineH <= 0 || v.met.cellW <= 0 {
-		return Pos{}
-	}
-	x := float64(int(p.X)-v.origin.X) / (float64(v.met.cellW) / 64)
-	y := int(p.Y) - v.origin.Y
-	row := max(0, min(v.rows-1, y/v.met.lineH))
-	col := int(math.Round(x))
-	if inCell {
-		col = int(math.Floor(x))
-	}
-	col = max(0, min(v.cols, col))
-	return Pos{Line: v.Top() + row, Col: col}
-}
-
-// linkAt returns the link under a cell.
-func (v *View) linkAt(p Pos) *terminal.Link {
-	if v.Screen == nil {
-		return nil
-	}
-	i := p.Line - v.Screen.Top
-	if i < 0 || i >= len(v.Screen.Lines) {
-		return nil
-	}
-	for j := range v.Screen.Lines[i].Links {
-		l := &v.Screen.Lines[i].Links[j]
-		if p.Col >= l.Col && p.Col < l.EndCol {
-			return l
-		}
-	}
-	return nil
-}
-
-func (v *View) processPointer(gtx layout.Context) {
-	f := pointer.Filter{Target: v, Kinds: pointer.Press | pointer.Drag | pointer.Release | pointer.Scroll | pointer.Move | pointer.Leave | pointer.Cancel,
-		ScrollY: pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}}
-	for {
-		ev, ok := gtx.Event(f)
-		if !ok {
-			return
-		}
-		e, ok := ev.(pointer.Event)
-		if !ok {
-			continue
-		}
-		switch e.Kind {
-		case pointer.Scroll:
-			v.wheel(e.Scroll.Y)
-		case pointer.Move:
-			v.hover = v.linkAt(v.cellAt(e.Position, true))
-		case pointer.Leave, pointer.Cancel:
-			v.hover = nil
-			v.sel.dragging = false
-		case pointer.Press:
-			if !e.Buttons.Contain(pointer.ButtonPrimary) {
-				continue
-			}
-			gtx.Execute(key.FocusCmd{Tag: v})
-			p := v.cellAt(e.Position, false)
-			v.sel.pressAt, v.sel.pressLink = p, v.linkAt(v.cellAt(e.Position, true))
-			v.sel.dragging = true
-			if e.Modifiers.Contain(key.ModShift) && v.sel.active {
-				v.sel.head = p
-				continue
-			}
-			v.sel.active, v.sel.anchor, v.sel.head = true, p, p
-		case pointer.Drag:
-			if v.sel.dragging {
-				p := v.cellAt(e.Position, false)
-				v.sel.head = p
-				// Dragging beyond the edges scrolls.
-				switch {
-				case int(e.Position.Y) < v.origin.Y:
-					v.scrollLines(-1)
-				case int(e.Position.Y) > v.origin.Y+v.rows*v.met.lineH:
-					v.scrollLines(1)
-				}
-			}
-		case pointer.Release:
-			if !v.sel.dragging {
-				continue
-			}
-			v.sel.dragging = false
-			p := v.cellAt(e.Position, false)
-			if p == v.sel.pressAt {
-				v.sel.active = false
-				if l := v.sel.pressLink; l != nil && l == v.linkAt(v.cellAt(e.Position, true)) {
-					v.emit(LinkEvent{Link: *l})
-				}
-			}
-		}
-	}
-}
-
-// wheel scrolls by wheel pixels; on the alternate screen (full-screen
-// programs) the wheel sends arrow keys instead.
-func (v *View) wheel(dy float32) {
-	if v.met.lineH <= 0 {
-		return
-	}
-	v.scroll += dy
-	n := int(v.scroll / float32(v.met.lineH))
-	if n == 0 {
-		return
-	}
-	v.scroll -= float32(n * v.met.lineH)
-	if v.Screen != nil && v.Screen.Modes.AltScreen {
-		name := "Down"
-		if n < 0 {
-			name, n = "Up", -n
-		}
-		for range min(n, 10) {
-			v.emit(KeyEvent{Key: vt.Key{Name: name}})
-		}
-		return
-	}
-	v.scrollLines(n)
-}
-
-// ---- layout ----------------------------------------------------------------
-
-func (v *View) updateMetrics(gtx layout.Context, th *tokens.Theme) {
-	size := v.FontSize
-	if size <= 0 {
-		size = th.Text.Code
-	}
-	k := metricsKey{shaper: th.Shaper, font: th.Font.Mono, ppem: fixed.I(gtx.Sp(size))}
-	if v.met.key == k && v.met.lineH > 0 {
-		return
-	}
-	m := metrics{key: k}
-	th.Shaper.LayoutString(text.Parameters{Font: k.font, PxPerEm: k.ppem, MaxWidth: 1 << 20, Locale: gtx.Locale}, "0")
-	var asc, desc fixed.Int26_6
-	for g, ok := th.Shaper.NextGlyph(); ok; g, ok = th.Shaper.NextGlyph() {
-		if m.cellW == 0 {
-			m.cellW, asc, desc = g.Advance, g.Ascent, g.Descent
-		}
-	}
-	if m.cellW <= 0 {
-		m.cellW = k.ppem * 6 / 10
-	}
-	if asc+desc <= 0 {
-		asc, desc = k.ppem*8/10, k.ppem*2/10
-	}
-	m.textH = (asc + desc).Ceil()
-	m.lineH = max(1, int(math.Ceil(float64(m.textH)*1.2)))
-	v.met = m
-}
-
-func (m metrics) colX(col int) int { return (fixed.Int26_6(col) * m.cellW).Round() }
-
-// Layout draws the terminal filling the constraints.
-func (v *View) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
-	v.updateMetrics(gtx, th)
-	size := gtx.Constraints.Max
-	pad := gtx.Dp(4)
-	v.origin = image.Pt(pad, pad)
-	cols := max(1, (size.X-2*pad)*64/max(1, int(v.met.cellW)))
-	rows := max(1, (size.Y-2*pad)/v.met.lineH)
-	if cols != v.cols || rows != v.rows {
-		v.cols, v.rows = cols, rows
-		v.emit(ResizeEvent{Cols: cols, Rows: rows})
-	}
-	tp := th.Terminal
-	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
-	paint.FillShape(gtx.Ops, tp.Background, clip.Rect{Max: size}.Op())
-	event.Op(gtx.Ops, v)
-	if v.hover != nil {
-		pointer.CursorPointer.Add(gtx.Ops)
-	} else {
-		pointer.CursorText.Add(gtx.Ops)
-	}
-	sc := v.Screen
-	if sc == nil {
-		return layout.Dimensions{Size: size}
-	}
-	if !v.follow && v.top >= sc.History {
-		v.follow = true
-	}
-	top := v.Top()
-	f := th.Font.Mono
-	fontSize := v.FontSize
-	if fontSize <= 0 {
-		fontSize = th.Text.Code
-	}
-	from, to := v.Selection()
-	for row := 0; row < rows; row++ {
-		idx := top + row
-		i := idx - sc.Top
-		y := pad + row*v.met.lineH
-		if v.HasSelection() && idx >= from.Line && idx <= to.Line {
-			c0, c1 := 0, sc.Cols
-			if idx == from.Line {
-				c0 = from.Col
-			}
-			if idx == to.Line {
-				c1 = to.Col
-			}
-			if c1 > c0 {
-				r := image.Rect(pad+v.met.colX(c0), y, pad+v.met.colX(c1), y+v.met.lineH)
-				draw.Rect(gtx.Ops, r, tp.Selection)
-			}
-		}
-		if i < 0 || i >= len(sc.Lines) {
-			continue
-		}
-		v.layoutLine(gtx, th, f, fontSize, sc.Lines[i], pad, y)
-	}
-	// Cursor (only when the screen row is visible and the program runs).
-	cur := sc.Cursor
-	if sc.Running && cur.Visible && sc.History+cur.Row >= top && sc.History+cur.Row < top+rows {
-		y := pad + (sc.History+cur.Row-top)*v.met.lineH
-		x := pad + v.met.colX(cur.Col)
-		r := image.Rect(x, y, x+max(1, v.met.colX(1)), y+v.met.lineH)
-		switch {
-		case !v.focused:
-			draw.Border(gtx.Ops, r, 0, max(1, gtx.Dp(1)), tp.Cursor)
-		case cur.Shape >= 5:
-			draw.Rect(gtx.Ops, image.Rect(x, y, x+max(1, gtx.Dp(2)), y+v.met.lineH), tp.Cursor)
-		case cur.Shape == 3 || cur.Shape == 4:
-			draw.Rect(gtx.Ops, image.Rect(x, y+v.met.lineH-max(1, gtx.Dp(2)), r.Max.X, y+v.met.lineH), tp.Cursor)
-		default:
-			draw.Rect(gtx.Ops, r, tokens.WithAlpha(tp.Cursor, 0xb0))
-		}
-	}
-	if v.Notice != "" && sc.Total-top <= rows {
-		y := pad + (sc.Total-top)*v.met.lineH
-		if y+v.met.lineH <= size.Y {
-			t := op.Offset(image.Pt(pad, y+(v.met.lineH-v.met.textH)/2)).Push(gtx.Ops)
-			draw.Text(gtx, th.Shaper, draw.TextOpts{Font: th.Font.UI, Size: th.Text.Small, Color: th.Color.TextMuted, MaxLines: 1}, v.Notice)
-			t.Pop()
-		}
-	}
-	return layout.Dimensions{Size: size}
-}
-
-// colors resolves the colors of a span.
-func colors(th *tokens.Theme, s terminal.Span) (fg, bg color.NRGBA, bgSet bool) {
-	tp := th.Terminal
-	resolve := func(c string, def color.NRGBA, bold bool) (color.NRGBA, bool) {
-		i, r, g, b, ok := terminal.ParseColor(c)
-		switch {
-		case !ok:
-			return def, false
-		case i >= 0:
-			if bold && i < 8 {
-				i += 8 // bold brightens the normal colors
-			}
-			return th.TerminalColor(uint8(i)), true
-		}
-		return color.NRGBA{R: r, G: g, B: b, A: 0xff}, true
-	}
-	fg, _ = resolve(s.FG, tp.Foreground, s.Bold)
-	bg, bgSet = resolve(s.BG, tp.Background, false)
-	if s.Inverse {
-		fg, bg, bgSet = bg, fg, true
-	}
-	if s.Faint {
-		fg = tokens.Mix(fg, bg, 0.4)
-	}
-	return fg, bg, bgSet
-}
-
-func (v *View) layoutLine(gtx layout.Context, th *tokens.Theme, f font.Font, size unit.Sp, l terminal.ScreenLine, pad, y int) {
-	m := v.met
-	for _, s := range l.Spans {
-		fg, bg, bgSet := colors(th, s)
-		x0, x1 := pad+m.colX(s.Col), pad+m.colX(s.Col+s.Width)
-		if bgSet {
-			draw.Rect(gtx.Ops, image.Rect(x0, y, x1, y+m.lineH), bg)
-		}
-		if s.Hidden || strings.TrimSpace(s.Text) == "" {
-			continue
-		}
-		sf := f
-		if s.Bold {
-			sf.Weight = font.Bold
-		}
-		if s.Italic {
-			sf.Style = font.Italic
-		}
-		t := op.Offset(image.Pt(x0, y+(m.lineH-m.textH)/2)).Push(gtx.Ops)
-		lgtx := gtx
-		lgtx.Constraints = layout.Exact(image.Pt(max(1, x1-x0+m.colX(2)), m.lineH))
-		lgtx.Constraints.Min = image.Point{}
-		rec := op.Record(gtx.Ops)
-		paint.ColorOp{Color: fg}.Add(gtx.Ops)
-		mat := rec.Stop()
-		widget.Label{MaxLines: 1}.Layout(lgtx, th.Shaper, sf, size, s.Text, mat)
-		t.Pop()
-		lw := max(1, gtx.Dp(1))
-		if s.Underline {
-			draw.Rect(gtx.Ops, image.Rect(x0, y+m.lineH-lw-1, x1, y+m.lineH-1), fg)
-		}
-		if s.Strike {
-			draw.Rect(gtx.Ops, image.Rect(x0, y+m.lineH/2, x1, y+m.lineH/2+lw), fg)
-		}
-	}
-	for i := range l.Links {
-		lk := &l.Links[i]
-		c := th.Terminal.Link
-		if v.hover == nil || v.hover.Col != lk.Col || v.hover.File != lk.File {
-			c = tokens.WithAlpha(c, 0x90)
-		}
-		lw := max(1, gtx.Dp(1))
-		draw.Rect(gtx.Ops, image.Rect(pad+m.colX(lk.Col), y+m.lineH-lw, pad+m.colX(lk.EndCol), y+m.lineH), c)
-	}
 }
