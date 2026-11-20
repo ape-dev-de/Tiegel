@@ -1,0 +1,7 @@
+$ less log.txt
+[?1049h[?1h=[H[2Jline 1 of the log
+line 2 of the log
+line 3 of the log
+line 4 of the log
+line 5 of the log
+[7mlog.txt[27m[K[K[HMline 0 of the log[6;1H[K:[3;1Hline [7m2[27m of the log[6;2H

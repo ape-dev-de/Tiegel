@@ -147,3 +147,13 @@ func (p *unixProcess) Pid() int {
 	}
 	return p.cmd.Process.Pid
 }
+
+// Foreground returns the name of the job in the foreground of the
+// terminal when it is not the shell ("" otherwise).
+func (p *unixProcess) Foreground() string {
+	fg := p.foreground()
+	if fg <= 0 {
+		return ""
+	}
+	return procName(fg)
+}

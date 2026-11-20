@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -37,7 +38,16 @@ const (
 	TopicTerminalExited = "terminal.exited"
 	// TopicTerminalClosed: a session was closed (TerminalIDParams).
 	TopicTerminalClosed = "terminal.closed"
+	// TopicTerminalClipboard: a program wrote the clipboard (OSC 52;
+	// only with terminal.allowClipboardWrite) (TerminalClipboard).
+	TopicTerminalClipboard = "terminal.clipboard"
 )
+
+// TerminalClipboard is the payload of TopicTerminalClipboard.
+type TerminalClipboard struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
 
 // TerminalLaunch is the value of the terminal.launch filter: a session
 // of a kind other than "shell" asks the plugin owning the kind for the
@@ -118,13 +128,62 @@ type TerminalIDParams struct {
 }
 
 // TerminalInputParams are the params of "terminal.input": exactly one
-// of Data (raw text, sent as is), Key (encoded for the program's modes)
-// and Paste (bracketed when the program asked for it).
+// of Data (raw text, sent as is), Key (encoded for the program's modes),
+// Paste (bracketed when the program asked for it), Mouse (reported when
+// the program asked for mouse reports) and Focus (reported when it asked
+// for focus events).
 type TerminalInputParams struct {
-	ID    string  `json:"id"`
-	Data  string  `json:"data,omitempty"`
-	Key   *vt.Key `json:"key,omitempty"`
-	Paste string  `json:"paste,omitempty"`
+	ID    string    `json:"id"`
+	Data  string    `json:"data,omitempty"`
+	Key   *vt.Key   `json:"key,omitempty"`
+	Paste string    `json:"paste,omitempty"`
+	Mouse *vt.Mouse `json:"mouse,omitempty"`
+	Focus *bool     `json:"focus,omitempty"`
+}
+
+// TerminalInputResult is the result of "terminal.input": Reported is
+// false for a mouse or focus event the program did not ask for (the
+// client handles it itself, e.g. selects text).
+type TerminalInputResult struct {
+	Reported bool `json:"reported"`
+}
+
+// TerminalFindParams are the params of "terminal.find".
+type TerminalFindParams struct {
+	ID string `json:"id"`
+	terminal.FindOptions
+}
+
+// TerminalEmulateParams are the params of "terminal.emulate": program
+// output (Data as text or DataBase64 for arbitrary bytes) fed into a
+// fresh emulator without a program.
+type TerminalEmulateParams struct {
+	Data       string `json:"data,omitempty"`
+	DataBase64 string `json:"dataBase64,omitempty"`
+	Cols       int    `json:"cols,omitempty"`
+	Rows       int    `json:"rows,omitempty"`
+	// Scrollback lines (0: default 10000; negative: none).
+	Scrollback int `json:"scrollback,omitempty"`
+	// Chunk feeds the data in pieces of this many bytes.
+	Chunk int `json:"chunk,omitempty"`
+	// ResizeCols/ResizeRows resize after the data (reflow).
+	ResizeCols int `json:"resizeCols,omitempty"`
+	ResizeRows int `json:"resizeRows,omitempty"`
+	// Top, Count, NoSpans and Links select the result lines like
+	// terminal.screen (Links: URLs only, no file checks).
+	Top     *int `json:"top,omitempty"`
+	Count   int  `json:"count,omitempty"`
+	NoSpans bool `json:"noSpans,omitempty"`
+	Links   bool `json:"links,omitempty"`
+}
+
+// TerminalColorsParams are the params of "terminal.colors": the colors
+// reported to programs that query them (OSC 10/11/12/4), "#rrggbb".
+type TerminalColorsParams struct {
+	FG     string   `json:"fg"`
+	BG     string   `json:"bg"`
+	Cursor string   `json:"cursor,omitempty"`
+	ANSI   []string `json:"ansi,omitempty"`
 }
 
 // TerminalResizeParams are the params of "terminal.resize".
@@ -194,13 +253,17 @@ func (a *App) registerTerminal() {
 	m.OnChange = func(i terminal.Info) { a.bus.Publish(TopicTerminalChanged, i) }
 	m.OnExit = func(i terminal.Info) { a.bus.Publish(TopicTerminalExited, i) }
 	m.OnClose = func(id string) { a.bus.Publish(TopicTerminalClosed, TerminalIDParams{ID: id}) }
+	m.OnClipboard = func(id, text string) { a.bus.Publish(TopicTerminalClipboard, TerminalClipboard{ID: id, Text: text}) }
 	for _, topic := range []string{TopicProjectClosed, TopicProjectOpened} {
 		a.bus.Subscribe(topic, func(bus.Event) { a.closeForeignTerminals() })
 	}
 	mustHandle(a, "terminal.open", "Open a terminal session: the shell in the project, or a plugin kind such as a shell in a compose service", a.terminalOpen)
 	mustHandle(a, "terminal.list", "Terminal sessions with state", func(context.Context, struct{}) ([]terminal.Info, error) { return m.List(), nil })
 	mustHandle(a, "terminal.kinds", "Session kinds of the enabled plugins (kind, label, what the target names)", a.terminalKinds)
-	mustHandle(a, "terminal.input", "Send text, a key (encoded for the program's modes) or pasted text to a session", a.terminalInput)
+	mustHandle(a, "terminal.input", "Send text, a key (encoded for the program's modes), pasted text, a mouse or a focus event to a session", a.terminalInput)
+	mustHandle(a, "terminal.find", "Search scrollback and screen of a session (text or regular expression)", a.terminalFind)
+	mustHandle(a, "terminal.emulate", "Feed program output into a fresh terminal emulator (no program) and return the screen", a.terminalEmulate)
+	mustHandle(a, "terminal.colors", "Set the colors reported to programs that query them (OSC 10/11/12/4)", a.terminalColors)
 	mustHandle(a, "terminal.resize", "Change the size of a session (columns, rows)", a.terminalResize)
 	mustHandle(a, "terminal.rename", "Rename a terminal tab", a.terminalRename)
 	mustHandle(a, "terminal.screen", "Snapshot of screen or scrollback lines: text, styled spans, cursor, modes, file links", a.terminalScreen)
@@ -221,7 +284,8 @@ func (a *App) terminalOpen(ctx context.Context, p TerminalOpenParams) (terminal.
 	root := a.ProjectRoot()
 	ps := a.ProjectSettings()
 	o := terminal.Options{Name: p.Name, Kind: p.Kind, Target: p.Target, Project: root,
-		Scrollback: settings.Resolve(terminal.KeyScrollback, 10000, a.global)}
+		Scrollback: settings.Resolve(terminal.KeyScrollback, 10000, a.global),
+		Clipboard:  settings.Resolve(terminal.KeyClipboard, false, a.global)}
 	o.Cols, o.Rows = p.Cols, p.Rows
 	if o.Cols < 0 || o.Rows < 0 || o.Cols > 1000 || o.Rows > 500 {
 		return terminal.Info{}, Errorf(CodeInvalidParams, "invalid size %dx%d", o.Cols, o.Rows)
@@ -293,37 +357,121 @@ func (a *App) terminalOpen(ctx context.Context, p TerminalOpenParams) (terminal.
 	return info, nil
 }
 
-func (a *App) terminalInput(ctx context.Context, p TerminalInputParams) (struct{}, error) {
+func (a *App) terminalInput(ctx context.Context, p TerminalInputParams) (TerminalInputResult, error) {
 	s, err := a.terminalSession(p.ID)
 	if err != nil {
-		return struct{}{}, err
+		return TerminalInputResult{}, err
 	}
 	n := 0
-	for _, set := range []bool{p.Data != "", p.Key != nil, p.Paste != ""} {
+	for _, set := range []bool{p.Data != "", p.Key != nil, p.Paste != "", p.Mouse != nil, p.Focus != nil} {
 		if set {
 			n++
 		}
 	}
 	if n != 1 {
-		return struct{}{}, Errorf(CodeInvalidParams, "give exactly one of data, key and paste")
+		return TerminalInputResult{}, Errorf(CodeInvalidParams, "give exactly one of data, key, paste, mouse and focus")
 	}
+	res := TerminalInputResult{Reported: true}
 	switch {
 	case p.Key != nil:
 		err = s.Key(ctx, *p.Key)
 	case p.Paste != "":
 		err = s.Paste(ctx, p.Paste)
+	case p.Mouse != nil:
+		res.Reported, err = s.Mouse(ctx, *p.Mouse)
+	case p.Focus != nil:
+		err = s.Focus(ctx, *p.Focus)
 	default:
 		err = s.Input(ctx, []byte(p.Data))
 	}
 	switch {
 	case err == nil:
-		return struct{}{}, nil
+		return res, nil
 	case errors.Is(err, terminal.ErrExited):
-		return struct{}{}, Errorf(CodeConflict, "%w", err)
+		return TerminalInputResult{}, Errorf(CodeConflict, "%w", err)
 	case p.Key != nil && !errors.Is(err, context.Canceled):
-		return struct{}{}, Errorf(CodeInvalidParams, "%w", err)
+		return TerminalInputResult{}, Errorf(CodeInvalidParams, "%w", err)
 	}
-	return struct{}{}, Errorf(CodeFailed, "%w", err)
+	return TerminalInputResult{}, Errorf(CodeFailed, "%w", err)
+}
+
+func (a *App) terminalFind(_ context.Context, p TerminalFindParams) (terminal.FindResult, error) {
+	s, err := a.terminalSession(p.ID)
+	if err != nil {
+		return terminal.FindResult{}, err
+	}
+	res, err := s.Find(p.FindOptions)
+	if err != nil {
+		return res, Errorf(CodeInvalidParams, "%w", err)
+	}
+	return res, nil
+}
+
+func (a *App) terminalEmulate(_ context.Context, p TerminalEmulateParams) (terminal.EmulateResult, error) {
+	data := []byte(p.Data)
+	if p.DataBase64 != "" {
+		if p.Data != "" {
+			return terminal.EmulateResult{}, Errorf(CodeInvalidParams, "give either data or dataBase64")
+		}
+		b, err := base64.StdEncoding.DecodeString(p.DataBase64)
+		if err != nil {
+			return terminal.EmulateResult{}, Errorf(CodeInvalidParams, "dataBase64: %w", err)
+		}
+		data = b
+	}
+	if p.Cols < 0 || p.Rows < 0 || p.Cols > 1000 || p.Rows > 500 || p.Chunk < 0 || p.ResizeCols < 0 || p.ResizeRows < 0 {
+		return terminal.EmulateResult{}, Errorf(CodeInvalidParams, "invalid size %dx%d", p.Cols, p.Rows)
+	}
+	sb := p.Scrollback
+	switch {
+	case sb == 0:
+		sb = vt.DefaultScrollback
+	case sb < 0:
+		sb = 0
+	}
+	o := terminal.EmulateOptions{Cols: p.Cols, Rows: p.Rows, Scrollback: min(sb, 1000000), Chunk: p.Chunk,
+		ResizeCols: p.ResizeCols, ResizeRows: p.ResizeRows,
+		Screen: terminal.ScreenOptions{Top: -1, Count: p.Count, NoSpans: p.NoSpans, URLs: p.Links}}
+	if p.Top != nil && *p.Top >= 0 {
+		o.Screen.Top = *p.Top
+	}
+	return terminal.Emulate(data, o), nil
+}
+
+// parseHexColor parses "#rrggbb".
+func parseHexColor(s string) ([3]uint8, bool) {
+	i, r, g, b, ok := terminal.ParseColor(s)
+	if !ok || i >= 0 {
+		return [3]uint8{}, false
+	}
+	return [3]uint8{r, g, b}, true
+}
+
+func (a *App) terminalColors(_ context.Context, p TerminalColorsParams) (struct{}, error) {
+	c := vt.DefaultColors()
+	var ok bool
+	if c.FG, ok = parseHexColor(p.FG); !ok {
+		return struct{}{}, Errorf(CodeInvalidParams, "fg: want #rrggbb, got %q", p.FG)
+	}
+	if c.BG, ok = parseHexColor(p.BG); !ok {
+		return struct{}{}, Errorf(CodeInvalidParams, "bg: want #rrggbb, got %q", p.BG)
+	}
+	c.Cursor = c.FG
+	if p.Cursor != "" {
+		if c.Cursor, ok = parseHexColor(p.Cursor); !ok {
+			return struct{}{}, Errorf(CodeInvalidParams, "cursor: want #rrggbb, got %q", p.Cursor)
+		}
+	}
+	if len(p.ANSI) > 16 {
+		return struct{}{}, Errorf(CodeInvalidParams, "ansi: at most 16 colors")
+	}
+	for i, x := range p.ANSI {
+		if c.ANSI[i], ok = parseHexColor(x); !ok {
+			return struct{}{}, Errorf(CodeInvalidParams, "ansi[%d]: want #rrggbb, got %q", i, x)
+		}
+	}
+	a.terms.SetColors(c)
+	return struct{}{}, nil
 }
 
 func (a *App) terminalResize(_ context.Context, p TerminalResizeParams) (terminal.Info, error) {
@@ -358,6 +506,7 @@ func (a *App) terminalScreen(_ context.Context, p TerminalScreenParams) (termina
 		o.Top = *p.Top
 	}
 	if p.Links {
+		o.URLs = true
 		o.Linker = &run.Linker{Dirs: []string{a.ProjectRoot()}, Exists: run.FileExists}
 	}
 	return s.Screen(o), nil

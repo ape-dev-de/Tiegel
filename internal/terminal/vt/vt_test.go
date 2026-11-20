@@ -126,7 +126,7 @@ func TestSGR(t *testing.T) {
 	}
 	feed(term, "\x1b[4:0m\x1b[4:3mx\x1b[4:0my\x1b[5;8m\x1b[25;28mz\x1b[38:5:17mw")
 	l = term.Line(0)
-	if l.Cells[6].Style.Attr != Underline || l.Cells[7].Style.Attr != 0 || l.Cells[8].Style.Attr != 0 || l.Cells[9].Style.FG != Indexed(17) {
+	if l.Cells[6].Style.Attr.UnderlineStyle() != ULCurly || l.Cells[7].Style.Attr != 0 || l.Cells[8].Style.Attr != 0 || l.Cells[9].Style.FG != Indexed(17) {
 		t.Errorf("sub-params: %+v %+v %+v %+v", l.Cells[6].Style, l.Cells[7].Style, l.Cells[8].Style, l.Cells[9].Style)
 	}
 	if r, g, b, ok := RGB(1, 2, 3).RGB(); !ok || r != 1 || g != 2 || b != 3 {
@@ -393,6 +393,14 @@ func TestResizeAltScreen(t *testing.T) {
 func TestResizeWide(t *testing.T) {
 	term := New(4, 1, 0)
 	feed(term, "ab世")
+	term.Resize(3, 1)
+	// Reflow moves the wide character to the next line.
+	if got := term.LineText(0); got != "世" || term.Dropped() != 1 {
+		t.Fatalf("reflowed wide %q dropped %d", got, term.Dropped())
+	}
+	// The alternate screen is cut instead.
+	term = New(4, 1, 0)
+	feed(term, "\x1b[?1049hab世")
 	term.Resize(3, 1)
 	if got := term.LineText(0); got != "ab" {
 		t.Fatalf("cut wide %q", got)

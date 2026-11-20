@@ -1,17 +1,22 @@
 // Package vt is a terminal emulator: it parses the output of programs
 // running in a pseudo terminal (VT100/xterm control sequences) into a
 // screen of styled cells with scrollback, cursor, alternate screen and
-// the modes the keyboard encoding needs (application cursor keys,
-// bracketed paste).
+// the modes the input encoding needs (cursor keys, bracketed paste,
+// mouse and focus reporting, modifyOtherKeys).
 //
-// The supported set is the one shells, editors and TUI programs use in
-// practice (xterm-256color): cursor movement and addressing, erase,
-// insert/delete of characters and lines, scroll regions, SGR with 16, 256
-// and true colors, DEC special graphics, tab stops, alternate screen
-// (47/1047/1049), autowrap with pending wrap, origin mode, device status
-// and attribute reports, window title and working directory (OSC 0/2/7).
-// Mouse reporting modes are recorded but not generated. DCS, SOS, PM and
-// APC strings are consumed and ignored.
+// The supported set is the one shells, editors and full-screen TUI
+// programs use in practice (xterm-256color): cursor movement and
+// addressing, erase, insert/delete of characters and lines, scroll
+// regions, SGR with 16, 256 and true colors (colon and semicolon forms),
+// underline styles and colors, overline, DEC special graphics, tab stops,
+// alternate screen (47/1047/1049), autowrap with pending wrap, origin
+// mode, synchronized output (2026), device status, attribute, mode and
+// version reports, window title with title stack (OSC 0/2, CSI 22/23 t),
+// working directory (OSC 7), hyperlinks (OSC 8), clipboard writes
+// (OSC 52, only through a callback the owner enables), shell integration
+// marks (OSC 133) and color queries (OSC 4/10/11/12). The main screen
+// reflows when the width changes. DCS, SOS, PM and APC strings are
+// consumed and ignored.
 //
 // A Terminal is not safe for concurrent use; the owner serialises Write,
 // Resize and the readers.
@@ -55,7 +60,8 @@ func (c Color) RGB() (r, g, b uint8, ok bool) {
 	return uint8(c >> 16), uint8(c >> 8), uint8(c), true
 }
 
-// Attr is a set of text attributes.
+// Attr is a set of text attributes. The underline style lives in three
+// bits (see UnderlineStyle); Underline is set for every style.
 type Attr uint16
 
 // Attributes.
@@ -68,12 +74,57 @@ const (
 	Inverse
 	Hidden
 	Strike
+	Overline
 )
 
-// Style is the look of a cell.
+const (
+	ulShift = 9
+	ulMask  = Attr(7) << ulShift
+)
+
+// UnderlineStyle is the style of an underline (SGR 4:n, 21).
+type UnderlineStyle uint8
+
+// Underline styles.
+const (
+	ULNone UnderlineStyle = iota
+	ULSingle
+	ULDouble
+	ULCurly
+	ULDotted
+	ULDashed
+)
+
+// UnderlineStyle returns the underline style of a.
+func (a Attr) UnderlineStyle() UnderlineStyle {
+	if a&Underline == 0 {
+		return ULNone
+	}
+	if s := UnderlineStyle(a & ulMask >> ulShift); s > ULSingle {
+		return s
+	}
+	return ULSingle
+}
+
+// withUnderline returns a with underline style s (ULNone removes it).
+func (a Attr) withUnderline(s UnderlineStyle) Attr {
+	a &^= Underline | ulMask
+	if s == ULNone {
+		return a
+	}
+	if s > ULDashed || s == ULSingle {
+		return a | Underline
+	}
+	return a | Underline | Attr(s)<<ulShift
+}
+
+// Style is the look of a cell. UL is the underline color (Default: the
+// foreground); Link is a hyperlink (OSC 8, see Terminal.LinkURL), 0 for
+// none.
 type Style struct {
-	FG, BG Color
-	Attr   Attr
+	FG, BG, UL Color
+	Attr       Attr
+	Link       uint16
 }
 
 // Cell is one character cell. Width is 1 or 2 for a printed character
@@ -94,34 +145,61 @@ func blank(st Style) Cell {
 	return Cell{Style: Style{BG: st.BG}, Width: 1}
 }
 
+// Mark is a shell integration mark of a line (OSC 133).
+type Mark uint8
+
+// Marks; a line can have several.
+const (
+	// MarkPrompt: a prompt starts on the line (OSC 133;A).
+	MarkPrompt Mark = 1 << iota
+	// MarkInput: the command input starts (OSC 133;B).
+	MarkInput
+	// MarkOutput: the command output starts (OSC 133;C).
+	MarkOutput
+	// MarkDone: a command finished (OSC 133;D).
+	MarkDone
+)
+
 // Line is one row of the screen or the scrollback.
 type Line struct {
 	Cells []Cell
 	// Wrapped tells that the text continues on the next line (autowrap),
 	// so copying joins both without a newline.
 	Wrapped bool
+	// Mark holds the shell integration marks of the line.
+	Mark Mark
 }
 
 func newLine(cols int, st Style) Line {
 	l := Line{Cells: make([]Cell, cols)}
-	for i := range l.Cells {
-		l.Cells[i] = blank(st)
-	}
+	fillBlank(l.Cells, st)
 	return l
 }
 
-// trimmed returns a copy of l without trailing blank default cells (for
-// the scrollback).
-func (l Line) trimmed() Line {
+// fillBlank erases cells with the background of st.
+func fillBlank(cs []Cell, st Style) {
+	if len(cs) == 0 {
+		return
+	}
+	cs[0] = blank(st)
+	// Doubling copies are memmoves (much faster than a cell loop).
+	for n := 1; n < len(cs); n *= 2 {
+		copy(cs[n:], cs[:n])
+	}
+}
+
+// contentLen returns the number of cells without trailing blank default
+// cells.
+func (l Line) contentLen() int {
 	n := len(l.Cells)
 	for n > 0 {
 		c := l.Cells[n-1]
-		if c.R != 0 || c.Width == 0 || c.Style != (Style{}) {
+		if c.R != 0 || c.Width != 1 || c.Style != (Style{}) {
 			break
 		}
 		n--
 	}
-	return Line{Cells: append([]Cell(nil), l.Cells[:n]...), Wrapped: l.Wrapped}
+	return n
 }
 
 // Cursor is the cursor position (0-based) and visibility.
@@ -132,20 +210,41 @@ type Cursor struct {
 	// Shape is the DECSCUSR shape (0 default, 1/2 block, 3/4 underline,
 	// 5/6 bar).
 	Shape int `json:"shape,omitempty"`
+	// Blink tells that the cursor blinks (odd DECSCUSR shapes, or mode
+	// 12 with the default shape).
+	Blink bool `json:"blink,omitempty"`
 }
 
+// Mouse reporting modes (Modes.Mouse).
+const (
+	MouseModeX10    = 9    // presses only
+	MouseModeNormal = 1000 // presses and releases
+	MouseModeButton = 1002 // and motion while a button is held
+	MouseModeAny    = 1003 // and all motion
+)
+
 // Modes are the terminal modes a client needs (keyboard encoding,
-// paste, mouse).
+// paste, mouse, rendering).
 type Modes struct {
 	AppCursor      bool `json:"appCursor,omitempty"`      // DECCKM: cursor keys send ESC O x
 	AppKeypad      bool `json:"appKeypad,omitempty"`      // DECKPAM
 	BracketedPaste bool `json:"bracketedPaste,omitempty"` // 2004
 	AltScreen      bool `json:"altScreen,omitempty"`      // 47/1047/1049 active
 	ReverseVideo   bool `json:"reverseVideo,omitempty"`   // DECSCNM
-	// Mouse is the requested mouse reporting (0 off, 1000, 1002, 1003)
-	// and MouseSGR the SGR encoding (1006); not generated yet.
-	Mouse    int  `json:"mouse,omitempty"`
-	MouseSGR bool `json:"mouseSgr,omitempty"`
+	// Mouse is the requested mouse reporting (0 off, MouseModeX10,
+	// MouseModeNormal, MouseModeButton, MouseModeAny); MouseSGR the SGR encoding
+	// (1006), MouseURXVT the urxvt one (1015).
+	Mouse      int  `json:"mouse,omitempty"`
+	MouseSGR   bool `json:"mouseSgr,omitempty"`
+	MouseURXVT bool `json:"mouseUrxvt,omitempty"`
 	// FocusEvents (1004) asks for focus in/out reports.
 	FocusEvents bool `json:"focusEvents,omitempty"`
+	// AltScroll (1007) turns the wheel into cursor keys on the
+	// alternate screen; on by default.
+	AltScroll bool `json:"altScroll,omitempty"`
+	// SyncOutput (2026): the program is drawing a frame; clients hold
+	// the last complete frame until it ends.
+	SyncOutput bool `json:"syncOutput,omitempty"`
+	// ModifyOtherKeys is the xterm modifyOtherKeys level (CSI > 4 ; n m).
+	ModifyOtherKeys int `json:"modifyOtherKeys,omitempty"`
 }

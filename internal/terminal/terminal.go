@@ -24,10 +24,16 @@ const KindShell = "shell"
 // Info describes a session.
 type Info struct {
 	ID string `json:"id"`
-	// Name is the tab name (renamable); Title the window title the
-	// program set (OSC 0/2).
-	Name  string `json:"name"`
-	Title string `json:"title,omitempty"`
+	// Name is the tab name (renamable; Renamed after a rename); Title
+	// the window title the program set (OSC 0/2).
+	Name    string `json:"name"`
+	Renamed bool   `json:"renamed,omitempty"`
+	Title   string `json:"title,omitempty"`
+	// Process is the name of the job in the foreground of the terminal
+	// when it is not the shell itself (e.g. "vim"); Busy is set then, a
+	// client asks before closing the tab.
+	Process string `json:"process,omitempty"`
+	Busy    bool   `json:"busy,omitempty"`
 	// Kind is KindShell or the kind of a plugin launch; Target its
 	// subject (e.g. the compose service).
 	Kind   string `json:"kind"`
@@ -60,6 +66,9 @@ type Options struct {
 	// Scrollback is the number of lines kept above the screen (0: none,
 	// negative: vt.DefaultScrollback).
 	Scrollback int
+	// Clipboard lets programs write the clipboard (OSC 52) through
+	// Manager.OnClipboard; off by default (privacy).
+	Clipboard bool
 	// StopRemote ends the processes on the remote side (a shell inside a
 	// container) on Close, which killing the local client does not. It
 	// gets the PID reported through ReportPIDArgs and is not called
@@ -106,6 +115,12 @@ type Manager struct {
 	OnChange func(Info)
 	OnExit   func(Info)
 	OnClose  func(id string)
+	// OnClipboard receives clipboard writes of programs in sessions
+	// opened with Options.Clipboard.
+	OnClipboard func(id, text string)
+
+	// colors answer color queries of programs (SetColors).
+	colors *vt.Colors
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -125,6 +140,14 @@ type Session struct {
 	pending []byte
 	changed bool
 	closing bool
+
+	// syncSince is when the program started a synchronized update
+	// (mode 2026) that has not ended yet; zero otherwise.
+	syncSince time.Time
+	// fgCheck is when the foreground job was looked up last.
+	fgCheck time.Time
+	// clip holds clipboard writes (OSC 52) for the next flush.
+	clip []string
 
 	notify   chan struct{}
 	input    chan []byte
@@ -185,6 +208,18 @@ func (m *Manager) Open(o Options) (Info, error) {
 	}
 	s.term.Reply = s.reply
 	s.term.OSC = s.osc
+	if m.colors != nil {
+		s.term.Colors = *m.colors
+	}
+	if o.Clipboard {
+		// Called with s.mu held: flush delivers outside the lock.
+		s.term.Clipboard = func(_, text string) {
+			if len(s.clip) < 8 {
+				s.clip = append(s.clip, text)
+				s.changed = true
+			}
+		}
+	}
 	m.sessions[id] = s
 	m.order = append(m.order, id)
 	info := s.info
@@ -213,6 +248,23 @@ func (m *Manager) countNamed(name string) int {
 		}
 	}
 	return n
+}
+
+// SetColors sets the colors reported to programs that query them
+// (OSC 10/11/4) for all sessions, also future ones.
+func (m *Manager) SetColors(c vt.Colors) {
+	m.mu.Lock()
+	m.colors = &c
+	ss := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		ss = append(ss, s)
+	}
+	m.mu.Unlock()
+	for _, s := range ss {
+		s.mu.Lock()
+		s.term.Colors = c
+		s.mu.Unlock()
+	}
 }
 
 // Get returns session id.
@@ -302,6 +354,7 @@ func (m *Manager) CloseMatching(match func(Info) bool) []string {
 func (s *Session) Info() Info {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.checkForeground(time.Now())
 	return s.infoLocked()
 }
 
@@ -311,6 +364,37 @@ func (s *Session) infoLocked() Info {
 	i.Command = append([]string(nil), i.Command...)
 	return i
 }
+
+// foregrounder is implemented by processes that know the job in the
+// foreground of their terminal.
+type foregrounder interface {
+	// Foreground returns the name of the foreground job when it is not
+	// the program itself, "" otherwise.
+	Foreground() string
+}
+
+// checkForeground updates Info.Process (s.mu held) at most every
+// fgInterval; it reports a change.
+func (s *Session) checkForeground(now time.Time) bool {
+	f, ok := s.proc.(foregrounder)
+	if !ok || !s.info.Running || now.Sub(s.fgCheck) < fgInterval {
+		return false
+	}
+	s.fgCheck = now
+	name := f.Foreground()
+	if name == s.info.Process {
+		return false
+	}
+	s.info.Process, s.info.Busy = name, name != ""
+	return true
+}
+
+// fgInterval throttles foreground job lookups.
+const fgInterval = 250 * time.Millisecond
+
+// maxSync bounds how long a synchronized update (mode 2026) holds back
+// output events.
+const maxSync = 150 * time.Millisecond
 
 // Done is closed when the program exited.
 func (s *Session) Done() <-chan struct{} { return s.done }
@@ -328,6 +412,12 @@ func (s *Session) read() {
 			_, _ = s.term.Write(buf[:n])
 			if s.term.Title() != title || s.term.Dir() != cwd {
 				s.changed = true
+			}
+			switch sync := s.term.Modes().SyncOutput; {
+			case sync && s.syncSince.IsZero():
+				s.syncSince = time.Now()
+			case !sync:
+				s.syncSince = time.Time{}
 			}
 			if len(s.pending) < 1<<20 {
 				s.pending = append(s.pending, buf[:n]...)
@@ -398,6 +488,25 @@ func (s *Session) publish() {
 			s.flush()
 			return
 		}
+		// A synchronized update holds the events back until the frame
+		// is complete (or maxSync passed), so clients never fetch a
+		// half-drawn screen.
+		for {
+			s.mu.Lock()
+			since := s.syncSince
+			s.mu.Unlock()
+			wait := maxSync - time.Since(since)
+			if since.IsZero() || wait <= 0 {
+				break
+			}
+			select {
+			case <-s.notify:
+			case <-time.After(min(wait, interval)):
+			case <-s.stop:
+				s.flush()
+				return
+			}
+		}
 		s.flush()
 		select {
 		case <-time.After(interval):
@@ -425,10 +534,20 @@ func (s *Session) flush() {
 	s.pending = append([]byte(nil), data[cut:]...)
 	data = data[:cut]
 	out := Output{ID: s.info.ID, Seq: s.term.Seq(), Data: string(data)}
+	if s.checkForeground(time.Now()) {
+		s.changed = true
+	}
 	changed := s.changed
 	s.changed = false
 	info := s.infoLocked()
+	clip := s.clip
+	s.clip = nil
 	s.mu.Unlock()
+	if s.m.OnClipboard != nil {
+		for _, c := range clip {
+			s.m.OnClipboard(info.ID, c)
+		}
+	}
 	if s.m.OnOutput != nil {
 		s.m.OnOutput(out)
 	}
@@ -449,6 +568,7 @@ func (s *Session) wait() {
 	now := time.Now()
 	s.mu.Lock()
 	s.info.Running = false
+	s.info.Process, s.info.Busy = "", false
 	s.info.ExitCode = code
 	s.info.Finished = &now
 	if err != nil {
@@ -557,6 +677,30 @@ func (s *Session) Key(ctx context.Context, k vt.Key) error {
 	return s.Input(ctx, b)
 }
 
+// Mouse sends a mouse event when the program asked for mouse reports;
+// reported tells whether it did.
+func (s *Session) Mouse(ctx context.Context, e vt.Mouse) (reported bool, err error) {
+	s.mu.Lock()
+	b := vt.EncodeMouse(e, s.term.Modes())
+	s.mu.Unlock()
+	if b == nil {
+		return false, nil
+	}
+	return true, s.Input(ctx, b)
+}
+
+// Focus reports a focus change to the program when it asked for focus
+// events.
+func (s *Session) Focus(ctx context.Context, focused bool) error {
+	s.mu.Lock()
+	b := vt.EncodeFocus(focused, s.term.Modes())
+	s.mu.Unlock()
+	if b == nil {
+		return nil
+	}
+	return s.Input(ctx, b)
+}
+
 // Paste sends pasted text (bracketed when the program asked for it).
 func (s *Session) Paste(ctx context.Context, text string) error {
 	s.mu.Lock()
@@ -597,7 +741,7 @@ func (s *Session) Resize(cols, rows int) error {
 // Rename sets the tab name.
 func (s *Session) Rename(name string) Info {
 	s.mu.Lock()
-	s.info.Name = name
+	s.info.Name, s.info.Renamed = name, true
 	info := s.infoLocked()
 	s.mu.Unlock()
 	if s.m.OnChange != nil {

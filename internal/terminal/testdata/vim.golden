@@ -1,0 +1,28 @@
+size 40x10 history 0
+--- screen
+
+// function add(int $a, int $b): int
+{
+    return $a + $b;
+}
+~
+~
+// end
+a.php                         3,5  All
+-- INSERT --
+--- styles
+1: {"col":3,"width":33,"text":"function add(int $a, int $b): int","fg":"p130"}
+2: {"col":0,"width":1,"text":"{","fg":"p130"}
+3: {"col":0,"width":19,"text":"    return $a + $b;","fg":"p130"}
+4: {"col":0,"width":1,"text":"}","fg":"p130"}
+5: {"col":0,"width":1,"text":"~","fg":"p4","bold":true}
+6: {"col":0,"width":1,"text":"~","fg":"p4","bold":true}
+8: {"col":0,"width":38,"text":"a.php                         3,5  All","inverse":true}
+9: {"col":0,"width":12,"text":"-- INSERT --","bold":true}
+--- state
+cursor {"row":3,"col":3,"visible":true,"shape":6}
+modes {"appCursor":true,"appKeypad":true,"bracketedPaste":true,"altScreen":true,"focusEvents":true,"altScroll":true}
+title "a.php - VIM"
+cwd ""
+lastExit -1
+replies ""

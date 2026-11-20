@@ -1,0 +1,17 @@
+size 30x6 history 0
+--- screen
+line 0 of the log
+line 1 of the log
+line 2 of the log
+line 3 of the log
+line 4 of the log
+:
+--- styles
+2: {"col":5,"width":1,"text":"2","inverse":true}
+--- state
+cursor {"row":5,"col":1,"visible":true}
+modes {"appCursor":true,"appKeypad":true,"altScreen":true,"altScroll":true}
+title ""
+cwd ""
+lastExit -1
+replies ""

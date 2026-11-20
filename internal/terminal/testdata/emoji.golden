@@ -1,0 +1,18 @@
+size 10x8 history 1
+--- screen
+│ 日本 │
+╰──────╯
+é ñ ok 👍
+🇩🇪 ❤️
+┌──┐ tree
+123456789
+世界
+▀▄█░▒▓ ⠿ ✓
+--- styles
+--- state
+cursor {"row":7,"col":9,"visible":true}
+modes {"altScroll":true}
+title ""
+cwd ""
+lastExit -1
+replies ""

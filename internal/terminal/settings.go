@@ -14,6 +14,10 @@ const (
 	KeyFontSize     = "terminal.fontSize"
 	KeyOverrideKeys = "terminal.overrideIdeShortcuts"
 	KeyCloseOnExit  = "terminal.closeOnExit"
+	KeyClipboard    = "terminal.allowClipboardWrite"
+	KeyCopyOnSelect = "terminal.copyOnSelect"
+	KeyLineHeight   = "terminal.lineHeight"
+	KeyConfirmClose = "terminal.confirmClose"
 )
 
 // Values of KeyEscape.
@@ -44,6 +48,14 @@ func SettingSpecs() []settings.Spec {
 			Label: "Font size", Help: "Terminal text size in sp; 0 uses the editor font size."},
 		{Key: KeyCloseOnExit, Kind: settings.KindBool, Default: true, Scope: settings.ScopeGlobal, Group: PageTerminal,
 			Label: "Close tab when the shell exits", Help: "Close the tab when its program ends with exit code 0; otherwise the tab stays with the last output."},
+		{Key: KeyClipboard, Kind: settings.KindBool, Default: false, Scope: settings.ScopeGlobal, Group: PageTerminal,
+			Label: "Programs may write the clipboard", Help: "Allow programs in the terminal (e.g. vim or tmux over SSH) to set the clipboard with OSC 52; reading the clipboard is never allowed."},
+		{Key: KeyCopyOnSelect, Kind: settings.KindBool, Default: false, Scope: settings.ScopeGlobal, Group: PageTerminal,
+			Label: "Copy on selection", Help: "Copy text to the clipboard as soon as it is selected with the mouse."},
+		{Key: KeyLineHeight, Kind: settings.KindFloat, Default: 0.0, Min: settings.IntPtr(0), Max: settings.IntPtr(3), Scope: settings.ScopeGlobal, Group: PageTerminal,
+			Label: "Line height", Help: "Terminal row height as a multiple of the font height; 0 uses the editor line height (box drawing and powerline glyphs join without gaps at any value)."},
+		{Key: KeyConfirmClose, Kind: settings.KindBool, Default: true, Scope: settings.ScopeGlobal, Group: PageTerminal,
+			Label: "Confirm closing a busy tab", Help: "Ask before closing a terminal tab while a program other than the shell runs in it."},
 	}
 }
 
