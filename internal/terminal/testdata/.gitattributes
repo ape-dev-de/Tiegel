@@ -1,0 +1,2 @@
+# Recorded terminal streams are byte-exact (CR LF, escape sequences).
+*.vt binary
