@@ -82,13 +82,19 @@ rm -rf "$work"
 mkdir -p "$work"
 
 # --- Binaries ----------------------------------------------------------------
+# Silence the harmless duplicate -lobjc warning of Xcode 15+ linkers.
+extra_ld=""
+if echo 'int main(){return 0;}' | "$CC" -x c - -Wl,-no_warn_duplicate_libraries -o /dev/null >/dev/null 2>&1; then
+	extra_ld=" -Wl,-no_warn_duplicate_libraries"
+fi
+
 bins=()
 for a in "${archs[@]}"; do
 	echo "==> go build darwin/$a"
 	env CGO_ENABLED=1 GOOS=darwin GOARCH="$a" CC="$CC" \
 		MACOSX_DEPLOYMENT_TARGET="$MIN_MACOS" \
 		CGO_CFLAGS="-O2 -mmacosx-version-min=$MIN_MACOS" \
-		CGO_LDFLAGS="-mmacosx-version-min=$MIN_MACOS" \
+		CGO_LDFLAGS="-mmacosx-version-min=$MIN_MACOS$extra_ld" \
 		go build -trimpath -ldflags "$ldflags" -o "$work/Tiegel-$a" "$pkg"
 	bins+=("$work/Tiegel-$a")
 done
