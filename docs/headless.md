@@ -156,6 +156,7 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `toggle-case DATEI --from ZEILE[:SPALTE] [--to ZEILE[:SPALTE]] [--write]` | Groß/Klein umschalten (ohne `--to`: Wort an der Position) | `doc.open`, `edit.toggleCase`, `doc.save` |
 | `index-status [--rebuild [--full]]` | baut den Index (bzw. aktualisiert ihn aus dem Cache) und zeigt Zustand und Zahlen; `--full` verwirft Index und Cache | `index.status`, `index.rebuild` |
 | `watch [--backend auto\|fsevents\|fsnotify\|poll] [--exclude DIR]...` | Projekt beobachten und Änderungen zeilenweise ausgeben, bis Strg+C: `watching ROOT (backend, N files in M directories, T ms)`, dann `created/modified/deleted PFAD`, `renamed ALT -> NEU` (Ordner mit `/`), `git PFADE` (HEAD, index, refs …). `--json`: ein Event pro Zeile `{"topic", "payload"}`. `--exclude` ersetzt die Einstellung `watch.exclude` (Standard `node_modules`) | `watch.start`, Events `files.changed`, `git.changed`, `watch.status` |
+| `projects [list \| open DIR \| switch NAME \| hibernate NAME [--force] \| resume NAME \| close NAME [--force] \| busy NAME]` | Mehrere offene Projekte (AP18.5, D464): genau eines aktiv, die übrigen im Hintergrund (alles läuft weiter) oder im Ruhezustand (Sprachserver, Watcher, Index und Dokumente freigegeben; Dokumente vorher gespeichert). NAME = Wurzel oder eindeutiger Ordnername. Laufende Prozesse/Debug-Sitzungen und nicht speicherbare Dokumente verhindern Ruhezustand und Schließen ohne `--force`. Der Zustand gilt pro Prozess – über mehrere Aufrufe hinweg mit `serve` | `projects.*` |
 | `serve [--framing ndjson\|lsp] [--concurrent] [--listen ADDR [--token-file F] [--token T] [--allow-remote]]` | JSON-RPC 2.0 über stdin/stdout, mit `--listen unix:PFAD` oder `tcp:127.0.0.1:PORT` über einen Socket (Token-Authentisierung, siehe unten) | alle |
 | `call METHOD [JSON \| -]` | beliebige API-Methode aufrufen; `-` liest die Parameter von stdin; Ausgabe immer JSON | alle |
 | `help [BEFEHL]` | Hilfe | – |
@@ -217,6 +218,7 @@ Einzelbefehle laufen jeweils in einem frischen Prozess: offene Dokumente leben n
 - **Eingabeende**: Endet stdin, wartet der Server auf alle ausstehenden Antworten und liefert die zuletzt ausgelösten Events aus, bevor er sich beendet. `printf '…' | tiegel --headless serve` bekommt also jede Antwort.
 - **Abbruch**: `$/cancelRequest` mit `{"id": …}` bricht eine laufende Anfrage ab (Kontext wird abgebrochen).
 - `--project DIR` öffnet das Projekt vor der ersten Anfrage; sonst `project.open` aufrufen.
+- **Mehrere Projekte** (D464): `projects.open` öffnet weitere Projekte, `projects.switch` wechselt das aktive. Alle Methoden außer `projects.*`, `events.*` und `app.*` gehen an das aktive Projekt; Events kommen von ihm und als `projects.*` von der Sitzungsverwaltung. `project.open`/`project.close` ersetzen bzw. schließen wie bisher das aktuelle Projekt.
 - `auth` (`{token}` → `{ok, version, apiVersion}`) beantwortet jeder Transport; über stdio ist es ohne Wirkung.
 
 ### Socket (`serve --listen`)
@@ -282,7 +284,7 @@ Alles, was auf dem Event-Bus veröffentlicht wird, kann ein Client abonnieren:
 
 Muster: exakte Topics, `präfix.*` oder `*`. Zustellung als Notification `event` mit `{"topic": …, "payload": …}`. Jedes Event kommt pro Verbindung höchstens einmal (auch wenn mehrere Muster passen) und alle Events einer Verbindung in Veröffentlichungsreihenfolge; zwischen Antworten und Events gibt es keine feste Reihenfolge (Events laufen asynchron).
 
-Vom Kern veröffentlichte Topics: `project.opened`/`project.closed` (`{root, name}`), `file.opened` (`{path, file, language, version, size}`), `file.saved` (`{path, file, trigger, size}` – auch bei Autosave), `doc.opened`, `doc.changed`, `doc.edited`, `doc.saved`, `doc.closed`, `doc.renamed`, `files.changed`, `modules.changed`, `settings.changed`, `search.results` (gestreamte Projektsuche: `{id, files, done, summary, error}`).
+Vom Kern veröffentlichte Topics: `project.opened`/`project.closed` (`{root, name}`), `projects.opened`/`projects.activated`/`projects.backgrounded`/`projects.hibernated`/`projects.resumed`/`projects.closed` (`{name, root, state, previous?, reason?: auto|forced}`, Sitzungen mehrerer Projekte, D464), `file.opened` (`{path, file, language, version, size}`), `file.saved` (`{path, file, trigger, size}` – auch bei Autosave), `doc.opened`, `doc.changed`, `doc.edited`, `doc.saved`, `doc.closed`, `doc.renamed`, `files.changed`, `modules.changed`, `settings.changed`, `search.results` (gestreamte Projektsuche: `{id, files, done, summary, error}`).
 
 `files.changed` meldet die Dateioperationen eines API-Aufrufs (`files.*`) für Dateibaum und Indizes: `{changes: [{kind: created|renamed|deleted, path, file, oldPath?, oldFile?, dir?, trashed?, source: "tiegel"}]}` (derselbe Typ wie beim Watcher, siehe unten); bei `renamed` sind `path`/`file` der neue Ort. Folgt ein offenes Dokument einem Umbenennen/Verschieben, kommen `doc.renamed` (`{from, to, fromFile, file, generation, language}`), dann `doc.closed` für den alten Pfad mit `renamedTo` und `doc.opened` für den neuen – Abonnenten, die nur Öffnen/Schließen kennen (Language Server, Syntax), folgen so automatisch; Dokument, Puffer, Undo und Generation bleiben erhalten. Der Language Server bekommt zusätzlich `workspace/didRenameFiles`, wenn er sich dafür registriert hat.
 
@@ -348,7 +350,7 @@ Einstellungen werden deklariert (D190, D210–D212): der Kern in `internal/core/
 | Kern › Appearance | `ui.theme` (dark/light/system), `ui.fontSize` |
 | Kern › Editor | `editor.fontFamily`, `editor.fontSize`, `editor.lineHeight`, `editor.tabWidth`, `editor.insertSpaces` |
 | Kern › Files | `files.editorconfig` (Projekt), `files.associations` (Projekt, `muster=sprache`, z.B. `*.tpl=php`), `watch.exclude` (Projekt) |
-| Kern › Autosave / Projects / Updates | `autosave.idleSeconds`, `projects.openIn` (ask/new/this), `update.checkOnStart` |
+| Kern › Autosave / Projects / Updates | `autosave.idleSeconds`, `projects.openIn` (ask/new/this), `projects.autoHibernateMinutes` (0 = aus), `update.checkOnStart` |
 | Plugin `git` | `git.updateMethod` (merge/rebase, Projekt) |
 | Plugin `debug-xdebug` | `debug-xdebug.port` (Projekt, Standard 9003) |
 | Plugin `php-features` | `php-features.background` (offene Dateien prüfen, Projekt) |
@@ -373,6 +375,12 @@ Alle Methoden nehmen ein Parameterobjekt (oder keins) und liefern JSON. Relative
 | `events.publish` | `topic`, `payload?` | – |
 | `project.open` | `path` | Projektinfo (ein anderes offenes Projekt wird vorher wie mit `project.close` geschlossen) |
 | `project.info` / `project.close` | – | Projektinfo |
+| `projects.list` | – | `{projects: [{name, root, state: active\|background\|hibernated, since, docs?, autoHibernateAt?}], active, autoHibernateMinutes}` |
+| `projects.open` | `path` | Sitzung (`{name, root, state, …}`); öffnet das Projekt neben den anderen und macht es aktiv (ist es offen: wechselt) |
+| `projects.switch` / `projects.resume` | `name` (Wurzel oder eindeutiger Ordnername) | Sitzung; ein Projekt im Ruhezustand wird wiederhergestellt (Dokumente wieder geöffnet), `clientState` aus `projects.hibernate` kommt einmal zurück. `resume` stellt im Hintergrund wieder her (aktiv, wenn keines aktiv ist) |
+| `projects.hibernate` | `name`, `force?`, `clientState?` (beliebiges JSON des Clients: Tabs, Cursor) | Sitzung; speichert alle Dokumente und beendet Sprachserver, Watcher, Index, Terminals; `CodeConflict` (`data.busy`) bei laufenden Prozessen/Debug-Sitzungen oder nicht speicherbaren Dokumenten ohne `force` |
+| `projects.close` | `name`, `force?` | verbleibende Liste wie `projects.list` |
+| `projects.busy` | `name` | `{busy: ["run: NAME", "debug session ID"]}` |
 | `files.list` | `path?`, `depth?`, `ignored?`, `libraries?`, `limit?` | Baum `{name, path, dir, size, ignored, library, collapsed, children}` + Zähler |
 | `files.read` | `path`, `maxBytes?` | `content`, `encoding` (`utf-8`/`base64`), `language`, `size`, `truncated` |
 | `files.detectLanguage` | `path`, `content?` | `language` |

@@ -66,30 +66,46 @@ func (a *App) registerProject() {
 }
 
 func (a *App) projectOpen(ctx context.Context, p PathParams) (ProjectInfo, error) {
-	if p.Path == "" {
-		return ProjectInfo{}, Errorf(CodeInvalidParams, "path is required")
+	if w := a.ws.Load(); w != nil {
+		return w.legacyOpen(ctx, a, p.Path)
 	}
-	root, err := filepath.Abs(p.Path)
+	return a.openProjectDirect(ctx, p.Path)
+}
+
+// resolveProjectDir makes path an absolute, symlink-free directory.
+func resolveProjectDir(path string) (string, error) {
+	if path == "" {
+		return "", Errorf(CodeInvalidParams, "path is required")
+	}
+	root, err := filepath.Abs(path)
 	if err != nil {
-		return ProjectInfo{}, Errorf(CodeInvalidParams, "path: %v", err)
+		return "", Errorf(CodeInvalidParams, "path: %v", err)
 	}
 	if r, err := filepath.EvalSymlinks(root); err == nil {
 		root = r
 	}
 	st, err := os.Stat(root)
 	if err != nil {
-		return ProjectInfo{}, Errorf(CodeNotFound, "project: %v", err)
+		return "", Errorf(CodeNotFound, "project: %v", err)
 	}
 	if !st.IsDir() {
-		return ProjectInfo{}, Errorf(CodeInvalidParams, "project: %s is not a directory", root)
+		return "", Errorf(CodeInvalidParams, "project: %s is not a directory", root)
+	}
+	return root, nil
+}
+
+// openProjectDirect opens path as the project of this App, closing a
+// previous one (project.open without a workspace).
+func (a *App) openProjectDirect(ctx context.Context, path string) (ProjectInfo, error) {
+	root, err := resolveProjectDir(path)
+	if err != nil {
+		return ProjectInfo{}, err
 	}
 	// Switching to another project closes the previous one first, so its
 	// documents do not leak into the new project (unsaved changes are
 	// kept as recovery points like on project.close).
 	if cur := a.ProjectRoot(); cur != "" && cur != root {
-		if _, err := a.projectClose(ctx, struct{}{}); err != nil {
-			return ProjectInfo{}, err
-		}
+		a.closeProjectDirect()
 	}
 	ps, err := settings.OpenProject(a.opts.ConfigDir, root, a.bus)
 	if err != nil {
@@ -133,7 +149,17 @@ func (a *App) projectInfo(_ context.Context, _ struct{}) (ProjectInfo, error) {
 	return info, nil
 }
 
-func (a *App) projectClose(_ context.Context, _ struct{}) (ProjectInfo, error) {
+func (a *App) projectClose(ctx context.Context, _ struct{}) (ProjectInfo, error) {
+	if w := a.ws.Load(); w != nil {
+		return w.legacyClose(ctx, a)
+	}
+	a.closeProjectDirect()
+	return ProjectInfo{}, nil
+}
+
+// closeProjectDirect closes the project of this App (unsaved documents
+// become recovery points).
+func (a *App) closeProjectDirect() {
 	a.stopWatch()
 	a.preserveUnsaved("unsaved on project close", nil)
 	a.mu.Lock()
@@ -152,7 +178,6 @@ func (a *App) projectClose(_ context.Context, _ struct{}) (ProjectInfo, error) {
 	if pr != nil {
 		a.bus.Publish(TopicProjectClosed, ProjectEvent{Root: pr.root, Name: filepath.Base(pr.root)})
 	}
-	return ProjectInfo{}, nil
 }
 
 // requireProject returns the open project or a CodeNoProject error.

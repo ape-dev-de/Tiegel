@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/core/autosave"
@@ -120,6 +121,9 @@ type App struct {
 	runs     run.Manager      // processes of the run service (run.*, AP15.1)
 	terms    terminal.Manager // terminal sessions (terminal.*, AP15.5)
 	qa       qaStore          // findings of the quality tool plugins (qa.*)
+	// ws is the workspace (several projects, projects.*) this App hosts
+	// or belongs to; nil until one is enabled.
+	ws atomic.Pointer[Workspace]
 	// trash moves a path to the trash (files.delete); start launches a
 	// detached program (files.reveal). Tests replace both.
 	trash func(path string) error
@@ -214,6 +218,7 @@ func New(opts Options) (*App, error) {
 	a.registerDiff()
 	a.registerTerminal()
 	a.registerIDEImport()
+	a.registerProjects()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)
@@ -234,6 +239,11 @@ func New(opts Options) (*App, error) {
 func (a *App) Close() error {
 	var errs []error
 	a.closeMu.Do(func() { close(a.closing) })
+	if w := a.ws.Load(); w != nil && w.host == a {
+		if err := w.shutdown(); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	a.stopWatch()
 	a.saver.Close()
 	a.installs.CancelAll()
@@ -328,7 +338,7 @@ func (a *App) registerApp() {
 			ConfigDir:  a.opts.ConfigDir,
 			GOOS:       a.opts.GOOS,
 			GOARCH:     runtime.GOARCH,
-			Project:    a.ProjectRoot(),
+			Project:    a.activeRoot(),
 			Methods:    len(a.methods.list()),
 			PID:        os.Getpid(),
 		}, nil

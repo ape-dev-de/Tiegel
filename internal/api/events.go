@@ -92,7 +92,7 @@ func (s *Session) Subscribe(patterns ...string) []string {
 		}
 	}
 	if len(s.patterns) > 0 && s.unsub == nil {
-		s.unsub = s.app.bus.SubscribeBounded("*", s.deliver, s.maxQueue, s.overflow)
+		s.unsub = s.app.eventBus().SubscribeBounded("*", s.deliver, s.maxQueue, s.overflow)
 	}
 	return s.topicsLocked()
 }
