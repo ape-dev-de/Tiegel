@@ -18,7 +18,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/workspace"
 )
 
-// Several projects per window (AP18.5, D464). A Workspace is hosted by one
+// Several projects per window (AP18.5, D468). A Workspace is hosted by one
 // App (the window's or the serve process's) and keeps one api.App per open
 // project: the host itself for the first project, further Apps from
 // WorkspaceOptions.NewApp. Exactly one project is active; background
