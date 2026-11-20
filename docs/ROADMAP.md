@@ -173,7 +173,8 @@ Ziel: dasselbe aufgeräumte, dichte Arbeitsgefühl wie die Referenz-IDE – eige
 - AP18.3 **Kopfzeile (Toolbar):** Projekt-Wechsler, daneben Branch-Popup inline (Suche, lokal/remote, neu, Checkout), dann Run-Konfiguration + Run/Debug/Stop, Xdebug-Lauschen, Plugin-Schnellknöpfe (Beitragspunkt für Plugins), Suche, Einstellungen.
 - AP18.4 **VCS:** Commit-Tool-Fenster links (Commit/Stash, Werkzeugleiste, Änderungsbaum mit Häkchen und Dateisymbolen, Amend, Nachricht, „Commit“ / „Commit and Push“); Diff öffnet als Editor-Tab im Hauptfenster und wird fokussiert.
 - AP18.5 **Mehrere Projekte je Fenster + Ruhezustand:** Projekte im Hintergrund behalten ihren Zustand; „Ruhezustand“ beendet Sprachserver, Watcher, Indexer und gibt Speicher frei, Wiederaufnahme stellt Tabs/Layout wieder her. Headless: `tiegel --headless projects list|open|switch|hibernate|resume`.
-- AP18.6 **Coding-Agenten als Plugins:** Kopfzeilen-Knopf je Agent (z. B. Claude Code, opencode), Start im eingebetteten Terminal im Projekt; tiefere Anbindung (Ausgabe-Parser, Harness) nach Rückfrage.
+- AP18.6 **Terminal zuerst „vernünftig“:** vollwertiges Terminal (Vollbild-Programme wie vim/htop/less, 256/True Color, Maus, Auswahl/Kopieren/Einfügen, Scrollback + Suche, Größenänderung, Links, mehrere Tabs, Shell-Integration/Prompt-Erkennung), Robustheit und Geschwindigkeit.
+- AP18.7 **Coding-Agenten als Plugins** (nach AP18.6): zunächst Kopfzeilen-Knopf je Agent (Claude Code, opencode …), Start im eingebetteten Terminal im Projekt. Später, ebenfalls nur als Plugin: kleine eigene Oberfläche statt Kommandozeile – Ein- und Ausgaben werden geparst und in Blöcken dargestellt (Nutzer 2026-11-20: „nicht jetzt, nur als Plugin“).
 - **Abnahme:** Screenshot-Vergleich vorher/nachher im Review; alle Symbole eigene Zeichnungen; keine Textumbrüche in Knöpfen bei 100 %/125 %/150 %; Diff-Tab per Headless-Befehl prüfbar.
 
 ---
