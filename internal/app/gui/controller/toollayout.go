@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"sort"
 )
 
@@ -51,6 +53,23 @@ type SideState struct {
 	// split slots it is the share of the primary panel within the
 	// divided side.
 	Size float32 `json:"size,omitempty"`
+	// Tabs are the tool windows grouped as tabs in the slot's panel (the
+	// header shows them while one of them is in front); fewer than two
+	// means no tab group.
+	Tabs []string `json:"tabs,omitempty"`
+}
+
+// equal reports whether two slot states are the same.
+func (s SideState) equal(o SideState) bool {
+	if s.Active != o.Active || s.Open != o.Open || s.Size != o.Size || len(s.Tabs) != len(o.Tabs) {
+		return false
+	}
+	for i := range s.Tabs {
+		if s.Tabs[i] != o.Tabs[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // ToolLayout is the docking state of the tool windows of one project
@@ -73,6 +92,10 @@ type ToolLayout struct {
 	// MaxPanel is the tool window maximized over editor and panels (""
 	// none).
 	MaxPanel string
+	// BottomFull tells per bottom corner (SideLeft, SideRight) whether
+	// the bottom panel owns it, i.e. spans under the side panels of that
+	// side; otherwise the side panels span the full height (default).
+	BottomFull map[ToolSide]bool
 	// Version changes on every change (the view and the persistence
 	// follow it).
 	Version uint64
@@ -102,7 +125,8 @@ func NewToolLayout() *ToolLayout {
 	l := &ToolLayout{
 		Tools: map[string]ToolSide{}, Groups: map[string]ToolGroup{},
 		Sides: map[ToolSide]*SideState{}, Splits: map[ToolSide]*SideState{},
-		defaults: map[string]ToolSide{}, defGroups: map[string]ToolGroup{},
+		BottomFull: map[ToolSide]bool{},
+		defaults:   map[string]ToolSide{}, defGroups: map[string]ToolGroup{},
 	}
 	for _, s := range ToolSides {
 		l.Sides[s] = &SideState{}
@@ -289,15 +313,158 @@ func (l *ToolLayout) MoveTo(id string, side ToolSide, group ToolGroup) {
 		return
 	}
 	shown := l.Visible(id)
-	if s := l.Slot(oldSide, oldGroup); s.Active == id {
-		s.Active, s.Open = "", false
+	old := l.Slot(oldSide, oldGroup)
+	if old.Active == id {
+		old.Active, old.Open = "", false
+		// Another tab of the group takes its place.
+		for _, t := range old.Tabs {
+			if t != id {
+				old.Active, old.Open = t, shown
+				break
+			}
+		}
 	}
+	old.Tabs = removeTab(old.Tabs, id)
 	l.Tools[id], l.Groups[id] = side, group
 	if shown {
 		s := l.Slot(side, group)
 		s.Active, s.Open = id, true
 	}
 	l.changed()
+}
+
+// removeTab returns tabs without id; a single remaining tab is no group.
+func removeTab(tabs []string, id string) []string {
+	var out []string
+	for _, t := range tabs {
+		if t != id {
+			out = append(out, t)
+		}
+	}
+	if len(out) < 2 {
+		return nil
+	}
+	return out
+}
+
+// JoinTab docks tool window id in slot (side, group) as a tab next to
+// the window in front there and shows it. The slot's panel then lists
+// both (and earlier tabs) in its header.
+func (l *ToolLayout) JoinTab(id string, side ToolSide, group ToolGroup) {
+	if !side.Valid() || !group.Valid() {
+		return
+	}
+	front := l.Slot(side, group).Active
+	if front == id && l.SideOf(id) == side && l.GroupOf(id) == group {
+		return
+	}
+	l.MoveTo(id, side, group)
+	s := l.Slot(side, group)
+	tabs := s.Tabs
+	if front != "" && front != id && !contains(tabs, front) {
+		tabs = append(tabs, front)
+	}
+	if !contains(tabs, id) {
+		tabs = append(tabs, id)
+	}
+	s.Tabs = tabs
+	s.Active, s.Open = id, true
+	l.maximized = nil
+	l.changed()
+}
+
+// LeaveTabs removes tool window id from the tab group of its slot (it
+// stays docked there).
+func (l *ToolLayout) LeaveTabs(id string) {
+	s := l.slotOf(id)
+	if !contains(s.Tabs, id) {
+		return
+	}
+	s.Tabs = removeTab(s.Tabs, id)
+	l.changed()
+}
+
+// TabsOf returns the tab group shown in the header of slot (side, g):
+// the slot's tabs while the window in front belongs to them, else nil.
+func (l *ToolLayout) TabsOf(side ToolSide, g ToolGroup) []string {
+	s := l.Slot(side, g)
+	if len(s.Tabs) < 2 || !contains(s.Tabs, s.Active) {
+		return nil
+	}
+	return s.Tabs
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// IsBottomFull reports whether the bottom panel owns the bottom corner
+// of side (left or right).
+func (l *ToolLayout) IsBottomFull(side ToolSide) bool { return l.BottomFull[side] }
+
+// SetBottomFull gives the bottom corner of side (left or right) to the
+// bottom panel (on) or to the side panels.
+func (l *ToolLayout) SetBottomFull(side ToolSide, on bool) {
+	if side != SideLeft && side != SideRight || l.BottomFull[side] == on {
+		return
+	}
+	if l.BottomFull == nil {
+		l.BottomFull = map[ToolSide]bool{}
+	}
+	if on {
+		l.BottomFull[side] = true
+	} else {
+		delete(l.BottomFull, side)
+	}
+	l.changed()
+}
+
+// Reset restores the default layout: every registered window at its
+// default side and group, all panels closed but the project tree, default
+// sizes and corners, nothing maximized.
+func (l *ToolLayout) Reset() {
+	l.reset()
+	l.Show(DefaultOpenTool)
+	l.changed()
+}
+
+// reset clears all placements and slots (registrations stay).
+func (l *ToolLayout) reset() {
+	l.Tools, l.Groups = map[string]ToolSide{}, map[string]ToolGroup{}
+	for id, side := range l.defaults {
+		l.Tools[id] = side
+	}
+	for _, side := range ToolSides {
+		l.Sides[side], l.Splits[side] = &SideState{}, &SideState{}
+	}
+	l.MaxPanel, l.BottomFull, l.maximized = "", map[ToolSide]bool{}, nil
+}
+
+// Apply replaces the layout by a stored one (the JSON form of
+// MarshalJSON, e.g. a named layout); registrations stay. A layout
+// without an open panel shows the project tree.
+func (l *ToolLayout) Apply(data []byte) error {
+	var probe toolLayoutFile
+	if t := bytes.TrimSpace(data); len(t) == 0 || t[0] != '{' {
+		return fmt.Errorf("tool layout: not a JSON object")
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return fmt.Errorf("tool layout: %w", err)
+	}
+	l.reset()
+	if err := l.UnmarshalJSON(data); err != nil {
+		return err
+	}
+	if !l.AnyOpen() {
+		l.Show(DefaultOpenTool)
+	}
+	l.changed()
+	return nil
 }
 
 // Size returns the share of side (the default if unset).
@@ -418,12 +585,26 @@ type toolLayoutFile struct {
 	Splits map[ToolSide]SideState `json:"splits,omitempty"`
 	// Maximized is the maximized tool window.
 	Maximized string `json:"maximized,omitempty"`
+	// Corners names the owner of each bottom corner ("bottom"; missing:
+	// the side panels).
+	Corners map[ToolSide]string `json:"corners,omitempty"`
 }
+
+// cornerBottom is the persisted owner of a corner held by the bottom panel.
+const cornerBottom = "bottom"
 
 // MarshalJSON stores the slots and the user's placements.
 func (l *ToolLayout) MarshalJSON() ([]byte, error) {
 	f := toolLayoutFile{Tools: map[string]ToolSide{}, Groups: map[string]ToolGroup{}, Sides: map[ToolSide]SideState{},
 		Splits: map[ToolSide]SideState{}, Maximized: l.MaxPanel}
+	for side, on := range l.BottomFull {
+		if on {
+			if f.Corners == nil {
+				f.Corners = map[ToolSide]string{}
+			}
+			f.Corners[side] = cornerBottom
+		}
+	}
 	for id, s := range l.Tools {
 		if l.defaults[id] != s || l.defaults[id] == "" {
 			f.Tools[id] = s
@@ -440,7 +621,7 @@ func (l *ToolLayout) MarshalJSON() ([]byte, error) {
 			st.Open = l.maximized[k]
 		}
 		if k.group == GroupSplit {
-			if st != (SideState{}) {
+			if !st.equal(SideState{}) {
 				f.Splits[k.side] = st
 			}
 			return
@@ -477,6 +658,15 @@ func (l *ToolLayout) UnmarshalJSON(data []byte) error {
 			}
 			st := s
 			st.Size = 0
+			st.Tabs = nil
+			for _, id := range s.Tabs {
+				if id != "" && !contains(st.Tabs, id) {
+					st.Tabs = append(st.Tabs, id)
+				}
+			}
+			if len(st.Tabs) < 2 {
+				st.Tabs = nil
+			}
 			if s.Size > 0 {
 				st.Size = min(max(s.Size, lo), 0.9)
 			}
@@ -486,6 +676,14 @@ func (l *ToolLayout) UnmarshalJSON(data []byte) error {
 	restore(l.Sides, f.Sides, 0.05)
 	restore(l.Splits, f.Splits, 0.1)
 	l.MaxPanel = f.Maximized
+	for _, side := range []ToolSide{SideLeft, SideRight} {
+		if f.Corners[side] == cornerBottom {
+			if l.BottomFull == nil {
+				l.BottomFull = map[ToolSide]bool{}
+			}
+			l.BottomFull[side] = true
+		}
+	}
 	l.changed()
 	return nil
 }

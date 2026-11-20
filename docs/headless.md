@@ -109,6 +109,9 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `settings get KEY [--scope global\|project] [--effective]` | gespeicherten (oder mit `--effective` den wirksamen) Wert lesen | `settings.get` |
 | `settings set KEY VALUE [--scope S]` | Wert schreiben; `VALUE` ist JSON, einfache Wörter gelten als Zeichenkette (`settings set ui.theme light`); deklarierte Schlüssel werden gegen ihre Spec geprüft (Exit 1 mit Grund) | `settings.set` |
 | `settings reset KEY [--scope S]` | Wert im Bereich löschen (dann gilt der globale Wert bzw. der Standard) | `settings.set` mit `null` |
+| `layout [get [NAME]] \| layout list` | Werkzeugfenster-Layout des Projekts (Seiten, Plätze, Größen, Tab-Gruppen, Ecken-Zuordnung, D474–D476) bzw. eines benannten Layouts als JSON, dazu die Namen aller gespeicherten Layouts | `layout.get` |
+| `layout reset` | Layout des Projekts auf den Standard zurücksetzen (gilt beim nächsten Öffnen des Projekts) | `layout.reset` |
+| `layout save NAME [LAYOUT-JSON] \| layout apply NAME \| layout delete NAME` | benanntes Layout (global gespeichert, `ui.toolLayouts`) aus dem Projekt-Layout oder dem angegebenen JSON-Objekt sichern, auf das Projekt anwenden, löschen | `layout.save`, `layout.apply`, `layout.delete` |
 | `editorconfig FILE` | wirksame `.editorconfig`-Eigenschaften einer Datei (Einrückung, Tab-Breite, Zeilenende, Zeichensatz-Prüfung, abschließende Leerzeile, Leerzeichen am Zeilenende) mit den gelesenen Dateien | `files.editorconfig` |
 | `history FILE [--show ID \| --restore ID]` | Local History: Liste, Inhalt einer Revision, Wiederherstellen | `history.*` |
 | `recovery [--dismiss [FILE...]]` | Wiederherstellungspunkte: ungespeicherte Änderungen, die beim Schließen nicht gespeichert werden konnten (bzw. beim Beenden noch offen waren), liegen in der Local History; `--dismiss` entfernt die Hinweise (ohne Dateien: alle), die Revisionen bleiben | `history.recovery`, `history.recoveryDismiss` |

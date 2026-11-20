@@ -174,7 +174,8 @@ func TestWorkbench(t *testing.T) {
 		{image.Pt(1150, 300), MoveEvent{ID: "problems", Side: SideRight}},
 		{image.Pt(1150, 700), MoveEvent{ID: "problems", Side: SideRight, Group: GroupSplit}},
 		{image.Pt(10, 650), MoveEvent{ID: "problems", Side: SideLeft, Group: GroupSplit}},
-		{image.Pt(800, 760), MoveEvent{ID: "problems", Side: SideBottom, Group: GroupSplit}},
+		{image.Pt(800, 740), MoveEvent{ID: "problems", Side: SideBottom, Group: GroupSplit}},
+		{image.Pt(1000, 790), MoveEvent{ID: "problems", Side: SideBottom, Group: GroupSplit, FullWidth: true}},
 	} {
 		evs = nil
 		h.Drag(bottom, c.to)
@@ -190,7 +191,7 @@ func TestWorkbench(t *testing.T) {
 		}
 	}
 	// Dropping into its own slot or the editor center does nothing.
-	for _, to := range []image.Point{image.Pt(400, 760), image.Pt(600, 300)} {
+	for _, to := range []image.Point{image.Pt(400, 740), image.Pt(600, 300)} {
 		evs = nil
 		h.Drag(bottom, to)
 		h.Frame(w)
