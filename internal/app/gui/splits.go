@@ -9,7 +9,6 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
-	"github.com/ape-dev-de/tiegel/internal/ui/organisms/filetree"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/tabs"
 )
 
@@ -138,7 +137,7 @@ func (v *View) groupTabs(gtx layout.Context, g *controller.EditorGroup, gv *grou
 	b := &gv.bar
 	b.Items = b.Items[:0]
 	for _, t := range list {
-		it := tabs.Item{ID: t.File, Title: t.Title(), Tooltip: t.Path, Modified: t.Modified, Glyph: filetree.Glyph(&filetree.Node{Name: t.Title()})}
+		it := tabs.Item{ID: t.File, Title: t.Title(), Tooltip: t.Path, Modified: t.Modified, Glyph: tabGlyph(t)}
 		if t.Virtual != "" {
 			it.Glyph = atoms.GlyphSwap
 			if tt, ok := v.Registry.TabType(t.Virtual); ok && tt.Glyph != nil {

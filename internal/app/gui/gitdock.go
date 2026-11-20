@@ -16,7 +16,6 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
-	"github.com/ape-dev-de/tiegel/internal/ui/organisms/filetree"
 	gitui "github.com/ape-dev-de/tiegel/internal/ui/organisms/git"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/palette"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/statusbar"
@@ -89,7 +88,7 @@ func installGit(v *View) *gitDock {
 	d.commitDiff.Placeholder = "Select a commit to see its changes"
 	d.blockDiff.HideToolbar = true
 	// The change tree uses the project tree's file icons.
-	d.panel.FileGlyph = func(p string) *atoms.Glyph { return filetree.Glyph(&filetree.Node{Name: path.Base(p)}) }
+	d.panel.FileGlyph = func(p string) *atoms.Glyph { return fileGlyph(p) }
 	d.tabBtns[0].Text, d.tabBtns[1].Text, d.tabBtns[2].Text = "Log", "Branches", "Stashes"
 	r := v.Registry
 	r.AddFrameHandler(d.frame)

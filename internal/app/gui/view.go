@@ -80,6 +80,7 @@ type View struct {
 	tabBars      map[*controller.EditorGroup]*groupView
 	splitViews   map[*controller.SplitNode]*molecules.Split
 	status       statusbar.Bar
+	crumbPaths   []string // project paths of the breadcrumb segments
 	menuBar      menuBar
 	toolsFor     *controller.ToolLayout
 	toolsSeen    uint64
@@ -141,6 +142,7 @@ type View struct {
 	// Raise brings the window to the front (set by the window loop).
 	Raise func()
 
+	hdr   *header
 	gitd  *gitDock
 	dbgd  *debugDock
 	navd  *navDock
@@ -186,6 +188,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 		toolIDs: map[string]bool{},
 	}
 	v.Registry.SetGOOS(goos)
+	v.tree.Icon = treeIcon
 	for _, a := range defaultActions() {
 		v.Registry.AddAction(a)
 	}
@@ -220,6 +223,7 @@ func NewView(ctl *controller.Controller, goos string) *View {
 	v.cmpd = installComposer(v)
 	v.extd = installExternalTools(v)
 	v.termd = installTerminal(v)
+	v.hdr = installHeader(v)
 	return v
 }
 
@@ -425,8 +429,20 @@ func (v *View) handleStatus(gtx layout.Context) {
 		right = append(right, p()...)
 	}
 	v.status.Left, v.status.Right = left, right
-	for _, e := range v.status.Update(gtx) {
-		switch e.(statusbar.ClickEvent).ID {
+	v.status.Path, v.crumbPaths = v.breadcrumb()
+	for _, ev := range v.status.Update(gtx) {
+		if c, ok := ev.(statusbar.CrumbEvent); ok {
+			v.crumbClicked(c.Index)
+			continue
+		}
+		e, ok := ev.(statusbar.ClickEvent)
+		if !ok {
+			continue
+		}
+		switch e.ID {
+		case statusGitID:
+			// The branch popup of the header replaces the chooser.
+			v.RunAction(ActBranches)
 		case statusCaret:
 			v.openGotoLine()
 		case statusLSP:
@@ -437,7 +453,7 @@ func (v *View) handleStatus(gtx layout.Context) {
 			}
 		default:
 			for _, h := range v.Registry.statusClicks {
-				if h(v, e.(statusbar.ClickEvent).ID) {
+				if h(v, e.ID) {
 					break
 				}
 			}
@@ -602,7 +618,7 @@ func (v *View) filterFiles(q string) {
 			dir = ""
 		}
 		v.chooseIdx = append(v.chooseIdx, m.Index)
-		v.chooser.Items = append(v.chooser.Items, palette.Item{Label: path.Base(p), Detail: dir, Glyph: filetree.Glyph(&filetree.Node{Name: path.Base(p)})})
+		v.chooser.Items = append(v.chooser.Items, palette.Item{Label: path.Base(p), Detail: dir, Glyph: fileGlyph(p)})
 	}
 	if v.chooseMode == chooseFiles && len(v.ctl.Files) == 0 {
 		v.chooser.Message = "Indexing project files…"

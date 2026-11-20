@@ -59,6 +59,9 @@ type ToolWindow struct {
 	Glyph *atoms.Glyph
 	// Side is the default side (the user may move it).
 	Side Side
+	// Split opens the window in the split slot of its side by default
+	// (left/right: below the primary window, bottom: right of it).
+	Split bool
 	// Order sorts the stripe buttons (lower first).
 	Order int
 	// Mac and PC are the chords toggling the window ("Cmd+9"); the
@@ -125,6 +128,9 @@ type Action struct {
 	// Section groups entries of a menu; a separator is drawn between
 	// different sections (in registration order).
 	Section string
+	// Icon names the icon in menus and on a header button (atoms glyph or
+	// fileicons tool glyph name, see RegisterToolbarAction).
+	Icon string
 	// KeyHint is a shortcut shown in menus that is handled elsewhere
 	// (e.g. by the editor keymap); it is not bound by the window.
 	KeyHint string

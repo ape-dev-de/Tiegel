@@ -18,6 +18,8 @@ import (
 type Glyph struct {
 	name string
 	data []byte
+	// paint draws the glyph instead of IconVG data (NewPaintedGlyph).
+	paint GlyphPainter
 
 	mu    sync.Mutex
 	valid bool
@@ -36,6 +38,18 @@ const maxGlyphCache = 32
 // NewGlyph wraps IconVG data. Invalid data yields a glyph that draws nothing.
 func NewGlyph(name string, ivg []byte) *Glyph {
 	return &Glyph{name: name, data: ivg}
+}
+
+// GlyphPainter draws a glyph into a px×px square at the origin. col is
+// the requested color: monochrome glyphs use it, multi-colour glyphs
+// (file icons) may ignore it.
+type GlyphPainter func(gtx layout.Context, th *tokens.Theme, px int, col color.NRGBA)
+
+// NewPaintedGlyph returns a glyph drawn by p instead of IconVG data, so
+// other icon sets (internal/ui/fileicons) can be used wherever a *Glyph
+// is accepted. A nil painter yields a glyph that draws nothing.
+func NewPaintedGlyph(name string, p GlyphPainter) *Glyph {
+	return &Glyph{name: name, paint: p, init: true, valid: p != nil}
 }
 
 // Name returns the glyph's identifier.
@@ -204,6 +218,14 @@ func (i Icon) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	}
 	px := gtx.Dp(size)
 	sz := image.Pt(px, px)
+	if g := i.Glyph; g != nil && g.paint != nil {
+		if px > 0 {
+			cgtx := gtx
+			cgtx.Constraints = layout.Exact(sz)
+			g.paint(cgtx, th, px, col)
+		}
+		return layout.Dimensions{Size: sz}
+	}
 	if ic := i.Glyph.iconOrNil(px, col); ic != nil {
 		cgtx := gtx
 		cgtx.Constraints = layout.Exact(sz)

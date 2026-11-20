@@ -90,6 +90,10 @@ type Tree struct {
 
 	// GOOS enables Ctrl+click context clicks on "darwin".
 	GOOS string
+	// Icon (optional) returns the icon of a node (open: an expanded
+	// directory), e.g. from internal/ui/fileicons; nil results and a nil
+	// Icon fall back to Glyph and the default folder glyphs.
+	Icon func(n *Node, open bool) *atoms.Glyph
 
 	expanded map[string]bool
 	selected string
@@ -242,7 +246,13 @@ func (t *Tree) layoutRows(gtx layout.Context, th *tokens.Theme) layout.Dimension
 		if n.Ignored && r.Status == molecules.StatusNone {
 			r.Status = molecules.StatusIgnored
 		}
-		r.Glyph = Glyph(n)
+		r.Glyph = nil
+		if t.Icon != nil {
+			r.Glyph = t.Icon(n, r.Expanded)
+		}
+		if r.Glyph == nil {
+			r.Glyph = Glyph(n)
+		}
 		r.Detail = ""
 		if n.Dir && r.Expanded && !n.Loaded {
 			r.Detail = "loading…"

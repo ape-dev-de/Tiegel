@@ -423,14 +423,15 @@ func (d *debugDock) status() []statusbar.Item {
 		return nil
 	}
 	db := d.dbg()
-	it := statusbar.Item{ID: statusDebugID, Glyph: atoms.GlyphListen, Clickable: true, Text: "Xdebug", Tone: statusbar.ToneMuted,
-		Tooltip: "Xdebug listener off – click to start listening"}
-	if db.Listening {
-		it.Tone = statusbar.ToneAccent
-		it.Tooltip = "Xdebug listening on " + db.Addr + " – click to stop"
-		if db.Paused() {
-			it.Text, it.Tone = "Xdebug: paused", statusbar.ToneWarning
-		}
+	// The header toolbar has the listen toggle; the footer shows the
+	// listener only while it runs.
+	if !db.Listening {
+		return nil
+	}
+	it := statusbar.Item{ID: statusDebugID, Glyph: atoms.GlyphListen, Clickable: true, Text: "Xdebug", Tone: statusbar.ToneAccent}
+	it.Tooltip = "Xdebug listening on " + db.Addr + " – click to stop"
+	if db.Paused() {
+		it.Text, it.Tone = "Xdebug: paused", statusbar.ToneWarning
 	}
 	return []statusbar.Item{it}
 }

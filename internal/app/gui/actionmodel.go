@@ -72,6 +72,9 @@ func (r *Registry) mirror(a Action) {
 	if na.Label == "" {
 		na.Label = id
 	}
+	if a.Icon != "" {
+		na.Icon = a.Icon
+	}
 	switch {
 	case r.Scheme().Has(a.ID):
 		na.Shortcut = actions.Shortcut{Mac: r.schemeFor("darwin").ChordText(a.ID), PC: r.schemeFor("linux").ChordText(a.ID)}
@@ -97,6 +100,32 @@ func (r *Registry) unmirror(id keymap.Action) {
 	if a, ok := standardIDs[string(id)]; ok {
 		_ = m.Add(a)
 	}
+}
+
+// RegisterToolbarAction adds actions as one group of quick-action buttons
+// to the header toolbar (actions.CtxToolbar, D465): label, icon
+// (Action.Icon), shortcut and enabled/checked state come from the action
+// model, a click runs the action. The actions are registered with
+// AddAction (or are model actions with a handler); the order of the two
+// calls does not matter.
+func (r *Registry) RegisterToolbarAction(ids ...keymap.Action) {
+	r.Model().AddToolbar(actionStrings(ids)...)
+	r.version++
+}
+
+// UnregisterToolbarAction removes the buttons of ids from the header
+// toolbar (e.g. when a module stops).
+func (r *Registry) UnregisterToolbarAction(ids ...keymap.Action) {
+	r.Model().RemoveToolbar(actionStrings(ids)...)
+	r.version++
+}
+
+func actionStrings(ids []keymap.Action) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = string(id)
+	}
+	return out
 }
 
 // editorChords returns the editor keymap's chords of a (display only).

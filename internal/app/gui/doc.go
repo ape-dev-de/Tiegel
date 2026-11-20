@@ -25,13 +25,23 @@
 // # Tool windows
 //
 // Registry.AddToolWindow registers a panel with its default Side (Left,
-// Right, Bottom), stripe icon, order and an optional shortcut (Mac/PC; the
-// registry adds the toggle action under View → Tool Windows). The user's
-// placement (side, open panel per side, sizes) is a controller.ToolLayout,
-// persisted per project (setting ui.toolWindows). Each side shows one tool
-// window at a time; Cmd+Shift+F12 hides all (editor maximized) and
-// restores them, Shift+Escape hides the active one, Escape focuses the
-// editor. Features use View.ShowTool/HideTool/ToggleTool/MoveTool.
+// Right, Bottom) and slot (ToolWindow.Split), stripe icon, order and an
+// optional shortcut (Mac/PC; the registry adds the toggle action under
+// View → Tool Windows). The user's placement (side and group, open panel
+// per slot, sizes, maximized panel) is a controller.ToolLayout, persisted
+// per project (setting ui.toolWindows). Each side has a primary and a
+// split slot, so two tool windows can be shown per side; Cmd+Shift+F12
+// hides all (editor maximized) and restores them, Shift+Escape hides the
+// active one, Escape focuses the editor. Features use
+// View.ShowTool/HideTool/ToggleTool/MoveTool.
+//
+// # Header and footer
+//
+// The header is a toolbar.Bar (header.go): project switcher (through
+// ProjectSessions), branch popup (action "Branches…"), run configuration
+// with Run/Debug/Stop, Xdebug listen toggle, plugin quick actions
+// (Registry.RegisterToolbarAction) and search/settings. The footer is the
+// one status bar with the breadcrumb of the active editor (footer.go).
 //
 // # Editor groups (splits)
 //

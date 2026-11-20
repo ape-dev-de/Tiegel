@@ -16,7 +16,6 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
-	"github.com/ape-dev-de/tiegel/internal/ui/organisms/filetree"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/palette"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/statusbar"
 )
@@ -123,7 +122,7 @@ func installNav(v *View) *navDock {
 	d.hierarchy.Empty = "Type Hierarchy (Ctrl+H) on a class shows its supertypes and subtypes."
 	d.structure.Empty = "No structure for this file."
 	d.structure.OpenOnClick = true
-	r.AddToolWindow(ToolWindow{ID: ToolStructure, Title: "Structure", Glyph: atoms.GlyphList, Side: Left, Order: 5,
+	r.AddToolWindow(ToolWindow{ID: ToolStructure, Title: "Structure", Glyph: atoms.GlyphList, Side: Left, Split: true, Order: 5,
 		Mac: "Cmd+7", PC: "Alt+7", ActionID: ActStructureView, Layout: d.structure.layout,
 		OnOpen: func() { d.structFor = "" }})
 	for _, a := range d.actions() {
@@ -570,7 +569,7 @@ func (d *navDock) syncUsages() {
 	}
 	roots := make([]*resultNode, 0, len(u.Groups))
 	for _, g := range u.Groups {
-		gn := &resultNode{Name: path.Base(g.Path), Value: path.Dir(g.Path), Detail: plural(len(g.Items), "usage"), Glyph: filetree.Glyph(&filetree.Node{Name: path.Base(g.Path)}), Expanded: true}
+		gn := &resultNode{Name: path.Base(g.Path), Value: path.Dir(g.Path), Detail: plural(len(g.Items), "usage"), Glyph: fileGlyph(g.Path), Expanded: true}
 		for _, it := range g.Items {
 			loc := it.Location
 			gn.Children = append(gn.Children, &resultNode{Name: fmt.Sprintf("%d:%d", loc.Range.Start.Line, loc.Range.Start.Col), Value: strings.TrimSpace(it.LineText),

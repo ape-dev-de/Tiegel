@@ -61,7 +61,11 @@ func (v *View) syncTools() {
 	known := map[string]bool{}
 	for _, t := range v.Registry.AllToolWindows() {
 		known[t.ID] = true
-		l.Register(t.ID, t.Side.toolSide())
+		g := controller.GroupPrimary
+		if t.Split {
+			g = controller.GroupSplit
+		}
+		l.RegisterIn(t.ID, t.Side.toolSide(), g)
 	}
 	// Windows that went away (module disabled) close; stored placements
 	// of windows not registered yet stay untouched.
@@ -113,8 +117,23 @@ func (v *View) ToggleTool(id string) {
 // toggleTool is ToggleTool (kept for the tests of the first shell).
 func (v *View) toggleTool(id string) { v.ToggleTool(id) }
 
-// MoveTool docks tool window id at side.
+// MoveTool docks tool window id at side (primary slot).
 func (v *View) MoveTool(id string, side Side) { v.ctl.Tools.Move(id, side.toolSide()) }
+
+// benchGroup and toolGroup convert between controller and template groups.
+func benchGroup(g controller.ToolGroup) templates.StripeGroup {
+	if g == controller.GroupSplit {
+		return templates.GroupSplit
+	}
+	return templates.GroupPrimary
+}
+
+func toolGroup(g templates.StripeGroup) controller.ToolGroup {
+	if g == templates.GroupSplit {
+		return controller.GroupSplit
+	}
+	return controller.GroupPrimary
+}
 
 // hideActiveTool closes the tool window the user worked with last
 // (Shift+Escape); without one, the last opened panel closes.
@@ -124,17 +143,21 @@ func (v *View) hideActiveTool() {
 		return
 	}
 	for _, side := range controller.ToolSides {
-		if s := v.ctl.Tools.Sides[side]; s.Open && s.Active != "" {
-			v.HideTool(s.Active)
-			return
+		for _, g := range controller.ToolGroups {
+			if id := v.ctl.Tools.Shown(side, g); id != "" {
+				v.HideTool(id)
+				return
+			}
 		}
 	}
 }
 
-// toolSlots fills the stripes and the open panels.
+// toolSlots fills the stripes (icons, groups, shortcuts) and the open
+// panels of both slots per side.
 func (v *View) toolSlots(slots *templates.Slots) {
 	l := v.ctl.Tools
 	th := v.th
+	synced := v.toolsVersion == l.Version
 	for _, side := range controller.ToolSides {
 		bs := benchSide(side)
 		ids := l.ToolsAt(side, v.Registry.toolOrder)
@@ -144,71 +167,130 @@ func (v *View) toolSlots(slots *templates.Slots) {
 			if !ok {
 				continue
 			}
-			b := templates.StripeButton{ID: id, Title: t.Title, Glyph: t.Glyph, Active: l.Visible(id)}
+			b := templates.StripeButton{ID: id, Title: t.Title, Glyph: toolGlyph(t), Active: l.Visible(id),
+				Group: benchGroup(l.GroupOf(id)), Shortcut: v.Registry.ChordText(t.toggleAction(), v.goos)}
 			if t.Badge != nil {
 				b.Badge, b.BadgeKind = t.Badge()
 			}
 			btns = append(btns, b)
 		}
 		v.bench.Stripes[bs] = btns
-		if v.toolsVersion != l.Version {
+		if !synced {
 			v.bench.Sizes[bs] = l.Size(side)
+			v.bench.SplitSizes[bs] = l.SplitSize(side)
 		}
-		s := l.Sides[side]
-		if !s.Open || s.Active == "" {
-			continue
+		for _, g := range controller.ToolGroups {
+			id := l.Shown(side, g)
+			if id == "" {
+				continue
+			}
+			t, ok := v.Registry.ToolWindow(id)
+			if !ok || t.Layout == nil {
+				continue
+			}
+			p := templates.Panel{ID: t.ID, Title: t.Title, Content: func(gtx layout.Context) layout.Dimensions { return t.Layout(gtx, th) }}
+			if g == controller.GroupSplit {
+				slots.Splits[bs] = p
+			} else {
+				slots.Panels[bs] = p
+			}
 		}
-		t, ok := v.Registry.ToolWindow(s.Active)
-		if !ok || t.Layout == nil {
-			continue
-		}
-		slots.Panels[bs] = templates.Panel{ID: t.ID, Title: t.Title, Content: func(gtx layout.Context) layout.Dimensions { return t.Layout(gtx, th) }}
+	}
+	if !synced {
+		v.bench.Maximized = l.MaxPanel
 	}
 	v.toolsVersion = l.Version
 }
 
 // handleBench processes the workbench events.
 func (v *View) handleBench(gtx layout.Context) {
+	l := v.ctl.Tools
 	for _, e := range v.bench.Update(gtx) {
-		switch e := e.(type) {
-		case templates.ToolEvent:
-			v.ToggleTool(e.ID)
-		case templates.ToolMenuEvent:
-			v.openToolMenu(e.ID)
-		case templates.HideEvent:
-			v.HideTool(e.ID)
-		case templates.MoveEvent:
-			v.ctl.Tools.Move(e.ID, toolSide(e.Side))
-		case templates.ResizeEvent:
-			v.ctl.Tools.SetSize(toolSide(e.Side), e.Size)
-			v.toolsVersion = v.ctl.Tools.Version
-		case templates.PanelPressEvent:
-			v.activeTool = e.ID
-		case templates.DismissEvent:
-			v.closeOverlay()
-		}
+		v.handleBenchEvent(e)
+	}
+	// The template drops a maximized panel that is no longer shown.
+	if v.bench.Maximized != l.MaxPanel && v.toolsVersion == l.Version {
+		l.SetMaxPanel(v.bench.Maximized)
+		v.toolsVersion = l.Version
 	}
 }
 
-// openToolMenu shows the menu of a tool window: move to another side,
-// hide, plus entries registered for ContextToolWindow.
+// handleBenchEvent applies one workbench event.
+func (v *View) handleBenchEvent(ev templates.Event) {
+	l := v.ctl.Tools
+	switch e := ev.(type) {
+	case templates.ToolEvent:
+		v.ToggleTool(e.ID)
+	case templates.ToolMenuEvent:
+		v.openToolMenu(e.ID)
+	case templates.HideEvent:
+		v.HideTool(e.ID)
+	case templates.MoveEvent:
+		l.MoveTo(e.ID, toolSide(e.Side), toolGroup(e.Group))
+	case templates.ResizeEvent:
+		if e.Split {
+			l.SetSplitSize(toolSide(e.Side), e.Size)
+		} else {
+			l.SetSize(toolSide(e.Side), e.Size)
+		}
+		v.toolsVersion = l.Version
+	case templates.MaximizeEvent:
+		id := ""
+		if e.Maximized {
+			id = e.ID
+		}
+		l.SetMaxPanel(id)
+		v.toolsVersion = l.Version
+	case templates.PanelPressEvent:
+		v.activeTool = e.ID
+	case templates.DismissEvent:
+		v.closeOverlay()
+	}
+}
+
+// toolSlotNames are the "Move to" entries of the tool window menu.
+var toolSlotNames = []struct {
+	side  controller.ToolSide
+	group controller.ToolGroup
+	title string
+}{
+	{controller.SideLeft, controller.GroupPrimary, "Move to Left"},
+	{controller.SideLeft, controller.GroupSplit, "Move to Left Bottom"},
+	{controller.SideRight, controller.GroupPrimary, "Move to Right"},
+	{controller.SideRight, controller.GroupSplit, "Move to Right Bottom"},
+	{controller.SideBottom, controller.GroupPrimary, "Move to Bottom"},
+	{controller.SideBottom, controller.GroupSplit, "Move to Bottom Right"},
+}
+
+// openToolMenu shows the menu of a tool window: move to another slot,
+// maximize, hide, plus entries registered for ContextToolWindow.
 func (v *View) openToolMenu(id string) {
 	t, ok := v.Registry.ToolWindow(id)
 	if !ok {
 		return
 	}
-	cur := v.ctl.Tools.SideOf(id)
-	move := func(s controller.ToolSide, title string) MenuItem {
-		return MenuItem{Title: title, Checked: cur == s, Disabled: cur == s, Run: func() { v.ctl.Tools.Move(id, s) }}
+	l := v.ctl.Tools
+	side, group := l.SideOf(id), l.GroupOf(id)
+	var moves []MenuItem
+	for _, s := range toolSlotNames {
+		cur := s.side == side && s.group == group
+		moves = append(moves, MenuItem{Title: s.title, Checked: cur, Disabled: cur, Run: func() { l.MoveTo(id, s.side, s.group) }})
 	}
-	items := []MenuItem{
-		move(controller.SideLeft, "Move to Left"),
-		move(controller.SideRight, "Move to Right"),
-		move(controller.SideBottom, "Move to Bottom"),
-		{Separator: true},
-	}
+	items := append(moves, MenuItem{Separator: true})
 	if v.ToolShown(id) {
-		items = append(items, MenuItem{Title: "Hide", Shortcut: "Shift+Escape", Run: func() { v.HideTool(id) }})
+		title := "Maximize"
+		if l.MaxPanel == id {
+			title = "Restore"
+		}
+		items = append(items,
+			MenuItem{Title: title, Run: func() {
+				if l.MaxPanel == id {
+					l.SetMaxPanel("")
+				} else {
+					l.SetMaxPanel(id)
+				}
+			}},
+			MenuItem{Title: "Hide", Shortcut: "Shift+Escape", Run: func() { v.HideTool(id) }})
 	} else {
 		items = append(items, MenuItem{Title: "Show", Run: func() { v.ShowTool(id) }})
 	}

@@ -66,6 +66,28 @@ func TestTreeEvents(t *testing.T) {
 	uitest.Smoke(t, "empty", image.Pt(200, 100), (&Tree{}).Layout)
 }
 
+// The icon provider is asked for every row, with the expanded state of
+// directories; nil falls back to the built-in glyphs.
+func TestIconProvider(t *testing.T) {
+	tr := &Tree{Root: sample()}
+	tr.SetExpanded("", true)
+	asked := map[string]bool{}
+	tr.Icon = func(n *Node, open bool) *atoms.Glyph {
+		asked[n.Path] = open
+		if n.Path == "index.php" {
+			return atoms.GlyphRun
+		}
+		return nil
+	}
+	uitest.Smoke(t, "icons", image.Pt(300, 400), tr.Layout)
+	if open, ok := asked[""]; !ok || !open {
+		t.Fatalf("root not asked as open: %v", asked)
+	}
+	if _, ok := asked["index.php"]; !ok || len(asked) != 4 {
+		t.Fatalf("asked %v", asked)
+	}
+}
+
 func TestGlyphAndStatus(t *testing.T) {
 	cases := map[string]*atoms.Glyph{"a.php": atoms.GlyphFileCode, "README.md": atoms.GlyphFileText, ".env.local": atoms.GlyphFileText, "x.bin": atoms.GlyphFile}
 	for name, g := range cases {
