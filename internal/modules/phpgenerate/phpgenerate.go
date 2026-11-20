@@ -144,7 +144,7 @@ func (m *Module) lspActions(ctx context.Context, p ListParams) ([]GenerateAction
 		Kind     string `json:"kind"`
 		Disabled string `json:"disabled"`
 	}
-	err := api.NewInProcess(app).Call(ctx, "lsp.codeActions", map[string]any{"path": p.Path, "start": p.Pos}, &acts)
+	err := app.CallLocal(ctx, "lsp.codeActions", map[string]any{"path": p.Path, "start": p.Pos}, &acts)
 	if err != nil {
 		return []GenerateAction{}, err.Error()
 	}

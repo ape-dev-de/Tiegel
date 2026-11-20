@@ -100,7 +100,7 @@ func (a *App) changeTree(ctx context.Context, groupBy string) (gitcli.ChangeTree
 		return gitcli.ChangeTree{}, vcsStatus{}, Errorf(CodeInvalidParams, "%v", err)
 	}
 	var st vcsStatus
-	if err := a.callValue(ctx, "git.status", json.RawMessage(`{}`), &st); err != nil {
+	if err := a.callLocal(ctx, "git.status", json.RawMessage(`{}`), &st); err != nil {
 		return gitcli.ChangeTree{}, st, err
 	}
 	return gitcli.BuildChangeTree(st.fileStatuses(), g, st.Branch), st, nil
@@ -163,7 +163,7 @@ func (a *App) vcsDiffTab(ctx context.Context, p VcsDiffTabParams) (VcsDiffTabRes
 	if p.IgnoreWhitespace {
 		params["ignoreWhitespace"] = true
 	}
-	if err := a.callValue(ctx, "git.fileDiff", params, &res.Diff); err != nil {
+	if err := a.callLocal(ctx, "git.fileDiff", params, &res.Diff); err != nil {
 		return VcsDiffTabResult{}, err
 	}
 	return res, nil

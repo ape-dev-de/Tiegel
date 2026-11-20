@@ -647,3 +647,42 @@ func TestRealClock(t *testing.T) {
 		t.Fatal(NameOf(root("x")))
 	}
 }
+
+// Review wave 9 B7: client state attached after an automatic hibernation
+// never hibernates a project resumed meanwhile.
+func TestAttachClientState(t *testing.T) {
+	e := newEnv(t, 0)
+	ctx := context.Background()
+	for _, n := range []string{"a", "b"} {
+		if _, err := e.m.Open(ctx, root(n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.m.Hibernate(ctx, "a", HibernateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	cs := json.RawMessage(`{"tabs":["x.php"]}`)
+	if ok, err := e.m.AttachClientState("a", cs); !ok || err != nil {
+		t.Fatalf("attach to hibernated: %v %v", ok, err)
+	}
+	i, err := e.m.Resume(ctx, "a")
+	if err != nil || string(i.ClientState) != string(cs) {
+		t.Fatalf("%+v %v", i, err)
+	}
+	// Resumed first: the late state is dropped, the project keeps running.
+	if ok, err := e.m.AttachClientState("a", cs); ok || err != nil {
+		t.Fatalf("attach to running: %v %v", ok, err)
+	}
+	if i, _ := e.m.Get("a"); i.State != StateBackground {
+		t.Fatalf("state %s", i.State)
+	}
+	if _, err := e.m.AttachClientState("nope", cs); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	if err := e.m.CloseAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.m.AttachClientState("a", cs); err == nil {
+		t.Fatal("attach after close")
+	}
+}

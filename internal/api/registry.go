@@ -181,7 +181,7 @@ func (a *App) Methods() []MethodInfo { return a.methods.list() }
 // not end the process: it is logged with its stack and reported as an
 // error with CodeInternal.
 func (a *App) Call(ctx context.Context, method string, params json.RawMessage) (res any, err error) {
-	if t := a.forwardTarget(method); t != nil {
+	if t := a.forwardTarget(ctx, method); t != nil {
 		return t.Call(ctx, method, params)
 	}
 	m, err := a.lookup(method)
@@ -189,7 +189,7 @@ func (a *App) Call(ctx context.Context, method string, params json.RawMessage) (
 		return nil, err
 	}
 	defer a.recoverCall(method, &err)
-	return m.Handler(ctx, params)
+	return m.Handler(a.withHandling(ctx), params)
 }
 
 // recoverCall turns a panic of the handler of method into an internal

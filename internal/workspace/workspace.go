@@ -552,6 +552,30 @@ func (m *Manager) Hibernate(ctx context.Context, name string, opts HibernateOpti
 	return m.hibernateOp(ctx, s, opts, "")
 }
 
+// AttachClientState stores client state (handed back by the resume) for
+// the session matching name only while it is hibernated, e.g. after an
+// automatic hibernation the client did not ask for. It reports whether
+// the state was stored; a session resumed meanwhile is left alone (unlike
+// Hibernate, which would hibernate it again).
+func (m *Manager) AttachClientState(name string, state json.RawMessage) (bool, error) {
+	m.op.Lock()
+	defer m.op.Unlock()
+	if err := m.checkOpen(); err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, err := m.findLocked(name)
+	if err != nil {
+		return false, err
+	}
+	if s.state != StateHibernated {
+		return false, nil
+	}
+	s.client = state
+	return true, nil
+}
+
 func (m *Manager) hibernateOp(ctx context.Context, s *session, opts HibernateOptions, reason string) (Info, error) {
 	m.mu.Lock()
 	state := s.state

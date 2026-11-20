@@ -172,7 +172,7 @@ func (m *Module) run(ctx context.Context, p RunParams) (run.Info, error) {
 	}
 	spec.Type = TypeScript
 	var info run.Info
-	if err := api.NewInProcess(app).Call(ctx, "run.start", api.RunStartParams{Spec: &spec}, &info); err != nil {
+	if err := app.CallLocal(ctx, "run.start", api.RunStartParams{Spec: &spec}, &info); err != nil {
 		return run.Info{}, err
 	}
 	return info, nil

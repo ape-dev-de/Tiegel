@@ -86,6 +86,18 @@ func TestVcsDiffTab(t *testing.T) {
 	if r.Path != "notes.md" || r.Base != gitcli.VersionEmpty || r.Next != "src/a.php" {
 		t.Fatalf("wrap %+v", r)
 	}
+	// Review wave 9 B10: an untracked file has no index version.
+	call(t, a, "vcs.diffTab", VcsDiffTabParams{Path: "notes.md", Mode: "staged"}, &r)
+	if r.Base != gitcli.VersionEmpty || r.Target != gitcli.VersionEmpty {
+		t.Fatalf("staged untracked %+v", r)
+	}
+	if last := diffs[len(diffs)-1]; last["target"] != gitcli.VersionEmpty {
+		t.Fatalf("fileDiff params %v", last)
+	}
+	call(t, a, "vcs.diffTab", VcsDiffTabParams{Path: "notes.md", Mode: "unstaged"}, &r)
+	if r.Base != gitcli.VersionEmpty || r.Target != gitcli.VersionWorking {
+		t.Fatalf("unstaged untracked %+v", r)
+	}
 	for _, p := range []VcsDiffTabParams{{}, {Path: "x", Mode: "bogus"}, {Path: "x", GroupBy: "bogus"}} {
 		if err := tryCall(a, "vcs.diffTab", p, nil); ErrorCode(err) != CodeInvalidParams {
 			t.Errorf("%+v: %v", p, err)

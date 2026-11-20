@@ -361,7 +361,8 @@ type DiffVersions struct {
 
 // ChangeDiff returns the versions a diff of st compares in mode. New
 // files (untracked, or added in the index for the HEAD side) are compared
-// with the empty file; the source of a rename is the base path.
+// with the empty file (the staged diff of an untracked file is empty on
+// both sides); the source of a rename is the base path.
 func ChangeDiff(st FileStatus, mode DiffMode) DiffVersions {
 	v := DiffVersions{Base: VersionHead, Target: VersionWorking}
 	switch mode {
@@ -372,7 +373,11 @@ func ChangeDiff(st FileStatus, mode DiffMode) DiffVersions {
 	}
 	switch {
 	case st.Kind == KindUntracked:
+		// Not in HEAD and not in the index: nothing is staged.
 		v.Base = VersionEmpty
+		if mode == DiffStaged {
+			v.Target = VersionEmpty
+		}
 	case v.Base == VersionHead && st.Index == 'A':
 		v.Base = VersionEmpty
 	case v.Base == VersionHead && st.OrigPath != "" && st.OrigPath != st.Path:

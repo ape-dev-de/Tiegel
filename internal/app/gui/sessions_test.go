@@ -383,3 +383,85 @@ func TestProjectPopupScreenshot(t *testing.T) {
 	env := &env{t: t, ctl: v.ctl, v: v, h: e.h}
 	env.shot("projects-popup")
 }
+
+// Review wave 9 U4: switching projects gives the keyboard to the editor
+// of the shown project.
+func TestSessionsSwitchFocusesEditor(t *testing.T) {
+	e := newWsEnv(t)
+	alpha := e.view()
+	alpha.ctl.OpenFile("a.php", nil)
+	e.waitFor("alpha editor", func() bool { return alpha.activeSession() != nil })
+	e.openBeta()
+	beta := e.view()
+	beta.ctl.OpenFile("b.php", nil)
+	e.waitFor("beta editor", func() bool { return beta.activeSession() != nil })
+	alpha.focusEditor = false
+	beta.hdr.handle(toolbar.SwitchProject{ID: e.rootA})
+	e.waitFor("alpha shown", func() bool { return e.view() == alpha })
+	e.frame()
+	e.frame()
+	if s := alpha.activeSession(); s == nil || !s.ed.Focused() {
+		t.Fatal("alpha's editor has no keyboard focus after the switch")
+	}
+	beta.focusEditor = false
+	alpha.RunAction(ActNextProject)
+	e.waitFor("beta shown", func() bool { return e.view() == beta })
+	e.frame()
+	e.frame()
+	if s := beta.activeSession(); s == nil || !s.ed.Focused() {
+		t.Fatal("beta's editor has no keyboard focus after the switch")
+	}
+}
+
+// Review wave 9 B7/U7: client state handed in after an auto-hibernation
+// never hibernates the project again when a resume came first.
+func TestSessionsLateClientStateKeepsResumedProject(t *testing.T) {
+	e := newWsEnv(t)
+	e.openBeta()
+	beta := e.view()
+	beta.ctl.OpenFile("b.php", nil)
+	e.waitFor("beta tab", func() bool { return len(beta.ctl.Tabs) == 1 })
+	beta.hdr.handle(toolbar.SwitchProject{ID: e.rootA})
+	e.waitFor("alpha shown", func() bool { return e.cur().Project.Root == e.rootA })
+	sl := e.s.slotOf(e.rootB)
+	if sl == nil {
+		t.Fatal("no slot for beta")
+	}
+	// The workspace hibernates beta, the GUI sees it hibernated, but a
+	// resume wins before the client state is attached.
+	if _, err := e.ws.Hibernate(t.Context(), api.ProjectsHibernateParams{Name: e.rootB}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.list = e.ws.List()
+	if _, err := e.ws.Resume(t.Context(), e.rootB); err != nil {
+		t.Fatal(err)
+	}
+	e.s.release(sl)
+	e.idle()
+	for _, p := range e.ws.List().Projects {
+		if p.Root == e.rootB && p.State != workspace.StateBackground {
+			t.Fatalf("beta %s after the late client state", p.State)
+		}
+	}
+	e.waitFor("beta slot again", func() bool { return e.s.slotOf(e.rootB) != nil && e.state(e.rootB) == workspace.StateBackground })
+}
+
+// Review wave 9 U6: a native menu command reaches the project view shown
+// when it runs, not the view of the window's last frame.
+func TestRouteMenuToShownProject(t *testing.T) {
+	e := newWsEnv(t)
+	alpha := e.view()
+	m := &windows{wins: map[*window]bool{}}
+	win := &window{m: m, sess: e.s, view: alpha}
+	m.wins[win] = true
+	m.focused = win
+	e.openBeta()
+	beta := e.view()
+	m.route("app.about")
+	e.frame()
+	if beta.popup == nil || alpha.popup != nil {
+		t.Fatalf("menu command went to the wrong view (alpha %v, beta %v)", alpha.popup != nil, beta.popup != nil)
+	}
+	beta.ClosePopup()
+	(&windows{}).route("app.about") // no focused window: nothing happens
+}

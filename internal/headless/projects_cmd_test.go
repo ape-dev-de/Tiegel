@@ -40,6 +40,7 @@ func TestProjectsCommand(t *testing.T) {
 		{"projects", "hibernate", a, "--force"},
 		{"projects", "resume", a},
 		{"projects", "busy", a},
+		{"projects", "client-state", a, `{"tabs":[]}`},
 		{"projects", "close", a, "--force"},
 	} {
 		if code, out, errs := run(t, "", append(args, "--project", a)...); code != ExitOK || out == "" {
@@ -51,10 +52,16 @@ func TestProjectsCommand(t *testing.T) {
 		{"projects", "list", "x"},
 		{"projects", "frobnicate", "x"},
 		{"projects", "open", b, "--force"},
+		{"projects", "busy", a, "x"},
+		{"projects", "client-state", a},
+		{"projects", "client-state", a, "{nope"},
 	} {
 		if code, _, _ := run(t, "", args...); code != ExitUsage {
 			t.Fatalf("%v: %d", args, code)
 		}
+	}
+	if code, out, _ := run(t, "", "projects", "client-state", a, `{}`, "--project", a); code != ExitOK || !strings.Contains(out, "dropped") {
+		t.Fatalf("client-state of the active project: %d %q", code, out)
 	}
 	if code, _, errs := run(t, "", "projects", "switch", "nope"); code != ExitError || !strings.Contains(errs, "not open") {
 		t.Fatalf("%d %q", code, errs)
