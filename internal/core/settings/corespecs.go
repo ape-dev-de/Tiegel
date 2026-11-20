@@ -27,6 +27,7 @@ const (
 	KeyWatchExclude      = "watch.exclude"
 	KeyAutosaveIdle      = "autosave.idleSeconds"
 	KeyOpenProjectIn     = "projects.openIn"
+	KeyAutoHibernate     = "projects.autoHibernateMinutes"
 	KeyUpdateCheck       = "update.checkOnStart"
 )
 
@@ -112,6 +113,8 @@ var kernelSpecs = []Spec{
 
 	{Key: KeyOpenProjectIn, Kind: KindEnum, Default: OpenProjectAsk, Options: []string{OpenProjectAsk, OpenProjectNew, OpenProjectThis}, Scope: ScopeGlobal,
 		Label: "Open project in", Help: "Where to open another project while one is open: ask, a new window or this window.", Group: PageProjects},
+	{Key: KeyAutoHibernate, Kind: KindInt, Default: 0, Min: IntPtr(0), Max: IntPtr(7 * 24 * 60), Scope: ScopeGlobal,
+		Label: "Hibernate background projects after minutes", Help: "Stop language server, watcher and indexer of a project in the background after this many minutes (0 = never). Running processes and debug sessions prevent it.", Group: PageProjects},
 
 	{Key: KeyUpdateCheck, Kind: KindBool, Default: false, Scope: ScopeGlobal,
 		Label: "Check for updates on start", Help: "Off by default. Contacts the release server; Tiegel never downloads anything by itself.", Group: PageUpdates},

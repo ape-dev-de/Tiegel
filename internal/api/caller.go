@@ -101,6 +101,15 @@ func convert(v, result any) error {
 
 // callValue implements Caller.Call for a context that may carry a session.
 func (a *App) callValue(ctx context.Context, method string, params, result any) (err error) {
+	if t := a.forwardTarget(method); t != nil {
+		return t.callValue(ctx, method, params, result)
+	}
+	return a.callLocal(ctx, method, params, result)
+}
+
+// callLocal is callValue without workspace forwarding (internal calls of
+// the kernel on this very App).
+func (a *App) callLocal(ctx context.Context, method string, params, result any) (err error) {
 	m, err := a.lookup(method)
 	if err != nil {
 		return err
@@ -140,6 +149,9 @@ func (a *App) callValue(ctx context.Context, method string, params, result any) 
 type InProcess struct {
 	app  *App
 	sess *Session
+	// local bypasses the workspace: calls and events stay on app even if
+	// it hosts a workspace whose active project is another App.
+	local bool
 
 	mu     sync.Mutex
 	cancel map[*inprocSub]func()
@@ -158,11 +170,24 @@ func NewInProcess(a *App) *InProcess {
 	return &InProcess{app: a, sess: a.NewSession(nil), cancel: make(map[*inprocSub]func())}
 }
 
+// NewLocalInProcess is NewInProcess for a client of exactly this App, even
+// when a hosts a workspace (see EnableWorkspace): nothing is forwarded to
+// the active project and only a's own events arrive. The GUI uses one per
+// open project.
+func NewLocalInProcess(a *App) *InProcess {
+	c := NewInProcess(a)
+	c.local = true
+	return c
+}
+
 // App returns the App the caller dispatches to.
 func (c *InProcess) App() *App { return c.app }
 
 // Call implements Caller.
 func (c *InProcess) Call(ctx context.Context, method string, params, result any) error {
+	if c.local {
+		return c.app.callLocal(c.sess.With(ctx), method, params, result)
+	}
 	return c.app.callValue(c.sess.With(ctx), method, params, result)
 }
 
@@ -186,7 +211,11 @@ func (c *InProcess) Subscribe(_ context.Context, topics []string, fn func(Event)
 	if c.closed {
 		return nil, Errorf(CodeFailed, "caller closed")
 	}
-	un := c.app.bus.Subscribe("*", func(e bus.Event) {
+	b := c.app.eventBus()
+	if c.local {
+		b = c.app.bus
+	}
+	un := b.Subscribe("*", func(e bus.Event) {
 		for _, p := range s.patterns {
 			if bus.Match(p, e.Topic) {
 				fn(Event{Topic: e.Topic, Payload: encodePayload(e.Payload)})

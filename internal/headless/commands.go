@@ -535,6 +535,11 @@ func runServe(c *cli) error {
 	default:
 		return usagef("--framing must be ndjson or lsp")
 	}
+	// Several projects per connection (projects.*): enabled before any
+	// client subscribes, so events of the active project reach it.
+	if _, err := c.app.EnableWorkspace(api.WorkspaceOptions{}); err != nil {
+		return err
+	}
 	if c.p.has("listen") {
 		return runListen(c, opts)
 	}

@@ -181,6 +181,9 @@ func (a *App) Methods() []MethodInfo { return a.methods.list() }
 // not end the process: it is logged with its stack and reported as an
 // error with CodeInternal.
 func (a *App) Call(ctx context.Context, method string, params json.RawMessage) (res any, err error) {
+	if t := a.forwardTarget(method); t != nil {
+		return t.Call(ctx, method, params)
+	}
 	m, err := a.lookup(method)
 	if err != nil {
 		return nil, err
