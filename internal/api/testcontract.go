@@ -64,8 +64,11 @@ type TestRunParams struct {
 type TestNodeParams struct {
 	// RunID is the test run ("" = the latest).
 	RunID string `json:"runId,omitempty"`
-	// ID is the node ID of the result tree.
-	ID string `json:"id"`
+	// ID is the node ID of the result tree; "" is the run itself: its
+	// console output (everything the runner printed except the service
+	// messages) and aggregated status. A suite's Output joins the
+	// failures and output of its tests.
+	ID string `json:"id,omitempty"`
 }
 
 // TestRunIDParams address a test run ("" = the latest).

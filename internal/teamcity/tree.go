@@ -142,6 +142,10 @@ type Tree struct {
 	// of their kept bytes.
 	withOutput []*Node
 	outTotal   int
+	// console is the run's text without service messages (header,
+	// test output, summary, errors outside tests), the tail within
+	// MaxRunOutput.
+	console outBuf
 }
 
 // NewTree returns an empty tree.
@@ -162,6 +166,10 @@ func (t *Tree) mapPath(p string) string {
 func (t *Tree) Feed(line string) bool {
 	msgs, before := Find(line)
 	changed := false
+	if before != "" || len(msgs) == 0 {
+		t.appendConsole(before)
+		changed = true
+	}
 	if before != "" && t.lastOpen != nil {
 		n := t.lastOpen
 		if (len(n.out.b) > 0 || n.out.dropped > 0) && len(msgs) == 0 {
@@ -300,6 +308,28 @@ func (t *Tree) dropFront(n *Node, k int) {
 	n.out.b = b[k:]
 	n.out.dropped += int64(k)
 	t.outTotal -= k
+}
+
+// appendConsole adds one line of console text (keeping the tail).
+func (t *Tree) appendConsole(line string) {
+	c := &t.console
+	c.b = append(append(c.b, line...), '\n')
+	if over := len(c.b) - t.maxRunOutput(); over > 0 {
+		k := over
+		for k < len(c.b) && !utf8.RuneStart(c.b[k]) {
+			k++
+		}
+		c.b = c.b[k:]
+		c.dropped += int64(k)
+	}
+}
+
+// Console returns the run's output without service messages (what the
+// runner printed around and inside the tests), with a truncation note
+// when its beginning was dropped.
+func (t *Tree) Console() string {
+	n := Node{out: t.console}
+	return strings.TrimRight(n.output(), "\n")
 }
 
 // resetOutput forgets the output of n (a test started again).
@@ -469,8 +499,42 @@ func (t *Tree) SnapshotNode(id string) (Node, bool) {
 		return Node{}, false
 	}
 	c := copyNode(n, false)
+	if !n.Kind.IsTest() {
+		// A suite shows what its tests reported and printed.
+		c.Output = suiteOutput(c, t.maxRunOutput())
+	}
 	c.Children = nil
 	return *c, true
+}
+
+// suiteOutput joins the failures, skip reasons and output of the tests
+// below suite c (a full copy), at most limit bytes (the beginning).
+func suiteOutput(c *Node, limit int) string {
+	var b strings.Builder
+	var walk func(n *Node)
+	walk = func(n *Node) {
+		if b.Len() > limit {
+			return
+		}
+		if n.Kind.IsTest() && (n.Message != "" || n.Details != "" || n.Output != "") {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString("── " + n.ID + " (" + string(n.Status) + ")\n")
+			for _, s := range []string{n.Message, n.Details, n.Output} {
+				if s = strings.TrimRight(s, "\n"); s != "" {
+					b.WriteString(s + "\n")
+				}
+			}
+		}
+		for _, ch := range n.Children {
+			walk(ch)
+		}
+	}
+	for _, ch := range c.Children {
+		walk(ch)
+	}
+	return shorten(strings.TrimRight(b.String(), "\n"), limit)
 }
 
 func copyNode(n *Node, light bool) *Node {
@@ -512,6 +576,10 @@ func shorten(s string, limit int) string {
 	}
 	return s[:k] + "…"
 }
+
+// Aggregate derives the status of a suite from its children (see
+// aggregate).
+func Aggregate(ch []*Node) Status { return aggregate(ch) }
 
 // aggregate derives a suite status: running before failed/terminated
 // before passed; ignored only when all children are ignored.

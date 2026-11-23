@@ -48,6 +48,11 @@ type testDock struct {
 	project string
 	split   molecules.Split
 	detail  molecules.ScrollList
+	// root is the tree's top node: the run (its console output);
+	// rootAuto is set while it is selected because nothing else was.
+	root     *resultNode
+	rootAuto bool
+	progress atoms.ProgressBar
 
 	runAllBtn, rerunBtn, stopBtn, installBtn, diffBtn, failBtn atoms.Button
 }
@@ -119,6 +124,7 @@ func (d *testDock) frame(v *View, _ layout.Context) {
 		t.ProjectChanged()
 		d.nodes, d.data = map[string]*resultNode{}, map[*resultNode]*teamcity.Node{}
 		d.tree.set(nil)
+		d.root, d.rootAuto = nil, false
 		if root != "" {
 			t.LoadStatus()
 		}
@@ -317,6 +323,21 @@ func (d *testDock) confirmCreate(file string, plan api.TestCreatePlan) {
 
 // ---- tool window -------------------------------------------------------------
 
+// statusTone colors a result: passed green, skipped orange, failed red.
+func statusTone(st teamcity.Status) nodeTone {
+	switch st {
+	case teamcity.StatusPassed:
+		return toneSuccess
+	case teamcity.StatusFailed, teamcity.StatusTerminated:
+		return toneDanger
+	case teamcity.StatusIgnored:
+		return toneWarning
+	case teamcity.StatusRunning:
+		return toneInfo
+	}
+	return toneNone
+}
+
 func statusGlyph(st teamcity.Status) *atoms.Glyph {
 	switch st {
 	case teamcity.StatusPassed:
@@ -369,7 +390,7 @@ func (d *testDock) syncTree() {
 				rn = &resultNode{Expanded: n.Kind != teamcity.KindMethod || n.Status == teamcity.StatusFailed}
 				d.nodes[n.ID] = rn
 			}
-			rn.Name, rn.Glyph = nodeName(n), statusGlyph(n.Status)
+			rn.Name, rn.Glyph, rn.Tone = nodeName(n), statusGlyph(n.Status), statusTone(n.Status)
 			rn.Detail = fmt.Sprintf("%d ms", n.DurationMs)
 			if n.Status == teamcity.StatusRunning {
 				rn.Detail = "running"
@@ -386,17 +407,51 @@ func (d *testDock) syncTree() {
 	for i := range t.Run.Tree {
 		roots[i] = &t.Run.Tree[i]
 	}
-	d.tree.Roots, d.tree.dirty = build(roots), true
+	// The run is the top node; selecting it shows the console output.
+	runNode := &teamcity.Node{Name: t.Run.Name, Kind: teamcity.KindSuite, Children: roots}
+	runNode.Status = teamcity.Aggregate(roots)
+	for _, r := range roots {
+		runNode.DurationMs += r.DurationMs
+	}
+	if t.Run.State == run.StateRunning {
+		runNode.Status = teamcity.StatusRunning
+	}
+	if d.root == nil {
+		d.root = &resultNode{Expanded: true}
+	}
+	rr := d.root
+	rr.Name, rr.Glyph, rr.Tone = t.Run.Name, statusGlyph(runNode.Status), statusTone(runNode.Status)
+	rr.Detail = fmt.Sprintf("%d ms", t.Run.DurationMs)
+	if t.Run.State == run.StateRunning {
+		rr.Detail = "running"
+	}
+	rr.Children, rr.Open = build(roots), nil
+	data[rr] = runNode
+	d.tree.Roots, d.tree.dirty = []*resultNode{rr}, true
 	if d.tree.rows == nil {
 		d.tree.rows = map[*resultNode]*molecules.TreeRow{}
 	}
 	d.data = data
-	// Select the first failure of a finished run.
-	if d.tree.sel == nil && t.Run.State != run.StateRunning {
+	if d.tree.sel != nil && data[d.tree.sel] == nil {
+		d.tree.sel = nil // a node of an earlier run
+	}
+	if d.tree.sel != rr {
+		d.rootAuto = false
+	}
+	// While nothing is selected the console streams; a finished run
+	// selects its first failure.
+	if d.tree.sel == nil {
+		d.tree.sel, d.rootAuto = rr, true
+	}
+	if d.rootAuto && t.Run.State != run.StateRunning {
+		var first *resultNode
 		for rn, n := range data {
-			if n.Kind.IsTest() && n.Status == teamcity.StatusFailed && (d.tree.sel == nil || n.ID < d.data[d.tree.sel].ID) {
-				d.tree.sel = rn
+			if n.Kind.IsTest() && n.Status == teamcity.StatusFailed && (first == nil || n.ID < d.data[first].ID) {
+				first = rn
 			}
+		}
+		if first != nil {
+			d.tree.sel, d.rootAuto = first, false
 		}
 	}
 }
@@ -439,6 +494,22 @@ func (d *testDock) showDiff(n *teamcity.Node) {
 	})
 }
 
+// runProgress is the progress bar of a test run: finished tests of the
+// announced count (indeterminate before the count is known), red with
+// failures, green when everything passed.
+func runProgress(r *api.TestRun) atoms.ProgressBar {
+	c := r.Counts
+	p := atoms.ProgressBar{Width: 140, Height: 6, Value: -1, Danger: c.Failed+c.Terminated > 0}
+	done := c.Passed + c.Failed + c.Ignored + c.Terminated
+	switch {
+	case r.State != run.StateRunning:
+		p.Value, p.Success = 1, !p.Danger
+	case c.Expected > 0:
+		p.Value = float32(done) / float32(c.Expected)
+	}
+	return p
+}
+
 func (d *testDock) summary() string {
 	t := d.tests()
 	r := t.Run
@@ -451,7 +522,7 @@ func (d *testDock) summary() string {
 		s += fmt.Sprintf(", %d failed", c.Failed)
 	}
 	if c.Ignored > 0 {
-		s += fmt.Sprintf(", %d ignored", c.Ignored)
+		s += fmt.Sprintf(", %d skipped", c.Ignored)
 	}
 	if c.Terminated > 0 {
 		s += fmt.Sprintf(", %d terminated", c.Terminated)
@@ -501,6 +572,10 @@ func (d *testDock) layout(gtx layout.Context, th *tokens.Theme) layout.Dimension
 		title = t.Run.Name
 	}
 	var btns []func(gtx layout.Context, th *tokens.Theme) layout.Dimensions
+	if t.Run != nil {
+		d.progress = runProgress(t.Run)
+		btns = append(btns, func(gtx layout.Context, th *tokens.Theme) layout.Dimensions { return d.progress.Layout(gtx, th) })
+	}
 	if t.Run != nil && t.Run.State == run.StateRunning {
 		btns = append(btns, func(gtx layout.Context, th *tokens.Theme) layout.Dimensions { return d.stopBtn.Layout(gtx, th) })
 	}
@@ -547,10 +622,17 @@ func detailLines(n *teamcity.Node, rel func(string) string) []string {
 		return []string{"Select a test to see its result."}
 	}
 	head := string(n.Status)
+	if n.Status == teamcity.StatusIgnored {
+		head = "skipped"
+	}
 	if n.Kind.IsTest() || n.DurationMs > 0 {
 		head += fmt.Sprintf(" · %d ms", n.DurationMs)
 	}
-	lines := []string{n.ID, head}
+	title := n.ID
+	if title == "" {
+		title = n.Name
+	}
+	lines := []string{title, head}
 	if n.Message != "" {
 		lines = append(lines, "")
 		lines = append(lines, strings.Split(n.Message, "\n")...)
@@ -568,9 +650,15 @@ func detailLines(n *teamcity.Node, rel func(string) string) []string {
 		lines = append(lines, "")
 		lines = append(lines, strings.Split(n.Details, "\n")...)
 	}
-	if n.Output != "" {
+	switch {
+	case n.Output != "" && n.Kind.IsTest():
 		lines = append(lines, "", "Output:")
 		lines = append(lines, strings.Split(n.Output, "\n")...)
+	case n.Output != "":
+		lines = append(lines, "")
+		lines = append(lines, strings.Split(n.Output, "\n")...)
+	case !n.Kind.IsTest() && n.Status != teamcity.StatusRunning:
+		lines = append(lines, "", "No output.")
 	}
 	return lines
 }

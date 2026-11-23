@@ -28,8 +28,9 @@ type ProgressBar struct {
 	// Width is the bar width (0: the minimum width of the constraints,
 	// or 80dp when that is 0). Height defaults to 4dp.
 	Width, Height unit.Dp
-	// Danger draws the fill in the danger color (failed task).
-	Danger bool
+	// Danger draws the fill in the danger color (failed task), Success
+	// in the success color (e.g. passing tests); Danger wins.
+	Danger, Success bool
 }
 
 // Indeterminate reports whether the bar sweeps instead of filling.
@@ -54,8 +55,11 @@ func (p ProgressBar) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensi
 	rad := h / 2
 	draw.RRect(gtx.Ops, image.Rectangle{Max: size}, rad, th.Color.Border)
 	fill := th.Color.Accent
-	if p.Danger {
+	switch {
+	case p.Danger:
 		fill = th.Color.Danger
+	case p.Success:
+		fill = th.Color.Success
 	}
 	if p.Value >= 0 {
 		v := min(p.Value, 1)

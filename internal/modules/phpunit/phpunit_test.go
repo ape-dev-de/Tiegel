@@ -767,7 +767,11 @@ func TestLargeOutputBounded(t *testing.T) {
 		t.Fatalf("node %+v", n)
 	}
 	modtest.WantCode(t, a, "test.node", api.TestNodeParams{ID: "nope"}, api.CodeNotFound)
-	modtest.WantCode(t, a, "test.node", api.TestNodeParams{}, api.CodeInvalidParams)
+	// The run itself: the console output with the runner's summary.
+	modtest.Call(t, a, "test.node", api.TestNodeParams{}, &n)
+	if n.Status != teamcity.StatusFailed || n.Output == "" || strings.Contains(n.Output, "##teamcity") {
+		t.Fatalf("console node %+v", n)
+	}
 	modtest.WantCode(t, a, "test.node", api.TestNodeParams{RunID: "x", ID: "y"}, api.CodeNotFound)
 }
 

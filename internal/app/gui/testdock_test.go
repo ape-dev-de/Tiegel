@@ -40,6 +40,7 @@ final class CalcTest extends TestCase
 // php): it reports the tests the --filter selects, testFail failing with
 // a comparison at line 15.
 const guiFakePHPUnit = `<?php
+echo "Fake PHPUnit 11 by tests\n\n";
 $filter = null;
 foreach ($argv as $i => $a) { if ($a === '--filter') { $filter = $argv[$i + 1]; } }
 $file = getcwd() . '/tests/CalcTest.php';
@@ -54,6 +55,7 @@ foreach (['testAdd', 'testFail'] as $t) {
     echo "##teamcity[testFinished name='$t' duration='2']\n";
 }
 echo "##teamcity[testSuiteFinished name='Tests\\CalcTest']\n";
+echo "\nFAILURES!\n";
 `
 
 func testEnvFiles() map[string]string {

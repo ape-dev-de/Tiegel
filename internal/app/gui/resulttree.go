@@ -2,6 +2,7 @@ package gui
 
 import (
 	"image"
+	"image/color"
 
 	"gioui.org/layout"
 
@@ -16,10 +17,38 @@ type resultNode struct {
 	// Name is the main text, Value a code preview, Detail a muted note.
 	Name, Value, Detail string
 	Glyph               *atoms.Glyph
-	Children            []*resultNode
-	Expanded            bool
+	// Tone colors the glyph (toneNone: the default).
+	Tone     nodeTone
+	Children []*resultNode
+	Expanded bool
 	// Open runs on double click (or a single click with OpenOnClick).
 	Open func()
+}
+
+// nodeTone is the color of a result node's glyph.
+type nodeTone uint8
+
+const (
+	toneNone nodeTone = iota
+	toneSuccess
+	toneWarning
+	toneDanger
+	toneInfo
+)
+
+// color returns the token color of the tone (zero: the default).
+func (t nodeTone) color(th *tokens.Theme) color.NRGBA {
+	switch t {
+	case toneSuccess:
+		return th.Color.Success
+	case toneWarning:
+		return th.Color.Warning
+	case toneDanger:
+		return th.Color.Danger
+	case toneInfo:
+		return th.Color.Info
+	}
+	return color.NRGBA{}
 }
 
 // resultTree is a scrollable tree of resultNodes below an optional header
@@ -116,6 +145,7 @@ func (t *resultTree) layout(gtx layout.Context, th *tokens.Theme) layout.Dimensi
 					t.rows[f.n] = r
 				}
 				r.Name, r.Value, r.Detail, r.Glyph, r.Depth = f.n.Name, f.n.Value, f.n.Detail, f.n.Glyph, f.depth
+				r.GlyphColor = f.n.Tone.color(th)
 				r.Expandable, r.Expanded, r.Selected = len(f.n.Children) > 0, f.n.Expanded, t.sel == f.n
 				clicked, toggled, double := r.Update(gtx)
 				if toggled {

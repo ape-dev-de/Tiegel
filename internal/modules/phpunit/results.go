@@ -286,14 +286,25 @@ func (m *Module) results(_ context.Context, p api.TestRunIDParams) (api.TestRun,
 
 // node returns one node of a test run in full (details, output).
 func (m *Module) node(_ context.Context, p api.TestNodeParams) (teamcity.Node, error) {
-	if p.ID == "" {
-		return teamcity.Node{}, api.Errorf(api.CodeInvalidParams, "id is required")
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, err := m.session(p.RunID)
 	if err != nil {
 		return teamcity.Node{}, err
+	}
+	if p.ID == "" {
+		// The run itself: its console output and aggregated result.
+		n := teamcity.Node{Name: s.run.Name, Kind: teamcity.KindSuite, Output: s.tree.Console(), Status: teamcity.StatusPassed}
+		for _, r := range s.tree.SnapshotLight() {
+			n.DurationMs += r.DurationMs
+			n.Children = append(n.Children, &r)
+		}
+		n.Status = teamcity.Aggregate(n.Children)
+		n.Children = nil
+		if s.run.State == run.StateRunning {
+			n.Status = teamcity.StatusRunning
+		}
+		return n, nil
 	}
 	n, ok := s.tree.SnapshotNode(p.ID)
 	if !ok {

@@ -327,9 +327,10 @@ func (t *Tests) ownRun(r api.TestRun) bool {
 
 // Detail returns node id of the shown run in full (message, details,
 // expected/actual, output), fetching it with test.node when the run
-// changed since; until the first answer it returns nil.
+// changed since; until the first answer it returns nil. id "" is the
+// run itself with its console output.
 func (t *Tests) Detail(id string) *teamcity.Node {
-	if t.Run == nil || id == "" {
+	if t.Run == nil {
 		return nil
 	}
 	d := &t.detail
