@@ -243,6 +243,9 @@ func (c *InProcess) Subscribe(_ context.Context, topics []string, fn func(Event)
 		b = c.app.bus
 	}
 	un := b.Subscribe("*", func(e bus.Event) {
+		if e.Topic == flushTopic {
+			return // internal marker of Session.Flush
+		}
 		for _, p := range s.patterns {
 			if bus.Match(p, e.Topic) {
 				fn(Event{Topic: e.Topic, Payload: encodePayload(e.Payload)})

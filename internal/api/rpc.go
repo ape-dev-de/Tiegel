@@ -90,15 +90,21 @@ func (a *App) Serve(ctx context.Context, rwc io.ReadWriteCloser, opts ServeOptio
 			return limit
 		}
 	}
+	var sess *Session
 	tf.atEOF = func() {
 		// Deliver events caused by the last requests before the
-		// connection goes away.
-		dctx, cancel := context.WithTimeout(ctx, time.Second)
-		defer cancel()
+		// connection goes away: first let synchronous follow-ups on the
+		// bus settle briefly, then wait for this session's own queue
+		// (independent of other publishers that keep the bus busy).
+		dctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 		_ = a.bus.Drain(dctx)
+		cancel()
+		fctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		_ = sess.Flush(fctx)
 	}
 	conn := jsonrpc2.NewConnFraming(rwc, tf)
-	sess := a.NewSession(func(ev Event) {
+	sess = a.NewSession(func(ev Event) {
 		_ = conn.Notify(context.Background(), NotifyMethod, ev)
 	})
 	defer sess.Close()

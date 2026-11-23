@@ -109,8 +109,47 @@ func (s *Session) overflow() {
 	}
 }
 
+// flushTopic carries the markers of Session.Flush; sessions never
+// forward it to clients.
+const flushTopic = "api.internal.flush"
+
+// flushMark is the payload of a flushTopic event.
+type flushMark struct {
+	s    *Session
+	once sync.Once
+	done chan struct{}
+}
+
+// Flush waits until every event published before the call has been passed
+// to notify (or ctx ends). Unlike draining the whole bus it only waits for
+// this session's own queue, so busy publishers elsewhere (progress events)
+// cannot delay it. Without subscriptions it returns at once.
+func (s *Session) Flush(ctx context.Context) error {
+	s.mu.Lock()
+	subscribed := s.unsub != nil
+	s.mu.Unlock()
+	if !subscribed {
+		return nil
+	}
+	m := &flushMark{s: s, done: make(chan struct{})}
+	s.app.eventBus().Publish(flushTopic, m)
+	select {
+	case <-m.done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("api: flush events: %w", ctx.Err())
+	}
+}
+
 // deliver forwards e if one of the session's patterns matches.
 func (s *Session) deliver(e bus.Event) {
+	if e.Topic == flushTopic {
+		if m, ok := e.Payload.(*flushMark); ok && m.s == s {
+			// A relay may deliver a marker twice; close only once.
+			m.once.Do(func() { close(m.done) })
+		}
+		return
+	}
 	s.mu.Lock()
 	ok := matchAny(s.patterns, e.Topic)
 	s.mu.Unlock()
