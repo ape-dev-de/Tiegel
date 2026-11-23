@@ -211,7 +211,7 @@ func (s *Services) stopWatchID(id string) {
 
 // shutdown ends the watch and logs synchronously (window closes).
 func (s *Services) shutdown() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(Background(context.Background()), 2*time.Second)
 	defer cancel()
 	if s.watchID != "" {
 		_ = s.c.call(ctx, "docker.watchStop", map[string]any{"id": s.watchID}, nil)

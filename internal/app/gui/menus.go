@@ -122,8 +122,11 @@ func (v *View) runAction(id keymap.Action) {
 
 // safeRun runs action a. A failing action (of the shell or a module)
 // reports itself in the status bar and on stderr and leaves the window
-// running.
+// running. While it runs, the freeze watchdog knows it as the UI
+// goroutine's work (D510).
 func (v *View) safeRun(a Action) {
+	leave := v.monitor.Enter("action " + orTitle(a.Title, string(a.ID)) + " (" + string(a.ID) + ")")
+	defer leave()
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "tiegel: action %s panicked: %v\n%s", a.ID, r, debug.Stack())

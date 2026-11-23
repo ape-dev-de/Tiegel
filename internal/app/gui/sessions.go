@@ -138,8 +138,16 @@ func (s *Sessions) newSlot(app *api.App) *sessionSlot {
 func (s *Sessions) dropSlot(sl *sessionSlot) {
 	delete(s.slots, sl.app)
 	sl.view.Close()
-	sl.ctl.Close()
-	_ = sl.be.Close()
+	// Closing the controller waits (up to seconds) for its running jobs
+	// and stops service watches with backend calls: never on the UI
+	// goroutine (D513). Nothing on the UI goroutine uses the slot any
+	// more.
+	s.ops.Add(1)
+	go func() {
+		defer s.ops.Add(-1)
+		sl.ctl.Close()
+		_ = sl.be.Close()
+	}()
 	if s.shown == sl {
 		s.shown = s.hostSlot
 	}
@@ -624,26 +632,34 @@ func (v *View) clientState() json.RawMessage {
 }
 
 // restoreClientState reopens the tabs of a clientState (files that are
-// gone are skipped) with their carets.
+// gone are skipped) with their carets. The files are checked in the
+// background (file system access never runs on the UI goroutine, D513).
 func (v *View) restoreClientState(raw json.RawMessage) {
 	var st viewState
 	if json.Unmarshal(raw, &st) != nil || len(st.Tabs) == 0 {
 		return
 	}
-	if v.restoreCarets == nil {
-		v.restoreCarets = map[string]int{}
-	}
-	var files []string
-	caret := 0
-	for _, t := range st.Tabs {
-		if fi, err := os.Stat(t.File); err != nil || fi.IsDir() {
-			continue
+	v.ctl.Go(func(context.Context) func() {
+		var tabs []tabState
+		for _, t := range st.Tabs {
+			if fi, err := os.Stat(t.File); err == nil && !fi.IsDir() {
+				tabs = append(tabs, t)
+			}
 		}
-		files = append(files, t.File)
-		v.restoreCarets[t.File] = t.Caret
-		if t.File == st.Active {
-			caret = t.Caret
+		return func() {
+			if v.restoreCarets == nil {
+				v.restoreCarets = map[string]int{}
+			}
+			var files []string
+			caret := 0
+			for _, t := range tabs {
+				files = append(files, t.File)
+				v.restoreCarets[t.File] = t.Caret
+				if t.File == st.Active {
+					caret = t.Caret
+				}
+			}
+			v.ctl.RestoreTabs(files, st.Active, caret)
 		}
-	}
-	v.ctl.RestoreTabs(files, st.Active, caret)
+	})
 }
