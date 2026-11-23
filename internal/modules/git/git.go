@@ -63,7 +63,7 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "git.diff", "Diff of work tree, index or revisions", m.gitDiff)
 	api.Add(p, "git.log", "Commit history", m.gitLog)
 	api.Add(p, "git.branches", "Local and remote-tracking branches", m.gitBranches)
-	api.Add(p, "git.commit", "Commit the index (commit.before guard saves documents; optionally stages paths)", m.gitCommit)
+	api.Add(p, "git.commit", "Commit the index (commit.before guard saves documents; optionally stages paths)", withTask(m, false, func(GitCommitParams) string { return commitTitle(false) }, m.gitCommit))
 	m.registerOps(p)
 	m.registerRemote(p)
 	m.registerHistory(p)

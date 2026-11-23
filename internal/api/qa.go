@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ape-dev-de/tiegel/internal/core/hooks"
+	"github.com/ape-dev-de/tiegel/internal/core/tasks"
 	"github.com/ape-dev-de/tiegel/internal/editor/buffer"
 	"github.com/ape-dev-de/tiegel/internal/gitcli"
 )
@@ -356,7 +357,16 @@ func (a *App) qaRun(ctx context.Context, p QARunParams) (QARunResult, error) {
 		disp[i] = a.displayPath(s)
 	}
 	res := QARunResult{Tools: []QAToolRun{}, Files: []QAFileDiagnostics{}}
-	for _, t := range tools {
+	title := "Running inspections"
+	if len(tools) == 1 {
+		title = "Inspecting with " + tools[0].Name
+	}
+	task := a.BeginTask(ctx, tasks.Options{Title: title, Module: "qa", Cancellable: true})
+	ctx = task.Context()
+	var runErr error
+	defer func() { task.End(runErr) }()
+	for i, t := range tools {
+		task.Progress(i, len(tools), t.Name)
 		a.bus.Publish(TopicQAStarted, QARunEvent{Tool: t.Plugin, Kind: QAKindInspect, Paths: disp, Trigger: p.Trigger})
 		start := time.Now()
 		rep, err := t.Analyze(ctx, QAAnalyzeRequest{Paths: slices.Clone(paths)})
@@ -378,12 +388,14 @@ func (a *App) qaRun(ctx context.Context, p QARunParams) (QARunResult, error) {
 		a.bus.Publish(TopicQAFinished, QARunEvent{Tool: t.Plugin, Kind: QAKindInspect, Paths: disp, Trigger: p.Trigger,
 			Count: run.Count, Error: run.Error, Messages: run.Messages, Millis: run.Millis})
 		if ctx.Err() != nil {
-			return res, ctx.Err()
+			runErr = ctx.Err()
+			return res, runErr
 		}
 	}
 	sort.SliceStable(res.Files, func(i, j int) bool { return res.Files[i].Path < res.Files[j].Path })
 	if len(res.Tools) == 1 && res.Tools[0].Error != "" {
-		return res, Errorf(CodeFailed, "%s", res.Tools[0].Error).WithData(res)
+		runErr = Errorf(CodeFailed, "%s", res.Tools[0].Error).WithData(res)
+		return res, runErr
 	}
 	return res, nil
 }

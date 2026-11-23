@@ -122,6 +122,8 @@ type Module struct {
 	// apply that begins meanwhile cancels itself.
 	applyCancel context.CancelFunc
 	stopping    int
+	// starting is the background task of a server start (D507).
+	starting startTask
 	// projGen counts project closes; an automatic start for an older
 	// project does nothing.
 	projGen int
@@ -253,6 +255,7 @@ func (m *Module) Stop() error {
 	}
 	m.mu.Unlock()
 	m.clearDiags()
+	m.starting.end()
 	return nil
 }
 
@@ -431,6 +434,7 @@ func (m *Module) onState(st supervisor.Status) {
 			m.clearDiags()
 		}
 	}
+	m.starting.follow(m.app, st)
 	m.app.Bus().Publish(api.TopicLSPState, m.status(st))
 }
 

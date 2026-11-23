@@ -170,6 +170,7 @@ type View struct {
 	tstd  *testDock
 	cmpd  *composerDock
 	extd  *toolsDock
+	tasks *tasksDock
 	// termGlobal are the window shortcuts while the terminal has the
 	// focus (terminal.overrideIdeShortcuts).
 	termGlobal shortcuts
@@ -249,6 +250,7 @@ func newView(ctl *controller.Controller, goos string, sh *text.Shaper) *View {
 	v.extd = installExternalTools(v)
 	v.termd = installTerminal(v)
 	v.hdr = installHeader(v)
+	v.tasks = installTasks(v)
 	return v
 }
 

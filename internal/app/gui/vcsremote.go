@@ -115,17 +115,16 @@ func (d *workDock) remoteMenu() []MenuItem {
 	}
 }
 
-// remoteStatus is the status bar item (busy state or the update entry).
+// remoteStatus is the status bar item (the update entry, or the last
+// problem). A running operation is shown by the background tasks entry
+// (D508).
 func (d *workDock) remoteStatus() []statusbar.Item {
 	if !d.gitOn {
 		return nil
 	}
 	r := d.work().Remote
 	text, tone := "", statusbar.ToneMuted
-	switch {
-	case r.Busy != "":
-		text = strings.ToUpper(r.Busy[:1]) + r.Busy[1:] + "…"
-	case r.Problem != nil:
+	if r.Problem != nil {
 		text, tone = "Git: "+r.Problem.Kind, statusbar.ToneWarning
 	}
 	return []statusbar.Item{{ID: statusRemoteID, Text: text, Glyph: atoms.GlyphCloud, Tone: tone,

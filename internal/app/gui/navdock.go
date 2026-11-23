@@ -17,14 +17,12 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/palette"
-	"github.com/ape-dev-de/tiegel/internal/ui/organisms/statusbar"
 )
 
 // Code navigation in the GUI (D160): jumps (Cmd+B, Cmd+Alt+B, Cmd+U,
 // Cmd+click) through nav.* with the index and the language server, the
 // type hierarchy, gutter marks with ↑/↓ icons, Go to Class/Symbol, Search
-// Everywhere (Shift Shift), the index progress in the status bar, and the
-// editor and gutter context menus (editormenu.go). The LSP features and
+// Everywhere (Shift Shift), and the editor and gutter context menus (editormenu.go). The LSP features and
 // Find in Files are in codedock.go and finddock.go. All state lives in
 // controller.CodeNav; this file only shows it.
 
@@ -34,8 +32,6 @@ const (
 	ToolFind      = "find"
 	ToolStructure = "structure"
 	ToolHierarchy = "hierarchy"
-
-	statusIndexID = "index.progress"
 )
 
 // Action IDs (shared with the action model).
@@ -117,7 +113,6 @@ func installNav(v *View) *navDock {
 	r.AddGutterProvider(d.markers)
 	// Index marks take clicks on their icons before the breakpoint toggle.
 	r.gutterClicks = append([]GutterClickHandler{d.gutterClick}, r.gutterClicks...)
-	r.AddStatusProvider(d.status)
 	d.usages.Empty = "Find Usages (Alt+F7) on a symbol lists its usages here."
 	d.hierarchy.Empty = "Type Hierarchy (Ctrl+H) on a class shows its supertypes and subtypes."
 	d.structure.Empty = "No structure for this file."
@@ -336,23 +331,8 @@ func kindGlyph(kind string) *atoms.Glyph {
 	return atoms.GlyphFileCode
 }
 
-// ---- status bar -------------------------------------------------------------------
-
-func (d *navDock) status() []statusbar.Item {
-	ix := d.n.Index
-	if !ix.Busy() {
-		return nil
-	}
-	text := "Indexing…"
-	if ix.Total > 0 {
-		text = fmt.Sprintf("Indexing %d/%d", ix.Done, ix.Total)
-	}
-	if ix.Phase == "scanning" {
-		text = "Scanning files…"
-	}
-	return []statusbar.Item{{ID: statusIndexID, Text: text, Glyph: atoms.GlyphRefresh, Tone: statusbar.ToneMuted,
-		Tooltip: "The PHP symbol index is being built; navigation results may be incomplete."}}
-}
+// The index progress is shown by the background tasks entry of the
+// status bar (tasksstatus.go, D508).
 
 // ---- gutter ------------------------------------------------------------------------
 

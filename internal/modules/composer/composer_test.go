@@ -211,6 +211,33 @@ func TestModule(t *testing.T) {
 	}
 }
 
+// composer.run is a background task; cancelling it stops the run.
+func TestRunTaskCancel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script")
+	}
+	a := modtest.NewApp(t, []module.Module{New()}, nil)
+	modtest.Project(t, a, map[string]string{"composer.json": composerJSON})
+	p := filepath.Join(t.TempDir(), "slow-composer")
+	modtest.WriteFile(t, p, "#!/bin/sh\necho started\nexec sleep 30\n")
+	if err := os.Chmod(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setSetting(t, a, SettingPath, p)
+	var info run.Info
+	modtest.Call(t, a, "composer.run", RunParams{Script: "test", Interpreter: run.InterpreterHost}, &info)
+	l := a.Tasks().List()
+	if len(l) != 1 || l[0].Title != "composer test" || l[0].Module != ID || !l[0].Cancellable {
+		t.Fatalf("tasks %+v", l)
+	}
+	modtest.Call(t, a, "tasks.cancel", api.TaskIDParams{ID: l[0].ID}, nil)
+	end, _ := waitRun(t, a, info.ID)
+	if end.State != run.StateStopped {
+		t.Fatalf("run not stopped: %+v", end)
+	}
+	modtest.Eventually(t, "task removed", func() bool { return len(a.Tasks().List()) == 0 })
+}
+
 func TestSettingSpecs(t *testing.T) {
 	m := New()
 	for _, s := range m.SettingSpecs() {

@@ -12,9 +12,9 @@ import (
 // Network access (fetch, pull, update) only happens in these user-triggered
 // methods; the module never fetches on its own.
 func (m *Module) registerRemote(p *api.Provider) {
-	api.Add(p, "git.fetch", "Fetch all remotes or one (prune, tags; network access)", m.gitFetch)
-	api.Add(p, "git.pull", "Fetch and integrate a remote branch into the current branch (merge, rebase, ff-only)", m.gitPull)
-	api.Add(p, "git.updateProject", "Save documents, fetch the upstream and integrate it into the current branch", m.gitUpdateProject)
+	api.Add(p, "git.fetch", "Fetch all remotes or one (prune, tags; network access)", withTask(m, true, fetchTitle, m.gitFetch))
+	api.Add(p, "git.pull", "Fetch and integrate a remote branch into the current branch (merge, rebase, ff-only)", withTask(m, true, titled[PullParams]("Pulling"), m.gitPull))
+	api.Add(p, "git.updateProject", "Save documents, fetch the upstream and integrate it into the current branch", withTask(m, true, titled[UpdateParams]("Updating project"), m.gitUpdateProject))
 	api.Add(p, "git.stash", "Stash local changes (optionally untracked files, keep index, paths)", m.gitStash)
 	api.Add(p, "git.stashList", "Stash entries, newest first", m.gitStashList)
 	api.Add(p, "git.stashApply", "Apply a stash entry (conflicts are reported, not an error)", m.gitStashApply)

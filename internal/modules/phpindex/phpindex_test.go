@@ -13,6 +13,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/bus"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
+	"github.com/ape-dev-de/tiegel/internal/core/tasks"
 	"github.com/ape-dev-de/tiegel/internal/modules/modtest"
 )
 
@@ -282,4 +283,22 @@ func TestUnavailable(t *testing.T) {
 	if !strings.Contains(unavailable().Error(), "cgo") {
 		t.Fatal("unavailable")
 	}
+}
+
+// The initial scan is a background task (D507) that ends with the scan.
+func TestSyncIsTask(t *testing.T) {
+	a, _ := newApp(t, Options{}, nil)
+	rec := modtest.Record(t, a, api.TopicTasksChanged)
+	modtest.Project(t, a, files)
+	var st Status
+	modtest.Call(t, a, "index.status", StatusParams{Wait: true}, &st)
+	rec.Wait(t, api.TopicTasksChanged, func(e bus.Event) bool {
+		for _, ti := range e.Payload.(tasks.ChangedEvent).Tasks {
+			if ti.Module == ID && ti.Cancellable && ti.Title == "Indexing PHP files" {
+				return true
+			}
+		}
+		return false
+	})
+	modtest.Eventually(t, "task ended", func() bool { return len(a.Tasks().List()) == 0 })
 }
