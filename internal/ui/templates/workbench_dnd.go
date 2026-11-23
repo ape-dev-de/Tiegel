@@ -124,6 +124,10 @@ func (w *Workbench) PanelRect(id string) image.Rectangle {
 	return image.Rectangle{}
 }
 
+// EditorRect returns the window rectangle of the editor area (tabs and
+// editors) in the last layout.
+func (w *Workbench) EditorRect() image.Rectangle { return w.geom.editor }
+
 // Dragging reports whether a tool window is being dragged.
 func (w *Workbench) Dragging() bool { return w.drag != nil && w.drag.active }
 

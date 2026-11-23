@@ -69,7 +69,7 @@ func (a *App) dirNamespace(path string) (NamespaceResult, error) {
 	if err != nil {
 		return NamespaceResult{}, err
 	}
-	root := a.ProjectRoot()
+	root := a.PHPRoot() // composer.json of the PHP project root (D515)
 	maps, err := psr4.Read(root)
 	if err != nil {
 		return NamespaceResult{}, Errorf(CodeFailed, "%v", err)
@@ -185,7 +185,7 @@ func (a *App) fileTemplateVars(ns, name string) map[string]string {
 		"DATE": now.Format("2006-01-02"), "YEAR": now.Format("2006"),
 	}
 	base := `PHPUnit\Framework\TestCase`
-	if root := a.ProjectRoot(); root != "" {
+	if root := a.PHPRoot(); root != "" {
 		maps, _ := psr4.Read(root)
 		for _, m := range maps {
 			if m.Dev {

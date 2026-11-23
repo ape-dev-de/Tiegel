@@ -66,11 +66,39 @@ var ErrComposer = errors.New("composer.json")
 // sections keeps the first role in the order autoload (source),
 // autoload-dev (test), vendor-dir (library). An invalid composer.json is
 // reported as ErrComposer together with the name-based roots.
-func Detect(root string) ([]Root, error) {
-	c, cerr := readComposer(root)
+func Detect(root string) ([]Root, error) { return DetectFrom(root, root) }
+
+// DetectFrom is Detect with the composer.json of the PHP project root
+// phpRoot (a folder at or below root, D515); paths stay relative to root.
+// The conventional names are looked up in phpRoot, then in root.
+func DetectFrom(root, phpRoot string) ([]Root, error) {
+	if phpRoot == "" {
+		phpRoot = root
+	}
+	prefix := ""
+	if r, err := filepath.Rel(root, phpRoot); err == nil && r != "." && !strings.HasPrefix(r, "..") {
+		prefix = filepath.ToSlash(r)
+	} else {
+		phpRoot = root
+	}
+	c, cerr := readComposer(phpRoot)
 	var out []Root
 	seen := map[string]bool{}
 	add := func(dir string, role Role, origin Origin) {
+		dir = norm(dir)
+		if dir == "" {
+			return
+		}
+		if prefix != "" {
+			dir = path.Join(prefix, dir)
+		}
+		if seen[dir] || !isDir(root, dir) {
+			return
+		}
+		seen[dir] = true
+		out = append(out, Root{Path: dir, Role: role, Origin: origin})
+	}
+	addRoot := func(dir string, role Role, origin Origin) { // relative to root
 		dir = norm(dir)
 		if dir == "" || seen[dir] || !isDir(root, dir) {
 			return
@@ -104,6 +132,9 @@ func Detect(root string) ([]Root, error) {
 		}
 		for _, n := range g.names {
 			add(n, g.role, FromName)
+			if prefix != "" {
+				addRoot(n, g.role, FromName)
+			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })

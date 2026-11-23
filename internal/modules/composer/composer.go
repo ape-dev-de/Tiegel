@@ -140,12 +140,25 @@ func Scripts(root string) ([]Script, error) {
 	return ParseScripts(b)
 }
 
+// phpRoot returns the PHP project root (D515) when projectDir is the
+// open project, else projectDir: composer.json and composer runs live
+// there.
+func (m *Module) phpRoot(projectDir string) string {
+	if app := m.application(); app != nil && projectDir != "" && filepath.Clean(app.ProjectRoot()) == filepath.Clean(projectDir) {
+		if r := app.PHPRoot(); r != "" {
+			return r
+		}
+	}
+	return projectDir
+}
+
 func (m *Module) scripts(_ context.Context, _ struct{}) (ScriptsResult, error) {
 	app := m.application()
 	root, err := app.RequireProject()
 	if err != nil {
 		return ScriptsResult{}, err
 	}
+	root = m.phpRoot(root)
 	file := filepath.Join(root, "composer.json")
 	res := ScriptsResult{File: file, Scripts: []Script{}, Command: m.commandText(root), ConfigType: TypeScript, ScriptField: FieldScript}
 	if _, err := os.Stat(file); err != nil {
@@ -166,6 +179,7 @@ func (m *Module) run(ctx context.Context, p RunParams) (run.Info, error) {
 	if err != nil {
 		return run.Info{}, err
 	}
+	root = m.phpRoot(root)
 	spec, err := m.buildSpec(root, p.Script, p.Args, p.Interpreter, nil)
 	if err != nil {
 		return run.Info{}, api.Errorf(api.CodeInvalidParams, "%w", err)
@@ -255,7 +269,7 @@ func (m *Module) configType() run.ConfigType {
 		Suggest: func(_ context.Context, env run.BuildEnv, field string) []string {
 			switch field {
 			case FieldScript:
-				list, _ := Scripts(env.ProjectDir)
+				list, _ := Scripts(m.phpRoot(env.ProjectDir))
 				out := make([]string, 0, len(list))
 				for _, s := range list {
 					out = append(out, s.Name)
@@ -271,7 +285,7 @@ func (m *Module) configType() run.ConfigType {
 			if err != nil {
 				return run.Spec{}, fmt.Errorf("%w: arguments: %w", run.ErrInvalidConfig, err)
 			}
-			spec, err := m.buildSpec(env.ProjectDir, cfg.String(FieldScript, ""), args, cfg.String(FieldInterp, ""), cfg.Strings(FieldEnv))
+			spec, err := m.buildSpec(m.phpRoot(env.ProjectDir), cfg.String(FieldScript, ""), args, cfg.String(FieldInterp, ""), cfg.Strings(FieldEnv))
 			if err != nil {
 				return run.Spec{}, err
 			}

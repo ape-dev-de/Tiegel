@@ -130,9 +130,12 @@ func (m *Module) buildSpec(root string, sc api.TestScope, interp string, extra [
 	if p.Parallel != "" && !narrow && setting(m, SettingParallel, false) {
 		exe = p.Parallel
 	}
-	args := []string{run.ScriptPath(exe, root, root), "--teamcity"}
+	// The run starts in the PHP project root (D515); paths below it are
+	// relative, so they stay valid inside an interpreter's container.
+	base := p.Base
+	args := []string{run.ScriptPath(exe, base, root), "--teamcity"}
 	if p.Config != "" {
-		args = append(args, "--configuration", run.ScriptPath(p.Config, root, root))
+		args = append(args, "--configuration", run.ScriptPath(p.Config, base, root))
 	}
 	if sc.Suite != "" {
 		args = append(args, "--testsuite", sc.Suite)
@@ -149,13 +152,13 @@ func (m *Module) buildSpec(root string, sc api.TestScope, interp string, extra [
 	}
 	args = append(args, extra...)
 	if sc.Path != "" {
-		args = append(args, run.ScriptPath(abs(root, sc.Path), root, root))
+		args = append(args, run.ScriptPath(abs(root, sc.Path), base, root))
 	}
 	if interp == "" {
 		interp = setting(m, SettingInterp, run.InterpreterProject)
 	}
 	return run.Spec{
-		Name: m.runName(sc), Type: ID, PHP: true, Args: args, Dir: root, Interpreter: interp,
+		Name: m.runName(sc), Type: ID, PHP: true, Args: args, Dir: base, Interpreter: interp,
 	}, nil
 }
 

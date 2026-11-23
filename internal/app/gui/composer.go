@@ -58,7 +58,7 @@ func (d *composerDock) frame(v *View, _ layout.Context) {
 }
 
 func (d *composerDock) isComposerJSON(file string) bool {
-	root := d.v.ctl.Project.Root
+	root := d.v.ctl.PHPRoot()
 	return root != "" && filepath.Clean(file) == filepath.Join(root, "composer.json")
 }
 

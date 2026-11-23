@@ -584,7 +584,7 @@ func (r Runner) RunPHP(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (m *Module) phpVersion(ctx context.Context, p PHPVersionParams) (PHPVersionResult, error) {
-	opts := phpver.Options{ProjectDir: m.app.ProjectRoot()}
+	opts := phpver.Options{ProjectDir: m.app.PHPRoot()} // composer.json of the PHP root (D515)
 	override := p.Override
 	if override == "" {
 		override = settings.Get(m.store(), SettingVersionOverride, "")

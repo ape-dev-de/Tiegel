@@ -120,12 +120,13 @@ func (m *Module) gotoTest(_ context.Context, p api.TestGotoParams) (api.TestGoto
 	if c.FQN == "" {
 		return api.TestGotoResult{}, api.Errorf(api.CodeNotFound, "%s declares no class", p.Path)
 	}
-	entries := readPSR4(root)
+	base := m.phpRoot(root) // PSR-4 of the PHP project root (D515)
+	entries := readPSR4(base)
 	if strings.HasSuffix(c.Name, "Test") && c.Kind == index.KindClass {
-		return subjectsOf(root, c.FQN, entries), nil
+		return subjectsOf(base, c.FQN, entries), nil
 	}
-	res := testsOf(root, c.FQN, entries)
-	plan := m.proposal(root, c.FQN, entries, strict)
+	res := testsOf(base, c.FQN, entries)
+	plan := m.proposal(base, c.FQN, entries, strict)
 	res.Create = &plan
 	return res, nil
 }
@@ -328,12 +329,13 @@ func (m *Module) createTest(ctx context.Context, p api.TestCreateParams) (api.Te
 	if c.FQN == "" {
 		return api.TestCreatePlan{}, api.Errorf(api.CodeNotFound, "%s declares no class", p.Path)
 	}
-	entries := readPSR4(root)
-	plan := m.proposal(root, c.FQN, entries, strict)
+	base := m.phpRoot(root)
+	entries := readPSR4(base)
+	plan := m.proposal(base, c.FQN, entries, strict)
 	if p.File != "" {
 		plan.File = abs(root, p.File)
 		plan.Class = ""
-		for _, d := range devEntries(root, entries) {
+		for _, d := range devEntries(base, entries) {
 			if cls := classOfFile(plan.File, d); cls != "" {
 				plan.Class = cls
 				break
@@ -343,7 +345,7 @@ func (m *Module) createTest(ctx context.Context, p api.TestCreateParams) (api.Te
 			plan.Class = strings.TrimSuffix(filepath.Base(plan.File), filepath.Ext(plan.File))
 		}
 		base := testCaseFQN
-		if d := devEntries(root, entries)[0]; isFile(filepath.Join(d.Dirs[0], "TestCase.php")) {
+		if d := devEntries(base, entries)[0]; isFile(filepath.Join(d.Dirs[0], "TestCase.php")) {
 			base = d.Prefix + "TestCase"
 		}
 		plan.Content = Skeleton(plan.Class, c.FQN, base, strict)

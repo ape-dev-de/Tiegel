@@ -28,7 +28,7 @@ func (a *App) projectRoles(_ context.Context, _ struct{}) (ProjectRolesResult, e
 	if err != nil {
 		return ProjectRolesResult{}, err
 	}
-	roots, err := projectroles.Detect(pr.root)
+	roots, err := projectroles.DetectFrom(pr.root, a.PHPRoot())
 	res := ProjectRolesResult{Roots: roots}
 	if res.Roots == nil {
 		res.Roots = []ProjectRoot{}

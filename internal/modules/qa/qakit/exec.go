@@ -51,7 +51,7 @@ func (p *Plugin) execWith(ctx context.Context, program string, build func(t run.
 	if app == nil {
 		return result{}, errors.New(p.def.ID + ": not started")
 	}
-	root := app.ProjectRoot()
+	root := app.PHPRoot() // the tools run in the PHP project root (D515)
 	if root == "" {
 		return result{}, errors.New("no project open")
 	}

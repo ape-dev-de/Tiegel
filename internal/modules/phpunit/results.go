@@ -88,8 +88,14 @@ func (m *Module) ensure(i run.Info) *session {
 	}
 	// The mapper may ask php-runtime (hook): outside the lock.
 	root := i.Project
+	// Relative arguments and reported paths are relative to the working
+	// directory: the PHP project root (D515).
+	dir := i.Spec.Dir
+	if dir == "" || !filepath.IsAbs(dir) {
+		dir = root
+	}
 	tree := teamcity.NewTree()
-	tree.MapPath = m.mapper(app, root, i.Spec.EffectiveInterpreter())
+	tree.MapPath = m.mapper(app, root, dir, i.Spec.EffectiveInterpreter())
 	m.mu.Lock()
 	if s := m.sessions[i.ID]; s != nil { // created meanwhile
 		m.mu.Unlock()
@@ -97,7 +103,7 @@ func (m *Module) ensure(i run.Info) *session {
 	}
 	s := &session{tree: tree, run: api.TestRun{
 		RunID: i.ID, Name: i.Name, Framework: Framework, State: i.State, Started: i.Started,
-		Scope: scopeOfArgs(i.Spec.Args, root), Debug: i.Spec.Debug, Project: root,
+		Scope: scopeOfArgs(i.Spec.Args, dir), Debug: i.Spec.Debug, Project: root,
 	}}
 	m.sessions[i.ID] = s
 	m.order = append(m.order, i.ID)
@@ -126,7 +132,7 @@ func sameProject(runRoot, root string) bool {
 // mapper maps reported (container) paths to host files: files that exist
 // on the host stay, else the interpreter's path mappings apply, else the
 // longest suffix that exists below the project root.
-func (m *Module) mapper(app *api.App, root, interp string) func(string) string {
+func (m *Module) mapper(app *api.App, root, dir, interp string) func(string) string {
 	var maps compose.Mappings
 	if app != nil && interp != run.InterpreterHost {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -141,7 +147,10 @@ func (m *Module) mapper(app *api.App, root, interp string) func(string) string {
 		if v, ok := cache[p]; ok {
 			return v
 		}
-		v := mapPath(p, root, maps)
+		v := mapPath(p, dir, maps)
+		if v == p && dir != root {
+			v = mapPath(p, root, maps)
+		}
 		cache[p] = v
 		return v
 	}

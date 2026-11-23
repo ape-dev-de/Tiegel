@@ -121,6 +121,7 @@ type App struct {
 	runs     run.Manager      // processes of the run service (run.*, AP15.1)
 	terms    terminal.Manager // terminal sessions (terminal.*, AP15.5)
 	qa       qaStore          // findings of the quality tool plugins (qa.*)
+	phpRoot  phpRootCache     // effective PHP project root (D515)
 	// ws is the workspace (several projects, projects.*) this App hosts
 	// or belongs to; nil until one is enabled.
 	ws atomic.Pointer[Workspace]

@@ -29,6 +29,9 @@ const (
 	KeyOpenProjectIn     = "projects.openIn"
 	KeyAutoHibernate     = "projects.autoHibernateMinutes"
 	KeyUpdateCheck       = "update.checkOnStart"
+	// KeyPHPRoot is the PHP project root (D515): project relative, ""
+	// detects it (internal/core/phproot).
+	KeyPHPRoot = "project.phpRoot"
 )
 
 // Core pages (Spec.Group of core specs), in dialog order.
@@ -115,6 +118,9 @@ var kernelSpecs = []Spec{
 		Label: "Open project in", Help: "Where to open another project while one is open: ask, a new window or this window.", Group: PageProjects},
 	{Key: KeyAutoHibernate, Kind: KindInt, Default: 0, Min: IntPtr(0), Max: IntPtr(7 * 24 * 60), Scope: ScopeGlobal,
 		Label: "Hibernate background projects after minutes", Help: "Stop language server, watcher and indexer of a project in the background after this many minutes (0 = never). Running processes and debug sessions prevent it.", Group: PageProjects},
+
+	{Key: KeyPHPRoot, Kind: KindPath, Default: "", Scope: ScopeProject,
+		Label: "PHP project root", Help: "Folder with composer.json that composer, vendor/, phpunit.xml, PSR-4 and the quality tools resolve from (project relative). Empty detects it: the project root, else a folder up to two levels below with composer.json.", Group: PageProjects},
 
 	{Key: KeyUpdateCheck, Kind: KindBool, Default: false, Scope: ScopeGlobal,
 		Label: "Check for updates on start", Help: "Off by default. Contacts the release server; Tiegel never downloads anything by itself.", Group: PageUpdates},
