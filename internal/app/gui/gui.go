@@ -20,7 +20,9 @@ import (
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
+	"github.com/ape-dev-de/tiegel/internal/app/gui/freeze"
 	"github.com/ape-dev-de/tiegel/internal/app/gui/native"
+	"github.com/ape-dev-de/tiegel/internal/core/settings"
 )
 
 // processStart approximates the process start (package initialisation).
@@ -46,6 +48,9 @@ func Run(ctx context.Context, a *api.App, projectPath string, newApp func() (*ap
 	if os.Getenv("TIEGEL_STARTUP_TRACE") != "" {
 		fmt.Fprintf(os.Stderr, "tiegel: backend ready after %v\n", time.Since(processStart).Round(time.Millisecond))
 	}
+	// Ask the OS appearance early (in the background) so a "system"
+	// theme is known by the first frame.
+	systemAppearance.Dark(time.Now(), nil)
 	m := &windows{ctx: ctx, newApp: newApp, wins: map[*window]bool{}}
 	// Mouse side buttons and swipes (macOS) go to the focused window.
 	native.SetGestureHandler(func(g string) { m.route(gesturePrefix + g) })
@@ -190,7 +195,13 @@ func (win *window) loop(a *api.App, projectPath string) error {
 	if err != nil {
 		return err
 	}
+	// The freeze watchdog (D510) watches this window's UI goroutine.
+	mon := freeze.NewMonitor()
+	wdCtx, stopWatchdog := context.WithCancel(ctx)
+	defer stopWatchdog()
+	go newWatchdog(mon, a).Run(wdCtx)
 	sess := newSessions(a, ws, runtime.GOOS, invalidate, func(v *View) {
+		v.monitor = mon
 		v.ctl.Invalidate = invalidate
 		v.Invalidate = invalidate
 		v.Raise = func() {
@@ -204,6 +215,7 @@ func (win *window) loop(a *api.App, projectPath string) error {
 	m.mu.Lock()
 	win.sess, win.view = sess, sess.Current()
 	m.mu.Unlock()
+	mon.OnRecover = func(r freeze.Report) { sess.Shown().freezeRecovered(r) }
 	sess.Start(projectPath)
 	go func() {
 		<-ctx.Done()
@@ -222,6 +234,7 @@ func (win *window) loop(a *api.App, projectPath string) error {
 			saveAllOnClose(sess)
 			return e.Err
 		case app.ConfigEvent:
+			leave := mon.Enter("window event")
 			ctl := sess.Current().ctl
 			if focused && !e.Config.Focused {
 				ctl.Autosave("focusLost")
@@ -234,11 +247,13 @@ func (win *window) loop(a *api.App, projectPath string) error {
 				ctl.ReloadRecentProjects()
 				ctl.Work.Refresh() // external changes while away (watch.refresh)
 			}
+			leave()
 		case app.FrameEvent:
 			if ctx.Err() != nil {
 				saveAllOnClose(sess)
 				return nil
 			}
+			leave := mon.Enter("frame")
 			frameStart := time.Now()
 			gtx := app.NewContext(&ops, e)
 			v := sess.Current()
@@ -266,7 +281,39 @@ func (win *window) loop(a *api.App, projectPath string) error {
 					fmt.Fprintf(os.Stderr, "tiegel: first frame after %v\n", d.Round(time.Millisecond))
 				}
 			}
+			leave()
 		}
+	}
+}
+
+// freezeRecovered tells about a freeze that just ended (UI goroutine):
+// one line on stderr and a status notice naming the blocking work and
+// the report file.
+func (v *View) freezeRecovered(r freeze.Report) {
+	fmt.Fprintf(os.Stderr, "tiegel: %s\n", r.Message())
+	v.ctl.Status.Notice = r.Message()
+	if v.Invalidate != nil {
+		v.Invalidate()
+	}
+}
+
+// minFreezeThresholdMs is the declared minimum of ui.freezeThresholdMs.
+const minFreezeThresholdMs = 250
+
+// newWatchdog returns the freeze watchdog of a window: reports go to
+// <config dir>/logs, the threshold is the setting ui.freezeThresholdMs
+// (read on every check, so a change applies at once).
+func newWatchdog(mon *freeze.Monitor, a *api.App) *freeze.Watchdog {
+	return &freeze.Watchdog{
+		Monitor: mon,
+		Dir:     filepath.Join(a.ConfigDir(), "logs"),
+		Threshold: func() time.Duration {
+			ms := settings.Resolve(settings.KeyFreezeThreshold, int(freeze.DefaultThreshold/time.Millisecond), a.Settings())
+			if ms < minFreezeThresholdMs { // a hand-edited value below the declared minimum
+				return freeze.DefaultThreshold
+			}
+			return time.Duration(ms) * time.Millisecond
+		},
 	}
 }
 
@@ -281,7 +328,9 @@ func saveAllOnClose(sess *Sessions) {
 // saveOnClose saves modified documents synchronously before the window
 // goes away (autosave on close).
 func saveOnClose(ctl *controller.Controller) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Deliberately blocking (the window goes away): marked for the
+	// blocking-call guard (D512).
+	ctx, cancel := context.WithTimeout(controller.Background(context.Background()), 10*time.Second)
 	defer cancel()
 	if err := ctl.AutosaveSync(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "tiegel: saving on close: %v\n", err)

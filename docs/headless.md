@@ -360,6 +360,7 @@ Einstellungen werden deklariert (D190, D210–D212): der Kern in `internal/core/
 | Kern › Editor | `editor.fontFamily`, `editor.fontSize`, `editor.lineHeight`, `editor.tabWidth`, `editor.insertSpaces` |
 | Kern › Files | `files.editorconfig` (Projekt), `files.associations` (Projekt, `muster=sprache`, z.B. `*.tpl=php`), `watch.exclude` (Projekt) |
 | Kern › Autosave / Projects / Updates | `autosave.idleSeconds`, `projects.openIn` (ask/new/this), `projects.autoHibernateMinutes` (0 = aus), `update.checkOnStart` |
+| Kern › Diagnostics | `ui.freezeThresholdMs` (250–60000, Standard 2000; GUI-Freeze-Bericht nach dieser Blockierdauer, D511) |
 | Plugin `git` | `git.updateMethod` (merge/rebase, Projekt) |
 | Plugin `debug-xdebug` | `debug-xdebug.port` (Projekt, Standard 9003) |
 | Plugin `php-features` | `php-features.background` (offene Dateien prüfen, Projekt) |

@@ -189,7 +189,7 @@ func (t *Terminals) send(ch chan api.TerminalInputParams) {
 			if !ok {
 				return
 			}
-			if err := t.c.call(t.c.ctx, "terminal.input", p, nil); err != nil && api.ErrorCode(err) != api.CodeConflict && t.c.ctx.Err() == nil {
+			if err := t.c.call(Background(t.c.ctx), "terminal.input", p, nil); err != nil && api.ErrorCode(err) != api.CodeConflict && t.c.ctx.Err() == nil {
 				t.c.post(func() { t.c.notice(err) })
 			}
 		case <-t.c.ctx.Done():

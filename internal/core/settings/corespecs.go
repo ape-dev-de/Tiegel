@@ -29,22 +29,24 @@ const (
 	KeyOpenProjectIn     = "projects.openIn"
 	KeyAutoHibernate     = "projects.autoHibernateMinutes"
 	KeyUpdateCheck       = "update.checkOnStart"
+	KeyFreezeThreshold   = "ui.freezeThresholdMs"
 )
 
 // Core pages (Spec.Group of core specs), in dialog order.
 const (
-	PageAppearance = "Appearance"
-	PageEditor     = "Editor"
-	PageFiles      = "Files"
-	PageAutosave   = "Autosave"
-	PageProjects   = "Projects"
-	PageUpdates    = "Updates"
+	PageAppearance  = "Appearance"
+	PageEditor      = "Editor"
+	PageFiles       = "Files"
+	PageAutosave    = "Autosave"
+	PageProjects    = "Projects"
+	PageUpdates     = "Updates"
+	PageDiagnostics = "Diagnostics"
 )
 
 // CorePages lists the core pages in dialog order. Groups of specs
 // registered by other packages (e.g. "Keymap") follow in registration
 // order.
-var CorePages = []string{PageAppearance, PageEditor, "Keymap", PageFiles, "Interpreter", PageAutosave, PageProjects, PageUpdates}
+var CorePages = []string{PageAppearance, PageEditor, "Keymap", PageFiles, "Interpreter", PageAutosave, PageProjects, PageUpdates, PageDiagnostics}
 
 // Values of KeyOpenProjectIn.
 const (
@@ -118,6 +120,9 @@ var kernelSpecs = []Spec{
 
 	{Key: KeyUpdateCheck, Kind: KindBool, Default: false, Scope: ScopeGlobal,
 		Label: "Check for updates on start", Help: "Off by default. Contacts the release server; Tiegel never downloads anything by itself.", Group: PageUpdates},
+
+	{Key: KeyFreezeThreshold, Kind: KindInt, Default: 2000, Min: IntPtr(250), Max: IntPtr(60000), Scope: ScopeGlobal,
+		Label: "Report UI freezes after milliseconds", Help: "When the window stops responding this long, a goroutine dump is written to the logs folder of the configuration directory (local only, never sent) and a notice names the blocking action.", Group: PageDiagnostics},
 }
 
 // coreInitErr records a registration problem of kernelSpecs (a test

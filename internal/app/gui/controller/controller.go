@@ -105,6 +105,9 @@ const maxRecent = 20
 // fields and methods belong to the UI goroutine.
 type Controller struct {
 	be Backend
+	// raw is the backend without the blocking-call guard (Backend).
+	raw   Backend
+	guard syncGuard
 	// Invalidate requests a new frame; called from any goroutine.
 	Invalidate func()
 
@@ -244,11 +247,12 @@ type Controller struct {
 func New(be Backend) *Controller {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Controller{
-		be: be, ctx: ctx, cancel: cancel, Active: -1,
+		raw: be, ctx: ctx, cancel: cancel, Active: -1,
 		diags: map[string]*fileDiags{}, Git: map[string]GitFile{},
 		Prefs: Prefs{Theme: "dark", TabWidth: 4}, Now: time.Now,
 		Tools: NewToolLayout(),
 	}
+	c.be = guardedBackend{Backend: be, g: &c.guard}
 	c.resetGroups()
 	c.Vcs = newGit(c)
 	c.Debug = newDebug(c)
@@ -290,8 +294,9 @@ func (c *Controller) Close() {
 // Context is cancelled by Close.
 func (c *Controller) Context() context.Context { return c.ctx }
 
-// Backend returns the backend.
-func (c *Controller) Backend() Backend { return c.be }
+// Backend returns the backend without the blocking-call guard (D512):
+// for tests and callers that run off the UI goroutine anyway.
+func (c *Controller) Backend() Backend { return c.raw }
 
 // post queues fn for the UI goroutine.
 func (c *Controller) post(fn func()) {
@@ -323,12 +328,13 @@ func (c *Controller) Drain() bool {
 }
 
 // Go runs work on a background goroutine; the function it returns (if not
-// nil) is applied on the UI goroutine by the next Drain.
+// nil) is applied on the UI goroutine by the next Drain. The context of
+// work is marked Background: only there backend calls are allowed.
 func (c *Controller) Go(work func(ctx context.Context) func()) {
 	c.jobs.Add(1)
 	go func() {
 		defer c.jobs.Add(-1)
-		if apply := work(c.ctx); apply != nil {
+		if apply := work(Background(c.ctx)); apply != nil {
 			c.post(apply)
 		}
 	}()
@@ -355,7 +361,7 @@ func (c *Controller) Settle(timeout time.Duration) {
 	}
 }
 
-// call is Backend.Call with the controller context.
+// call is Backend.Call; ctx must be marked Background (D512).
 func (c *Controller) call(ctx context.Context, method string, params, result any) error {
 	return c.be.Call(ctx, method, params, result)
 }

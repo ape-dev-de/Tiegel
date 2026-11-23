@@ -25,7 +25,7 @@ import (
 
 func TestMain(m *testing.M) {
 	dockertest.Main()
-	os.Exit(m.Run())
+	os.Exit(checkSyncCalls(m.Run()))
 }
 
 // newDockerEnv is newEnv with the fake docker and a compose project.

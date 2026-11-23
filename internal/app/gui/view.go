@@ -13,6 +13,7 @@ import (
 	"gioui.org/text"
 
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
+	"github.com/ape-dev-de/tiegel/internal/app/gui/freeze"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
@@ -69,10 +70,12 @@ type View struct {
 	shaper *text.Shaper
 	th     *tokens.Theme
 	theme  string // resolved preference the theme was built for
-	// systemDark reports the OS appearance for the "system" theme.
-	systemDark   func() bool
-	systemAt     time.Time
-	systemIsDark bool
+	// appearance is the OS appearance for the "system" theme, queried
+	// off the UI goroutine (D513).
+	appearance *appearanceCache
+	// monitor marks what the UI goroutine is busy with for the freeze
+	// watchdog (D510; nil without a window).
+	monitor *freeze.Monitor
 
 	bench templates.Workbench
 	tree  filetree.Tree
@@ -209,7 +212,7 @@ func newView(ctl *controller.Controller, goos string, sh *text.Shaper) *View {
 	v := &View{
 		ctl: ctl, goos: goos, Registry: NewRegistry(), shaper: sh,
 		editors: map[sessionKey]*editorSession{}, Invalidate: func() {},
-		systemDark: systemDarkMode, Raise: func() {}, recovery: newRecoveryBar(),
+		appearance: systemAppearance, Raise: func() {}, recovery: newRecoveryBar(),
 		tabBars: map[*controller.EditorGroup]*groupView{}, splitViews: map[*controller.SplitNode]*molecules.Split{},
 		toolIDs: map[string]bool{},
 	}
@@ -349,10 +352,7 @@ func (v *View) applyTheme() {
 	case "light":
 		mode = tokens.ModeLight
 	case "system":
-		if v.systemDark != nil && time.Since(v.systemAt) > 5*time.Second {
-			v.systemAt, v.systemIsDark = time.Now(), v.systemDark()
-		}
-		if !v.systemIsDark {
+		if v.appearance != nil && !v.appearance.Dark(time.Now(), v.Invalidate) {
 			mode = tokens.ModeLight
 		}
 	}
