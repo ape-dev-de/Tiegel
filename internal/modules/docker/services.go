@@ -286,7 +286,8 @@ func (m *Module) composeProject(ctx context.Context) (*compose.Project, error) {
 		return nil, nil
 	}
 	env := m.app.Options().ComposeEnv
-	found, err := compose.FindFiles(root, env)
+	// Configured files (docker.composeFiles, D523) win over the root's.
+	found, err := compose.ResolveFiles(root, api.Setting(m.app, api.SettingComposeFiles, []string{}), env)
 	if errors.Is(err, compose.ErrNoComposeFile) {
 		return nil, nil
 	}
@@ -295,7 +296,7 @@ func (m *Module) composeProject(ctx context.Context) (*compose.Project, error) {
 	}
 	var key strings.Builder
 	key.WriteString(root)
-	for _, f := range append(append([]string(nil), found.Paths...), filepath.Join(root, ".env")) {
+	for _, f := range append(append([]string(nil), found.Paths...), filepath.Join(found.Dir, ".env")) {
 		if st, err := os.Stat(f); err == nil {
 			fmt.Fprintf(&key, "|%s:%d:%d", f, st.ModTime().UnixNano(), st.Size())
 		}
@@ -308,7 +309,7 @@ func (m *Module) composeProject(ctx context.Context) (*compose.Project, error) {
 		return p, err
 	}
 	sv.mu.Unlock()
-	p, err := compose.Load(ctx, root, compose.LoadOptions{Env: env, Files: found.Paths})
+	p, err := compose.Load(ctx, found.Dir, compose.LoadOptions{Env: env, Files: found.Paths})
 	if ctx.Err() == nil {
 		sv.mu.Lock()
 		sv.cacheKey, sv.cacheVal, sv.cacheErr = key.String(), p, err

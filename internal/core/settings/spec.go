@@ -59,6 +59,12 @@ type Spec struct {
 	// (a binary, script or shell). Imports from a project's foreign
 	// configuration write it only with an explicit opt-in (D440).
 	Executable bool `json:"executable,omitempty"`
+	// Candidates names where values of this setting can be discovered
+	// (e.g. "PHPUnit scripts in the project"): the dialog then offers the
+	// result of settings.candidates as a choice list, with free input
+	// still possible (D521). settings.schema fills it for keys that have
+	// a registered candidate provider.
+	Candidates string `json:"candidates,omitempty"`
 }
 
 // Validate checks the declaration itself (not a value).

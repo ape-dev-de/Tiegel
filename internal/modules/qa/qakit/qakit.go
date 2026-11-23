@@ -73,6 +73,9 @@ type Definition struct {
 	Package string
 	// ConfigHelp explains the configuration file setting.
 	ConfigHelp string
+	// ConfigFiles are the configuration files the tool finds itself, in
+	// order of preference; they are offered as setting candidates (D522).
+	ConfigFiles []string
 	// Format makes the plugin a formatter, Analyze an analyzer (or both).
 	Format  *FormatSpec
 	Analyze *AnalyzeSpec
@@ -266,6 +269,9 @@ func (p *Plugin) Start(ctx module.Context) error {
 	p.app, p.stopped = app, false
 	p.pending, p.running = map[string]*time.Timer{}, map[string]context.CancelFunc{}
 	p.mu.Unlock()
+	if err := p.provideCandidates(ctx); err != nil {
+		return err
+	}
 	owner := hooks.WithOwner(p.def.ID)
 	ctx.OnStop(api.HookQATools.On(ctx.Hooks(), p.def.Order, func(_ context.Context, list []api.QATool) ([]api.QATool, error) {
 		return append(slices.Clone(list), p.tool()), nil

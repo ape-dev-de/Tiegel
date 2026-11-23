@@ -103,6 +103,7 @@ func newEnvWith(t *testing.T, withProject bool, extra map[string]string, prep fu
 	}
 	ctl := controller.New(controller.NewInProcess(a))
 	v := NewView(ctl, "darwin")
+	v.noSetupOffer = true // the setup sheet would cover the tested UI
 	e := &env{t: t, app: a, root: root, ctl: ctl, v: v, h: uitest.NewHarness(windowSize)}
 	t.Cleanup(func() {
 		v.Close()

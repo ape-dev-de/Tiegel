@@ -55,7 +55,7 @@ func configArg(name, config string) []string {
 // Pint is Laravel Pint: formats a temporary copy in place.
 func Pint() qakit.Definition {
 	return qakit.Definition{
-		ID: PintID, Name: "Laravel Pint", Order: 10, Program: "pint", Package: "laravel/pint",
+		ID: PintID, Name: "Laravel Pint", Order: 10, Program: "pint", ConfigFiles: []string{"pint.json"}, Package: "laravel/pint",
 		Import: &qakit.ImportSpec{Settings: "LaravelPint", Options: "LaravelPintOptionsConfiguration",
 			ConfigOptions: []string{"configPath", "config"}, Formatter: "LARAVEL_PINT"},
 		ConfigHelp: "pint.json to use; empty: Pint's own lookup (pint.json in the project root).",
@@ -69,7 +69,7 @@ func Pint() qakit.Definition {
 // explicit path overrides the configured finder; no cache).
 func PHPCSFixer() qakit.Definition {
 	return qakit.Definition{
-		ID: PHPCSFixerID, Name: "PHP-CS-Fixer", Order: 20, Program: "php-cs-fixer", Package: "friendsofphp/php-cs-fixer",
+		ID: PHPCSFixerID, Name: "PHP-CS-Fixer", Order: 20, Program: "php-cs-fixer", ConfigFiles: []string{".php-cs-fixer.php", ".php-cs-fixer.dist.php"}, Package: "friendsofphp/php-cs-fixer",
 		Import: &qakit.ImportSpec{Settings: "PhpCSFixer", Options: "PHPCSFixerOptionsConfiguration",
 			ConfigOptions: []string{"rulesetPath", "config"}, Formatter: "PHP_CS_FIXER"},
 		ConfigHelp: ".php-cs-fixer.php to use; empty: the tool's own lookup (.php-cs-fixer.php, .php-cs-fixer.dist.php).",
@@ -87,7 +87,7 @@ var phpcsConfigs = []string{".phpcs.xml", "phpcs.xml", ".phpcs.xml.dist", "phpcs
 // through stdin.
 func PHPCS() qakit.Definition {
 	return qakit.Definition{
-		ID: PHPCSID, Name: "PHP_CodeSniffer", Order: 30, Program: "phpcs", FormatProgram: "phpcbf", Package: "squizlabs/php_codesniffer",
+		ID: PHPCSID, Name: "PHP_CodeSniffer", Order: 30, Program: "phpcs", ConfigFiles: phpcsConfigs, FormatProgram: "phpcbf", Package: "squizlabs/php_codesniffer",
 		Import: &qakit.ImportSpec{Settings: "PhpCodeSniffer", Options: "PHPCodeSnifferOptionsConfiguration",
 			ConfigOptions: []string{"customRuleset"}, StandardOption: "codingStandard", Formatter: "PHP_CODE_SNIFFER"},
 		ConfigHelp: "Ruleset (phpcs.xml) or standard name (PSR12); empty: phpcs.xml in the project or the default standard.",
@@ -123,7 +123,7 @@ var phpstanConfigs = []string{"phpstan.neon", "phpstan.neon.dist", "phpstan.dist
 // PHPStan analyzes with the JSON error format.
 func PHPStan() qakit.Definition {
 	return qakit.Definition{
-		ID: PHPStanID, Name: "PHPStan", Order: 40, Program: "phpstan", Package: "phpstan/phpstan",
+		ID: PHPStanID, Name: "PHPStan", Order: 40, Program: "phpstan", ConfigFiles: phpstanConfigs, Package: "phpstan/phpstan",
 		Import:     &qakit.ImportSpec{Settings: "PhpStan", Options: "PhpStanOptionsConfiguration", ConfigOptions: []string{"config"}},
 		ConfigHelp: "phpstan.neon to use; empty: phpstan.neon(.dist) in the project.",
 		Analyze: &qakit.AnalyzeSpec{
@@ -143,7 +143,7 @@ func PHPStan() qakit.Definition {
 // Psalm analyzes with the JSON output format.
 func Psalm() qakit.Definition {
 	return qakit.Definition{
-		ID: PsalmID, Name: "Psalm", Order: 50, Program: "psalm", Package: "vimeo/psalm",
+		ID: PsalmID, Name: "Psalm", Order: 50, Program: "psalm", ConfigFiles: []string{"psalm.xml", "psalm.xml.dist"}, Package: "vimeo/psalm",
 		Import:     &qakit.ImportSpec{Settings: "Psalm", Options: "PsalmOptionsConfiguration", ConfigOptions: []string{"config"}},
 		ConfigHelp: "psalm.xml to use; empty: psalm.xml(.dist) in the project.",
 		Analyze: &qakit.AnalyzeSpec{
@@ -164,7 +164,7 @@ var phpmdConfigs = []string{"phpmd.xml", "phpmd.xml.dist", ".phpmd.xml", ".phpmd
 // PHPMD analyzes with the JSON renderer: phpmd PATHS json RULESETS.
 func PHPMD() qakit.Definition {
 	d := qakit.Definition{
-		ID: PHPMDID, Name: "PHPMD", Order: 60, Program: "phpmd", Package: "phpmd/phpmd",
+		ID: PHPMDID, Name: "PHPMD", Order: 60, Program: "phpmd", ConfigFiles: phpmdConfigs, Package: "phpmd/phpmd",
 		Import:     &qakit.ImportSpec{Settings: "MessDetector", Options: "MessDetectorOptionsConfiguration", ConfigOptions: []string{"file", "customRuleset"}},
 		ConfigHelp: "Ruleset file or list (e.g. cleancode,codesize); empty: phpmd.xml in the project or the standard rulesets.",
 	}

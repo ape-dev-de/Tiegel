@@ -28,8 +28,8 @@ func init() {
 		&command{name: "read", usage: "read FILE", summary: "print a file", minArgs: 1, maxArgs: 1, run: runRead},
 		&command{name: "lang", usage: "lang FILE...", summary: "detect the language of files", minArgs: 1, maxArgs: -1, run: runLang},
 		&command{name: "search", usage: "search FILE PATTERN [--regex] [--case] [--word] [--limit N]", summary: "find matches in a file", minArgs: 2, maxArgs: 2, run: runSearch},
-		&command{name: "interpreters", usage: "interpreters [select ID | version [ID] [--modules] [--ini]]", summary: "list, select or query PHP interpreters", maxArgs: 2, cwdProject: true, run: runInterpreters},
-		&command{name: "compose", usage: "compose [DIR] [--profile P]", summary: "detect PHP services in Docker Compose files", maxArgs: 1, cwdProject: true, run: runCompose},
+		&command{name: "interpreters", usage: "interpreters [--discover] [select|use ID | version [ID] [--modules] [--ini]]", summary: "list (--discover: also compose services and images found around the project), select or query PHP interpreters", maxArgs: 2, cwdProject: true, run: runInterpreters},
+		&command{name: "compose", usage: "compose [DIR] [--profile P] | compose discover | compose use SERVICE [--file F]...", summary: "detect PHP services in Docker Compose files (also in parent folders), list all compose files found, or use a service as interpreter", maxArgs: 2, cwdProject: true, run: runCompose},
 		&command{name: "lsp-servers", usage: "lsp-servers [--all]", summary: "installed PHP language servers of the enabled plugins (--all: also missing ones)", maxArgs: 0, cwdProject: true, run: runLSPServers},
 		&command{name: "modules", usage: "modules [enable ID | disable ID]", summary: "list, enable or disable modules", maxArgs: 2, run: runModules},
 		&command{name: "history", usage: "history FILE [--show ID | --restore ID]", summary: "Local History of a file", minArgs: 1, maxArgs: 1, cwdProject: true, run: runHistory},
@@ -305,7 +305,7 @@ func (e *quietError) Error() string { return "" }
 func runInterpreters(c *cli) error {
 	if len(c.p.args) > 0 {
 		switch c.p.args[0] {
-		case "select":
+		case "select", "use":
 			if len(c.p.args) != 2 {
 				return usagef("usage: tiegel --headless interpreters select ID")
 			}
@@ -337,7 +337,7 @@ func runInterpreters(c *cli) error {
 		}
 	}
 	var list []phpruntime.InterpreterInfo
-	if err := c.call("interp.list", nil, &list); err != nil {
+	if err := c.call("interp.list", phpruntime.InterpListParams{Discover: c.p.has("discover")}, &list); err != nil {
 		return err
 	}
 	return c.emit(list, func(w io.Writer) {
@@ -355,9 +355,15 @@ func runInterpreters(c *cli) error {
 			if v == "" {
 				v = "?"
 			}
+			if i.Discovered {
+				mark = "?"
+			}
 			fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\n", mark, i.Kind, v, i.ID, i.Label)
 		}
 		_ = tw.Flush()
+		if c.p.has("discover") {
+			fmt.Fprintln(w, "(* selected, ? discovered, not configured: use with `interpreters use ID`)")
+		}
 	})
 }
 
@@ -371,6 +377,14 @@ func sortedKeys(m map[string]string) []string {
 }
 
 func runCompose(c *cli) error {
+	switch {
+	case len(c.p.args) == 1 && c.p.args[0] == "discover":
+		return runComposeDiscover(c)
+	case len(c.p.args) == 2 && c.p.args[0] == "use":
+		return runComposeUse(c, c.p.args[1])
+	case len(c.p.args) == 2:
+		return usagef("usage: tiegel --headless %s", commands["compose"].usage)
+	}
 	params := phpruntime.ComposeParams{Profiles: c.p.flags["profile"]}
 	if len(c.p.args) > 0 {
 		params.Dir = c.p.args[0]
@@ -385,6 +399,15 @@ func runCompose(c *cli) error {
 			return
 		}
 		fmt.Fprintf(w, "Project %s: %s\n", res.Name, strings.Join(res.Files, ", "))
+		switch res.Source {
+		case "discovered":
+			fmt.Fprintf(w, "Found %s (%d level(s), not configured yet)\n", res.Relation, res.Levels)
+		case "configured":
+			fmt.Fprintln(w, "Configured in docker.composeFiles")
+		}
+		for _, o := range res.Overlays {
+			fmt.Fprintf(w, "Optional: %s\n", o)
+		}
 		fmt.Fprintf(w, "Services: %s\n", strings.Join(res.Services, ", "))
 		if len(res.Candidates) == 0 {
 			fmt.Fprintln(w, "no PHP service detected")
@@ -404,6 +427,9 @@ func runCompose(c *cli) error {
 			for _, h := range cand.XdebugHints {
 				fmt.Fprintf(w, "  %s [%s] %s\n", h.Severity, h.Code, h.Message)
 			}
+		}
+		if res.Source == "discovered" && len(res.Candidates) > 0 {
+			fmt.Fprintf(w, "\nuse with: tiegel --headless compose use %s\n", res.Candidates[0].Service)
 		}
 	})
 }

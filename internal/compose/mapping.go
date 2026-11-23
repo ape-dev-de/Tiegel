@@ -14,9 +14,9 @@ import (
 // PathMapping maps a host path to a path inside the container.
 type PathMapping struct {
 	// Host is an absolute host path (OS separators).
-	Host string
+	Host string `json:"host"`
 	// Remote is an absolute container path (forward slashes).
-	Remote string
+	Remote string `json:"remote"`
 }
 
 // Mappings is an ordered, user-editable list of path mappings. Lookups use

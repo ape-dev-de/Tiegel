@@ -17,7 +17,7 @@ func init() {
 	flagSpec["scope"] = true
 	flagSpec["effective"] = false
 	register(
-		&command{name: "settings", usage: "settings [--schema] [--module ID|core] [--query TEXT] | settings get KEY [--scope global|project] [--effective] | settings set KEY VALUE [--scope S] | settings reset KEY [--scope S]",
+		&command{name: "settings", usage: "settings [--schema] [--module ID|core] [--query TEXT] | settings get KEY [--scope global|project] [--effective] | settings set KEY VALUE [--scope S] | settings reset KEY [--scope S] | settings candidates KEY",
 			summary: "declared settings of the core and the plugins (schema with values), read, write (validated) or reset one", maxArgs: 3, cwdProject: true, run: runSettings},
 		&command{name: "editorconfig", usage: "editorconfig FILE", summary: "effective .editorconfig properties of a file", minArgs: 1, maxArgs: 1, cwdProject: true, run: runEditorConfig},
 	)
@@ -54,6 +54,8 @@ func runSettings(c *cli) error {
 			return err
 		}
 		return c.emit(v, func(w io.Writer) { fmt.Fprintf(w, "%s = %s (%s)\n", v.Key, v.Value, v.Scope) })
+	case verb == "candidates" && len(args) == 1:
+		return runSettingsCandidates(c, args[0])
 	case verb == "reset" && len(args) == 1:
 		var v api.SettingValue
 		if err := c.call("settings.set", api.SettingsSetParams{Key: args[0], Scope: scope}, &v); err != nil {

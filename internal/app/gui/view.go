@@ -23,6 +23,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/importwizard"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/palette"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/problems"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/projectsetup"
 	rtui "github.com/ape-dev-de/tiegel/internal/ui/organisms/runtime"
 	settingsui "github.com/ape-dev-de/tiegel/internal/ui/organisms/settings"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/statusbar"
@@ -125,6 +126,8 @@ type View struct {
 	MenuPresenter MenuPresenter
 	// noNativeDialog forces the Gio folder browser (tests).
 	noNativeDialog bool
+	// noSetupOffer never offers the project setup sheet on open (tests).
+	noSetupOffer bool
 
 	postMu   sync.Mutex
 	posted   []func()
@@ -143,6 +146,10 @@ type View struct {
 
 	settings     settingsui.Panel
 	settingsOpen bool
+	// setupView is the project setup sheet (projectsetup.go);
+	// setupVersion the controller version it shows.
+	setupView    projectsetup.View
+	setupVersion int
 	keymapSeen   uint64 // KeymapEdit.Version shown by the keymap page
 	mappings     []controller.Mapping
 
@@ -619,6 +626,7 @@ func (v *View) openSettings() {
 	v.ctl.LoadKeymapList()
 	v.ctl.LoadSettingsData()
 	v.ctl.LoadMonoFonts(tokens.MonospaceFamilies)
+	v.ctl.LoadDiscovered()
 	v.mappings = nil
 }
 
@@ -758,6 +766,7 @@ func (v *View) handleSettings(gtx layout.Context) {
 		}
 	}
 	setProbePanel(&p.Interpreter.Info, c.Probe)
+	fillDiscovered(&p.Discovered, c)
 	if v.mappings == nil {
 		v.mappings = append([]controller.Mapping{}, c.Mappings.Mappings...)
 	}
@@ -799,6 +808,9 @@ func (v *View) handleRuntimeEvent(e rtui.Event) {
 		v.mappings = nil
 	case rtui.ProbeRefreshEvent:
 		v.ctl.RefreshProbe(e.ID)
+	case rtui.UseDiscoveredEvent:
+		v.ctl.UseDiscovered(e.ID)
+		v.mappings = nil
 	case rtui.MappingAddEvent:
 		v.mappings = append(v.mappings, controller.Mapping{})
 	case rtui.MappingChangeEvent:

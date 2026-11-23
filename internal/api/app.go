@@ -104,6 +104,8 @@ type App struct {
 	// warnedSettings remembers the invalid stored values already logged
 	// (key, scope and raw value), so each is logged once per App.
 	warnedSettings sync.Map
+	// cands records the keys with setting candidate providers (D521).
+	cands candidateRegistry
 
 	initErrs []error
 
@@ -213,6 +215,7 @@ func New(opts Options) (*App, error) {
 	a.registerModules()
 	a.registerVersion()
 	a.registerSettings()
+	a.registerCandidates()
 	a.registerLayout()
 	a.registerFileConfig()
 	a.registerKeymap()
