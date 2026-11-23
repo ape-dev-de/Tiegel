@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
+	"github.com/ape-dev-de/tiegel/internal/core/tasks"
 	"github.com/ape-dev-de/tiegel/internal/index"
 )
 
@@ -312,12 +313,21 @@ func (s *state) sync(full bool) {
 	}
 	s.setPhase("indexing")
 	bus := s.app.Bus()
-	res, err := s.ix.Sync(s.ctx, func(p index.Progress) {
+	// The scan is a background task (D507); cancelling it stops this
+	// run only, the index keeps what it has and follows later changes.
+	task := s.app.BeginTask(s.ctx, tasks.Options{Title: "Indexing PHP files", Module: ID, Cancellable: true})
+	res, err := s.ix.Sync(task.Context(), func(p index.Progress) {
 		s.mu.Lock()
 		s.progress = p
 		s.mu.Unlock()
 		bus.Publish(TopicProgress, p)
+		if p.Phase == "scanning" {
+			task.Progress(0, 0, "Scanning files")
+		} else {
+			task.Progress(p.Done, p.Total, "")
+		}
 	})
+	task.End(err)
 	s.mu.Lock()
 	s.lastSync, s.duration = time.Now(), res.Duration
 	s.err = ""

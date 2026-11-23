@@ -23,11 +23,13 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
+	"github.com/ape-dev-de/tiegel/internal/core/tasks"
 	"github.com/ape-dev-de/tiegel/internal/run"
 )
 
@@ -175,7 +177,30 @@ func (m *Module) run(ctx context.Context, p RunParams) (run.Info, error) {
 	if err := app.CallLocal(ctx, "run.start", api.RunStartParams{Spec: &spec}, &info); err != nil {
 		return run.Info{}, err
 	}
+	m.track(app, info, "composer "+p.Script)
 	return info, nil
+}
+
+// track lists a started run as a background task (D507) until it exits;
+// cancelling the task stops the run.
+func (m *Module) track(app *api.App, info run.Info, title string) {
+	t := app.BeginTask(context.Background(), tasks.Options{Title: title, Module: ID, Cancellable: true})
+	go func() {
+		var end run.Info
+		err := app.CallLocal(t.Context(), "run.wait", api.RunIDParams{RunID: info.ID}, &end)
+		if t.Cancelled() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			_ = app.CallLocal(ctx, "run.stop", api.RunIDParams{RunID: info.ID}, nil)
+			cancel()
+		}
+		if err == nil && end.ExitCode != 0 && end.State != run.StateStopped {
+			err = fmt.Errorf("exit code %d", end.ExitCode)
+			if end.Error != "" {
+				err = errors.New(end.Error)
+			}
+		}
+		t.End(err)
+	}()
 }
 
 // executable returns the Composer executable for project root and

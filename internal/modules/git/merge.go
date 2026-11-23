@@ -9,8 +9,8 @@ import (
 )
 
 func (m *Module) registerMerge(p *api.Provider) {
-	api.Add(p, "git.merge", "Merge a branch into the current one, or continue/abort a merge (conflicts are reported, not errors)", m.gitMerge)
-	api.Add(p, "git.rebase", "Rebase the current branch onto a branch, or continue/abort a rebase (conflicts are reported, not errors)", m.gitRebase)
+	api.Add(p, "git.merge", "Merge a branch into the current one, or continue/abort a merge (conflicts are reported, not errors)", withTask(m, false, mergeTitle, m.gitMerge))
+	api.Add(p, "git.rebase", "Rebase the current branch onto a branch, or continue/abort a rebase (conflicts are reported, not errors)", withTask(m, false, rebaseTitle, m.gitRebase))
 }
 
 // MergeParams are the params of "git.merge": either Branch (merged into

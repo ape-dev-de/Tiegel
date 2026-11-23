@@ -22,12 +22,12 @@ func buildPages() []*page {
 	pages := append([]*page{
 		colorsPage(), syntaxPage(), typographyPage(),
 		labelPage(), iconPage(), buttonPage(), textFieldPage(), checkboxPage(),
-		badgePage(), tooltipPage(), dividerPage(), surfacePage(),
+		badgePage(), tooltipPage(), dividerPage(), surfacePage(), progressBarPage(),
 		searchFieldPage(), fileRowPage(), tabPage(), breakpointPage(), diffPage(),
 		treeRowPage(), toolbarPage(), tablePage(),
 		editorPage(),
 		debugToolbarPage(), callStackPage(), variablesPage(), watchesPage(), breakpointsListPage(), sessionListPage(),
-		interpreterPickerPage(), pathMappingPage(), hintsPage(), statusbarVersionPage(),
+		interpreterPickerPage(), pathMappingPage(), hintsPage(), statusbarVersionPage(), backgroundTasksPage(),
 		debugPanelPage(), settingsPage(), keymapEditorPage(),
 	}, append(gitPages(), diffPages()...)...)
 	// Group by level so the sidebar shows each level once.

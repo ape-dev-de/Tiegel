@@ -17,6 +17,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
+	"github.com/ape-dev-de/tiegel/internal/core/tasks"
 	"github.com/ape-dev-de/tiegel/internal/core/trash"
 	"github.com/ape-dev-de/tiegel/internal/core/watch"
 	"github.com/ape-dev-de/tiegel/internal/install"
@@ -121,6 +122,7 @@ type App struct {
 	runs     run.Manager      // processes of the run service (run.*, AP15.1)
 	terms    terminal.Manager // terminal sessions (terminal.*, AP15.5)
 	qa       qaStore          // findings of the quality tool plugins (qa.*)
+	tasks    *tasks.Registry  // background tasks (tasks.*, D505)
 	// ws is the workspace (several projects, projects.*) this App hosts
 	// or belongs to; nil until one is enabled.
 	ws atomic.Pointer[Workspace]
@@ -200,6 +202,7 @@ func New(opts Options) (*App, error) {
 		return nil
 	}, hooks.WithOwner("kernel"))
 
+	a.registerTasks()
 	a.registerApp()
 	a.registerProject()
 	a.registerDocs()
@@ -249,6 +252,7 @@ func (a *App) Close() error {
 	a.stopWatch()
 	a.saver.Close()
 	a.installs.CancelAll()
+	a.tasks.Close()
 	a.closeRuns()
 	a.closeTerminals()
 	a.preserveUnsaved("unsaved on exit", nil)

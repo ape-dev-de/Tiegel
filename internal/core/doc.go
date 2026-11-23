@@ -33,6 +33,9 @@
 //     optional idle timer) over an editor abstraction (DirtyDocs). Each save
 //     runs filter "file.beforeSave", writes the file, records Local History
 //     and fires action "file.saved".
+//   - tasks: registry of background tasks (indexing, git network
+//     operations, tool runs) with progress, cancellation and throttled
+//     change events ("tasks.changed", D505).
 //
 // Typical wiring:
 //
