@@ -154,6 +154,9 @@ var (
 	GlyphCommit        = NewGlyph("commit", icons.ActionCheckCircle)
 	GlyphCloud         = NewGlyph("cloud", icons.FileCloud)
 	GlyphTag           = NewGlyph("tag", icons.ActionLabel)
+	// GlyphImage marks an image (e.g. the placeholder of an image that is
+	// not shown in the Markdown reader).
+	GlyphImage = NewGlyph("image", icons.ImageImage)
 	// GlyphLocate is the crosshair of "select opened file".
 	GlyphLocate = NewGlyph("locate", icons.DeviceGPSFixed)
 )
@@ -166,7 +169,7 @@ var Glyphs = []*Glyph{
 	GlyphHistory, GlyphBranch, GlyphInfo, GlyphWarning, GlyphError, GlyphDone,
 	GlyphThemeDark, GlyphThemeLight, GlyphIndeterminate, GlyphChevronUp,
 	GlyphArrowLeft, GlyphArrowRight, GlyphUpload, GlyphEdit, GlyphDelete,
-	GlyphCommit, GlyphCloud, GlyphTag, GlyphLocate,
+	GlyphCommit, GlyphCloud, GlyphTag, GlyphLocate, GlyphImage,
 	GlyphStop, GlyphPause, GlyphStepOver, GlyphStepInto, GlyphStepOut, GlyphMute,
 	GlyphListen, GlyphCopy, GlyphComputer, GlyphContainer, GlyphMore,
 	GlyphDropDown, GlyphList, GlyphSwap,
