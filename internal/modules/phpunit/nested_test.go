@@ -42,7 +42,7 @@ func TestNestedProject(t *testing.T) {
 	modtest.Call(t, a, "test.run", api.TestRunParams{TestScope: api.TestScope{Path: "project/tests/CalcTest.php", Class: `Tests\CalcTest`, Method: "testFail"}}, &r)
 	r = waitTests(t, a, r.RunID)
 	call := readCall(t, argsFile)
-	want := []string{"vendor/bin/phpunit", "--teamcity", "--configuration", "phpunit.xml", "--filter", `/^(?:Tests\\CalcTest::testFail(?: with data set .*)?)$/`, "tests/CalcTest.php"}
+	want := []string{"vendor/bin/phpunit", "--teamcity", "--configuration", "phpunit.xml", "--filter", `/^(?:Tests\\CalcTest::testFail(?: with data set .*)?)$/`, "--log-junit", "php://stderr", "tests/CalcTest.php"}
 	if strings.Join(call.Args, " ") != strings.Join(want, " ") {
 		t.Fatalf("argv %q", call.Args)
 	}

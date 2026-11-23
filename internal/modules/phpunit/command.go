@@ -127,8 +127,9 @@ func (m *Module) buildSpec(root string, sc api.TestScope, interp string, extra [
 	}
 	exe := p.Executable
 	narrow := sc.Class != "" || sc.Method != "" || len(sc.Tests) > 0
+	parallel := false
 	if p.Parallel != "" && !narrow && setting(m, SettingParallel, false) {
-		exe = p.Parallel
+		exe, parallel = p.Parallel, true
 	}
 	// The run starts in the PHP project root (D515); paths below it are
 	// relative, so they stay valid inside an interpreter's container.
@@ -151,6 +152,10 @@ func (m *Module) buildSpec(root string, sc api.TestScope, interp string, extra [
 		args = append(args, def...)
 	}
 	args = append(args, extra...)
+	if useJUnit(parallel, p.Config, args) {
+		// Assertions per test (D536).
+		args = append(args, "--log-junit", junitTarget)
+	}
 	if sc.Path != "" {
 		args = append(args, run.ScriptPath(abs(root, sc.Path), base, root))
 	}

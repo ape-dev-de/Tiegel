@@ -69,3 +69,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-23: Kontextmenü für Tests im Projektbaum und Editor: Run/Debug von Testverzeichnissen, Testdateien, „Run All Tests“ auf Elternordnern, „Run … with Filter…“ (PHPUnit `--filter`) und Modify Run Configuration… (D533).
 - 2026-11-23: Tests-Fenster: Konsole des Laufs (Header, Fehlerblöcke, Zusammenfassung), gesammelte Ausgaben je Klasse/Suite, farbige Status-Icons (grün/orange/rot), Fortschrittsbalken; `test.node` ohne ID liefert die Konsole (D535). Mit PHPUnit 11.5 geprüft.
 - 2026-11-23: Markdown-Reader ohne WebView: Parser `internal/markdown` (goldmark), API `md.*`, headless `md`, Organismus `mdview`, Vorschau-Tab (auch daneben) mit Live-Update, Links, lokalen Bildern; kursive UI-Schrift auf macOS (D534).
+- 2026-11-23: Tests-Fenster zeigt Assertions je Test/Klasse/Lauf und die Fundstelle des Tests (JUnit-Log über stderr, D536). Mit PHPUnit 11.5 geprüft.

@@ -80,8 +80,13 @@ type Node struct {
 	Output string `json:"output,omitempty"`
 	// OutputTruncated is the number of bytes of earlier output that were
 	// dropped (limits per test and per run).
-	OutputTruncated int64   `json:"outputTruncated,omitempty"`
-	Children        []*Node `json:"children,omitempty"`
+	OutputTruncated int64 `json:"outputTruncated,omitempty"`
+	// Assertions is the number of assertions (from the runner's JUnit
+	// log after the run, see Annotate; summed up for suites), Line the
+	// 1-based declaration line of a test (0 = unknown).
+	Assertions int     `json:"assertions,omitempty"`
+	Line       int     `json:"line,omitempty"`
+	Children   []*Node `json:"children,omitempty"`
 
 	flow       string
 	parent     *Node
@@ -117,6 +122,9 @@ type Counts struct {
 	Terminated int `json:"terminated"`
 	// Expected is the announced number of tests (testCount, 0 if none).
 	Expected int `json:"expected,omitempty"`
+	// Assertions is the sum of the tests' assertions (known after the
+	// run when the runner reports them).
+	Assertions int `json:"assertions,omitempty"`
 }
 
 // Tree builds the result tree of one run from service messages. It is
@@ -553,13 +561,16 @@ func copyNode(n *Node, light bool) *Node {
 	}
 	c.Children = make([]*Node, len(n.Children))
 	var sum int64
+	asserts := 0
 	for i, ch := range n.Children {
 		c.Children[i] = copyNode(ch, light)
 		sum += c.Children[i].DurationMs
+		asserts += c.Children[i].Assertions
 	}
 	if !n.Kind.IsTest() {
 		c.DurationMs = sum
 		c.Status = aggregate(c.Children)
+		c.Assertions = asserts
 	}
 	return &c
 }
@@ -621,6 +632,7 @@ func (t *Tree) Counts() Counts {
 		for _, n := range ns {
 			if n.Kind.IsTest() {
 				c.Total++
+				c.Assertions += n.Assertions
 				switch n.Status {
 				case StatusPassed:
 					c.Passed++
@@ -639,6 +651,31 @@ func (t *Tree) Counts() Counts {
 	}
 	walk(t.roots)
 	return c
+}
+
+// Annotate sets the assertion count and declaration line of the test
+// with id (as reported by a JUnit log); a method whose data sets are
+// the tests gets the sum. It reports whether the test is in the tree.
+func (t *Tree) Annotate(id string, assertions, line int) bool {
+	n := t.byID[id]
+	if n == nil {
+		return false
+	}
+	n.Assertions = assertions
+	if line > 0 {
+		n.Line = line
+	}
+	if p := n.parent; n.Kind == KindDataSet && p != nil && p.Kind == KindMethod {
+		sum := 0
+		for _, ch := range p.Children {
+			sum += ch.Assertions
+		}
+		p.Assertions = sum
+		if line > 0 {
+			p.Line = line
+		}
+	}
+	return true
 }
 
 // Tests returns the tests (leaves) with status st ("" = all), in tree

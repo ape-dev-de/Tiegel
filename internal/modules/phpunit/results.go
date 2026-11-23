@@ -21,6 +21,7 @@ import (
 type session struct {
 	run   api.TestRun
 	tree  *teamcity.Tree
+	junit junitCollector
 	timer *time.Timer
 	dirty bool
 	done  bool
@@ -55,6 +56,12 @@ func (m *Module) onRun(e bus.Event) {
 		changed := false
 		for _, l := range o.Lines {
 			if l.Stream == run.StreamSystem {
+				continue
+			}
+			if s.junit.feed(l.Text, s.tree) {
+				if s.junit.done {
+					changed = true
+				}
 				continue
 			}
 			if s.tree.Feed(l.Text) {
@@ -297,6 +304,7 @@ func (m *Module) node(_ context.Context, p api.TestNodeParams) (teamcity.Node, e
 		n := teamcity.Node{Name: s.run.Name, Kind: teamcity.KindSuite, Output: s.tree.Console(), Status: teamcity.StatusPassed}
 		for _, r := range s.tree.SnapshotLight() {
 			n.DurationMs += r.DurationMs
+			n.Assertions += r.Assertions
 			n.Children = append(n.Children, &r)
 		}
 		n.Status = teamcity.Aggregate(n.Children)

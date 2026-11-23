@@ -524,6 +524,9 @@ func (d *testDock) summary() string {
 	if c.Ignored > 0 {
 		s += fmt.Sprintf(", %d skipped", c.Ignored)
 	}
+	if c.Assertions > 0 {
+		s += ", " + plural(c.Assertions, "assertion")
+	}
 	if c.Terminated > 0 {
 		s += fmt.Sprintf(", %d terminated", c.Terminated)
 	}
@@ -628,6 +631,9 @@ func detailLines(n *teamcity.Node, rel func(string) string) []string {
 	if n.Kind.IsTest() || n.DurationMs > 0 {
 		head += fmt.Sprintf(" · %d ms", n.DurationMs)
 	}
+	if n.Assertions > 0 {
+		head += " · " + plural(n.Assertions, "assertion")
+	}
 	title := n.ID
 	if title == "" {
 		title = n.Name
@@ -645,6 +651,12 @@ func detailLines(n *teamcity.Node, rel func(string) string) []string {
 	}
 	if n.FailFile != "" {
 		lines = append(lines, "", fmt.Sprintf("at %s:%d", rel(n.FailFile), n.FailLine))
+	} else if n.File != "" && n.Kind.IsTest() {
+		loc := rel(n.File)
+		if n.Line > 0 {
+			loc += fmt.Sprintf(":%d", n.Line)
+		}
+		lines = append(lines, "Test at "+loc)
 	}
 	if n.Details != "" {
 		lines = append(lines, "")
@@ -657,7 +669,7 @@ func detailLines(n *teamcity.Node, rel func(string) string) []string {
 	case n.Output != "":
 		lines = append(lines, "")
 		lines = append(lines, strings.Split(n.Output, "\n")...)
-	case !n.Kind.IsTest() && n.Status != teamcity.StatusRunning:
+	case n.Status != teamcity.StatusRunning:
 		lines = append(lines, "", "No output.")
 	}
 	return lines
