@@ -74,6 +74,9 @@ type ToolWindow struct {
 	Badge func() (string, atoms.BadgeKind)
 	// Layout draws the content; it fills the given constraints.
 	Layout func(gtx layout.Context, th *tokens.Theme) layout.Dimensions
+	// Actions (optional) draws extra header buttons left of the standard
+	// ones (e.g. "Select Opened File" of the project tree).
+	Actions func(gtx layout.Context, th *tokens.Theme) layout.Dimensions
 	// OnOpen is called when the window is shown (may be nil).
 	OnOpen func()
 	// Share is the minimum share of the editor column a bottom panel

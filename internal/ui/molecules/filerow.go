@@ -117,18 +117,34 @@ func (r *FileRow) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions
 	r.Update(gtx)
 	return r.row.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		h := gtx.Dp(th.Size.RowH)
+		wide := Wide(gtx)
 		w := draw.Width(gtx, gtx.Dp(240))
-		size := image.Pt(w, h)
-		switch {
-		case r.Selected:
-			draw.Rect(gtx.Ops, image.Rectangle{Max: size}, th.Color.Selection)
-		case r.row.Hovered():
-			draw.Rect(gtx.Ops, image.Rectangle{Max: size}, th.Color.SurfaceHover)
+		if wide {
+			w = gtx.Constraints.Min.X
 		}
 
 		indent := gtx.Dp(th.Space.XS) + r.Depth*gtx.Dp(th.Size.IndentStep)
+		padR := gtx.Dp(th.Space.S)
 		cgtx := gtx
-		cgtx.Constraints = layout.Constraints{Max: image.Pt(max(0, w-indent-gtx.Dp(th.Space.S)), h)}
+		cgtx.Constraints = layout.Constraints{Max: image.Pt(max(0, w-indent-padR), h)}
+		// text holds the name and the detail; it fills the row unless the
+		// row takes its natural width (horizontal scrolling).
+		text := layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.X = 0
+			return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
+				layout.Rigid(atoms.Label{Text: r.Name, Color: r.Status.Color(th), MaxLines: 1}.Fn(th)),
+				layout.Flexed(1, r.layoutDetail(th)),
+			)
+		})
+		if wide {
+			cgtx.Constraints.Max.X = draw.Unbounded
+			text = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
+					layout.Rigid(atoms.Label{Text: r.Name, Color: r.Status.Color(th), MaxLines: 1}.Fn(th)),
+					layout.Rigid(r.layoutDetail(th)),
+				)
+			})
+		}
 		m := op.Record(gtx.Ops)
 		d := layout.Flex{Alignment: layout.Middle}.Layout(cgtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -138,26 +154,35 @@ func (r *FileRow) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions
 				return layout.Inset{Left: th.Space.XXS, Right: th.Space.XS + th.Space.XXS}.Layout(gtx,
 					atoms.Icon{Glyph: r.glyph(), Color: r.iconColor(th)}.Fn(th))
 			}),
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Min.X = 0
-				return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
-					layout.Rigid(atoms.Label{Text: r.Name, Color: r.Status.Color(th), MaxLines: 1}.Fn(th)),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						if r.Detail == "" {
-							return layout.Dimensions{}
-						}
-						gtx.Constraints.Min.X = 0
-						return layout.Inset{Left: th.Space.S}.Layout(gtx, atoms.Small(r.Detail).SingleLine().Fn(th))
-					}),
-				)
-			}),
+			text,
 		)
 		call := m.Stop()
+		if wide {
+			w = max(w, indent+d.Size.X+padR)
+		}
+		size := image.Pt(w, h)
+		switch {
+		case r.Selected:
+			draw.Rect(gtx.Ops, image.Rectangle{Max: size}, th.Color.Selection)
+		case r.row.Hovered():
+			draw.Rect(gtx.Ops, image.Rectangle{Max: size}, th.Color.SurfaceHover)
+		}
 		t := op.Offset(image.Pt(indent, (h-d.Size.Y)/2)).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		t.Pop()
 		return layout.Dimensions{Size: size}
 	})
+}
+
+// layoutDetail draws the muted detail after the name.
+func (r *FileRow) layoutDetail(th *tokens.Theme) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		if r.Detail == "" {
+			return layout.Dimensions{}
+		}
+		gtx.Constraints.Min.X = 0
+		return layout.Inset{Left: th.Space.S}.Layout(gtx, atoms.Small(r.Detail).SingleLine().Fn(th))
+	}
 }
 
 func (r *FileRow) layoutArrow(gtx layout.Context, th *tokens.Theme) layout.Dimensions {

@@ -236,6 +236,7 @@ func (p *CommitPanel) layoutTree(gtx layout.Context, th *tokens.Theme) layout.Di
 	event.Op(gtx.Ops, &p.focus)
 	area.Pop()
 	return layout.Inset{Top: th.Space.XXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		p.list.Horizontal = true
 		return p.list.Layout(gtx, th, len(p.rows), func(gtx layout.Context, i int) layout.Dimensions {
 			return p.layoutRow(gtx, th, p.rows[i])
 		})
@@ -250,6 +251,16 @@ func syncBox(gtx layout.Context, cb *atoms.Checkbox, state atoms.CheckState, dis
 		return cb.State, true
 	}
 	return state, false
+}
+
+// fill is a Flexed(1) child, or a Rigid one when gtx lays out a row at its
+// natural width (horizontal scrolling, molecules.Wide): there the content
+// is not truncated and the row grows instead.
+func fill(gtx layout.Context, w layout.Widget) layout.FlexChild {
+	if molecules.Wide(gtx) {
+		return layout.Rigid(w)
+	}
+	return layout.Flexed(1, w)
 }
 
 func arrowGlyph(open bool) *atoms.Glyph {
@@ -375,7 +386,7 @@ func (p *CommitPanel) layoutRow(gtx layout.Context, th *tokens.Theme, r panelRow
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return arr.Layout(gtx, th) }),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return cb.Layout(gtx, th) }),
 					layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					fill(gtx, func(gtx layout.Context) layout.Dimensions {
 						return atoms.Label{Text: hk.Header(), Role: atoms.RoleCode, Color: th.Color.TextMuted, MaxLines: 1}.Layout(gtx, th)
 					}),
 				)
@@ -387,6 +398,10 @@ func (p *CommitPanel) layoutRow(gtx layout.Context, th *tokens.Theme, r panelRow
 		h, l := r.hunk, r.line
 		dl := f.change.Diff.Hunks[h].Lines[l]
 		in := layout.Inset{Left: th.Space.S + th.Size.IndentStep*unit.Dp(r.depth) + small}
+		if molecules.Wide(gtx) {
+			// Diff lines keep the visible width (no horizontal growth).
+			gtx.Constraints.Max.X = gtx.Constraints.Min.X
+		}
 		return in.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -509,10 +524,10 @@ func (p *CommitPanel) layoutFileContent(gtx layout.Context, th *tokens.Theme, f 
 			return layout.Inset{Left: th.Space.S, Right: th.Space.XS + th.Space.XXS}.Layout(gtx,
 				atoms.Icon{Glyph: glyph, Color: th.Color.TextMuted}.Fn(th))
 		}),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+		fill(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
 				layout.Rigid(atoms.Label{Text: name, Color: status.Color(th), MaxLines: 1}.Fn(th)),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				fill(gtx, func(gtx layout.Context) layout.Dimensions {
 					if detail == "" {
 						return layout.Dimensions{}
 					}

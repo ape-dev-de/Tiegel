@@ -48,8 +48,27 @@ func (v *View) installProjectTool() {
 	v.Registry.AddToolWindow(ToolWindow{
 		ID: ToolProject, Title: "Project", Glyph: atoms.GlyphFolder, Side: Left, Order: 0,
 		Mac: "Cmd+1", PC: "Alt+1", ActionID: ActProjectView,
-		Layout: func(gtx layout.Context, th *tokens.Theme) layout.Dimensions { return v.tree.Layout(gtx, th) },
+		Layout:  func(gtx layout.Context, th *tokens.Theme) layout.Dimensions { return v.tree.Layout(gtx, th) },
+		Actions: v.layoutProjectActions,
 	})
+}
+
+// layoutProjectActions draws the project tree's header button "Select
+// Opened File" (the active editor's file in the tree).
+func (v *View) layoutProjectActions(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	b := &v.locateBtn
+	b.Glyph, b.Size, b.IconSize = atoms.GlyphLocate, th.Size.ControlH-th.Space.XS, th.Size.IconSmall
+	t := v.ctl.ActiveTab()
+	b.Disabled = t == nil || t.Virtual != ""
+	b.Description = "Select Opened File"
+	if c := v.Registry.ChordText(ActSelectInTree, v.goos); c != "" {
+		b.Description += " (" + c + ")"
+	}
+	if b.Clicked(gtx) {
+		v.runAction(ActSelectInTree)
+	}
+	v.locateTip.Text = b.Description
+	return v.locateTip.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions { return b.Layout(gtx, th) })
 }
 
 // syncTools registers the registry's tool windows in the layout (on
@@ -195,6 +214,9 @@ func (v *View) toolSlots(slots *templates.Slots) {
 				continue
 			}
 			p := templates.Panel{ID: t.ID, Title: t.Title, Content: func(gtx layout.Context) layout.Dimensions { return t.Layout(gtx, th) }}
+			if t.Actions != nil {
+				p.Actions = func(gtx layout.Context) layout.Dimensions { return t.Actions(gtx, th) }
+			}
 			for _, tid := range l.TabsOf(side, g) {
 				if tt, ok := v.Registry.ToolWindow(tid); ok {
 					p.Tabs = append(p.Tabs, templates.PanelTab{ID: tid, Title: tt.Title})

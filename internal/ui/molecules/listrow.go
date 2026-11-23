@@ -54,18 +54,29 @@ func (r *ListRow) Update(gtx layout.Context) (clicked, double bool) {
 func (r *ListRow) Hovered() bool { return r.click.Hovered() }
 
 // Layout draws the row. Content is laid out with the row's inner width as
-// maximum and no minimum. Call Update before Layout to observe clicks;
+// maximum and no minimum; in a horizontally scrolling list (Wide) the
+// maximum is unbounded and the row grows to the content's width. Call Update before Layout to observe clicks;
 // Layout does not consume them.
 func (r *ListRow) Layout(gtx layout.Context, th *tokens.Theme, content layout.Widget) layout.Dimensions {
 	return r.click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		wide := Wide(gtx)
 		w := draw.Width(gtx, gtx.Dp(240))
+		if wide {
+			w = gtx.Constraints.Min.X
+		}
 		padL := gtx.Dp(th.Space.S) + gtx.Dp(r.Indent)
 		padR := gtx.Dp(th.Space.S)
 		cgtx := gtx
 		cgtx.Constraints = layout.Constraints{Max: image.Pt(max(0, w-padL-padR), draw.Unbounded)}
+		if wide {
+			cgtx.Constraints.Max.X = draw.Unbounded
+		}
 		m := op.Record(gtx.Ops)
 		d := content(cgtx)
 		call := m.Stop()
+		if wide {
+			w = max(w, padL+d.Size.X+padR)
+		}
 		h := max(gtx.Dp(th.Size.RowH), d.Size.Y)
 		size := image.Pt(w, h)
 		switch {

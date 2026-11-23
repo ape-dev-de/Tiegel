@@ -74,8 +74,12 @@ type View struct {
 	systemAt     time.Time
 	systemIsDark bool
 
-	bench        templates.Workbench
-	tree         filetree.Tree
+	bench templates.Workbench
+	tree  filetree.Tree
+	// locateBtn and locateTip are the project tree's "Select Opened
+	// File" header button.
+	locateBtn    atoms.IconButton
+	locateTip    atoms.Tooltip
 	treeSeen     [2]uint64 // tree and git versions applied to the organism
 	tabBars      map[*controller.EditorGroup]*groupView
 	splitViews   map[*controller.SplitNode]*molecules.Split

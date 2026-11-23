@@ -2,6 +2,7 @@ package molecules_test
 
 import (
 	"image"
+	"strings"
 	"testing"
 
 	"gioui.org/f32"
@@ -272,4 +273,74 @@ func drag(h *uitest.Harness, a, b image.Point) {
 		h.Router.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt(p)})
 	}
 	h.Router.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt(b)})
+}
+
+func TestScrollListHorizontal(t *testing.T) {
+	view := image.Pt(200, 200)
+	s := molecules.ScrollList{Horizontal: true}
+	rows := make([]*molecules.FileRow, 20)
+	for i := range rows {
+		rows[i] = &molecules.FileRow{Name: "short.php"}
+	}
+	rows[3].Name = strings.Repeat("VeryLongDirectoryName", 8) + ".php"
+	rows[3].Selected = true
+	var mins []int
+	w := func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+		mins = mins[:0]
+		return s.Layout(gtx, th, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
+			if !molecules.Wide(gtx) {
+				t.Fatalf("row %d not wide: %v", i, gtx.Constraints)
+			}
+			mins = append(mins, gtx.Constraints.Min.X)
+			return rows[i].Layout(gtx, th)
+		})
+	}
+	h := uitest.NewHarness(view)
+	if d := h.Frame(w); d.Size != view {
+		t.Fatalf("size %v", d.Size)
+	}
+	h.Frame(w)
+	if s.XOffset() != 0 || mins[0] != view.X {
+		t.Fatalf("offset %d, row min %d", s.XOffset(), mins[0])
+	}
+	// A horizontal wheel/trackpad scroll moves the content.
+	h.Router.Queue(
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(50, 50)},
+		pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: f32.Pt(50, 50), Scroll: f32.Pt(120, 0)},
+	)
+	h.Frame(w)
+	h.Frame(w)
+	if s.XOffset() <= 0 {
+		t.Fatalf("horizontal scroll ignored: offset %d", s.XOffset())
+	}
+	// Rows fill the visible extent while scrolled.
+	if mins[0] != view.X+s.XOffset() {
+		t.Errorf("row min %d with offset %d", mins[0], s.XOffset())
+	}
+	// Scrolling far right clamps to the widest row.
+	for range 50 {
+		h.Router.Queue(pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: f32.Pt(50, 50), Scroll: f32.Pt(500, 0)})
+		h.Frame(w)
+	}
+	far := s.XOffset()
+	rows[3].Name = "short.php"
+	// Without the wide row the range shrinks once scrolled back.
+	for range 50 {
+		h.Router.Queue(pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: f32.Pt(50, 50), Scroll: f32.Pt(-500, 0)})
+		h.Frame(w)
+	}
+	h.Frame(w)
+	if far <= 0 || s.XOffset() != 0 {
+		t.Errorf("far %d, back %d", far, s.XOffset())
+	}
+	// Dragging the horizontal bar works too (no panic, offset in range).
+	rows[3].Name = strings.Repeat("x", 300)
+	h.Frame(w)
+	h.Frame(w)
+	h.Drag(image.Pt(10, view.Y-4), image.Pt(150, view.Y-4))
+	h.Frame(w)
+	h.Frame(w)
+	if s.XOffset() <= 0 {
+		t.Errorf("bar drag: offset %d", s.XOffset())
+	}
 }

@@ -349,7 +349,7 @@ func (d *workDock) selectInTree() {
 		return
 	}
 	v.ShowTool(ToolProject)
-	v.tree.Select(t.Path)
+	v.tree.Reveal(t.Path)
 	v.ctl.LoadAncestors(t.Path)
 }
 

@@ -2,6 +2,7 @@ package gui
 
 import (
 	"context"
+	"image"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,12 +10,16 @@ import (
 	"time"
 
 	"gioui.org/io/key"
+	"gioui.org/layout"
 
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
+	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	debugui "github.com/ape-dev-de/tiegel/internal/ui/organisms/debug"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/diff"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/filetree"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/palette"
+	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
+	"github.com/ape-dev-de/tiegel/internal/ui/uitest"
 )
 
 // End-to-end tests of the work dock: real api.App, real git, real file
@@ -308,5 +313,23 @@ func TestTabMenuCloseVariants(t *testing.T) {
 	e.frame()
 	if e.v.tree.Selected() != "src/Shop.php" || !e.v.ToolShown(ToolProject) {
 		t.Fatalf("select in tree %q", e.v.tree.Selected())
+	}
+	// The project panel header offers the same as a button.
+	if tw, ok := e.v.Registry.ToolWindow(ToolProject); !ok || tw.Actions == nil {
+		t.Fatal("project tool window without header actions")
+	}
+	if e.v.locateBtn.Glyph != atoms.GlyphLocate || e.v.locateBtn.Disabled ||
+		!strings.HasPrefix(e.v.locateTip.Text, "Select Opened File") {
+		t.Fatalf("locate button %+v tip %q", e.v.locateBtn, e.v.locateTip.Text)
+	}
+	e.v.tree.Select("index.php")
+	bh := uitest.NewHarness(image.Pt(60, 40))
+	bw := func(gtx layout.Context, th *tokens.Theme) layout.Dimensions { return e.v.layoutProjectActions(gtx, th) }
+	bh.Frame(bw)
+	bh.Click(image.Pt(10, 10))
+	bh.Frame(bw)
+	e.frame()
+	if e.v.tree.Selected() != "src/Shop.php" {
+		t.Fatalf("locate button selected %q", e.v.tree.Selected())
 	}
 }

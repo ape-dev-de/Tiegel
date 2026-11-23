@@ -154,6 +154,8 @@ var (
 	GlyphCommit        = NewGlyph("commit", icons.ActionCheckCircle)
 	GlyphCloud         = NewGlyph("cloud", icons.FileCloud)
 	GlyphTag           = NewGlyph("tag", icons.ActionLabel)
+	// GlyphLocate is the crosshair of "select opened file".
+	GlyphLocate = NewGlyph("locate", icons.DeviceGPSFixed)
 )
 
 // Glyphs lists all built-in glyphs (for the catalog and tests).
@@ -164,7 +166,7 @@ var Glyphs = []*Glyph{
 	GlyphHistory, GlyphBranch, GlyphInfo, GlyphWarning, GlyphError, GlyphDone,
 	GlyphThemeDark, GlyphThemeLight, GlyphIndeterminate, GlyphChevronUp,
 	GlyphArrowLeft, GlyphArrowRight, GlyphUpload, GlyphEdit, GlyphDelete,
-	GlyphCommit, GlyphCloud, GlyphTag,
+	GlyphCommit, GlyphCloud, GlyphTag, GlyphLocate,
 	GlyphStop, GlyphPause, GlyphStepOver, GlyphStepInto, GlyphStepOut, GlyphMute,
 	GlyphListen, GlyphCopy, GlyphComputer, GlyphContainer, GlyphMore,
 	GlyphDropDown, GlyphList, GlyphSwap,

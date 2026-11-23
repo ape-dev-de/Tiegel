@@ -104,6 +104,9 @@ type Tree struct {
 	list     molecules.ScrollList
 	focus    int
 	focused  bool
+	// reveal is a path to scroll into view once its row exists (the host
+	// may still be loading its directories).
+	reveal string
 }
 
 // Focused reports whether the tree has the keyboard focus.
@@ -125,12 +128,24 @@ func (t *Tree) Expanded(p string) bool { return t.expanded[p] }
 func (t *Tree) SetExpanded(p string, on bool) {
 	if t.expanded == nil {
 		t.expanded = map[string]bool{}
+		if t.Root != nil {
+			// The root starts expanded (as in flatten).
+			t.expanded[t.Root.Path] = true
+		}
 	}
 	t.expanded[p] = on
 }
 
 // Selected returns the selected path.
 func (t *Tree) Selected() string { return t.selected }
+
+// Reveal selects p, expands its parent directories and scrolls its row
+// into view as soon as it is part of the tree (directories still loading
+// are waited for).
+func (t *Tree) Reveal(p string) {
+	t.Select(p)
+	t.reveal = p
+}
 
 // Select selects p and expands its parent directories.
 func (t *Tree) Select(p string) {
@@ -235,6 +250,8 @@ func (t *Tree) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 }
 
 func (t *Tree) layoutRows(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	t.list.Horizontal = true
+	t.scrollToReveal()
 	return t.list.Layout(gtx, th, len(t.flat), func(gtx layout.Context, i int) layout.Dimensions {
 		fr := t.flat[i]
 		n := fr.node
@@ -262,6 +279,25 @@ func (t *Tree) layoutRows(gtx layout.Context, th *tokens.Theme) layout.Dimension
 		}
 		return t.areas[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions { return r.Layout(gtx, th) })
 	})
+}
+
+// scrollToReveal scrolls a pending Reveal target into view.
+func (t *Tree) scrollToReveal() {
+	if t.reveal == "" {
+		return
+	}
+	for i, fr := range t.flat {
+		if fr.node.Path != t.reveal {
+			continue
+		}
+		t.reveal = ""
+		first, last := t.list.FirstVisible(), t.list.LastVisible()
+		if last < 0 || i < first || i >= last {
+			// Keep a few rows of context above the target.
+			t.list.ScrollTo(i - 3)
+		}
+		return
+	}
 }
 
 // treeKeys are the keys the focused tree handles.

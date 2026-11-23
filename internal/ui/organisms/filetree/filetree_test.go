@@ -1,6 +1,7 @@
 package filetree
 
 import (
+	"fmt"
 	"image"
 	"testing"
 
@@ -103,5 +104,42 @@ func TestGlyphAndStatus(t *testing.T) {
 		if StatusFromGit(s) != want {
 			t.Errorf("status %q", s)
 		}
+	}
+}
+
+func TestTreeRevealScrolls(t *testing.T) {
+	src := &Node{Name: "src", Path: "src", Dir: true}
+	root := &Node{Name: "shop", Dir: true, Loaded: true, Children: []*Node{src}}
+	for i := range 300 {
+		root.Children = append(root.Children, &Node{Name: fmt.Sprintf("f%03d.php", i), Path: fmt.Sprintf("f%03d.php", i)})
+	}
+	tr := &Tree{Root: root}
+	w := func(gtx layout.Context, th *tokens.Theme) layout.Dimensions { return tr.Layout(gtx, th) }
+	h := uitest.NewHarness(image.Pt(300, 400))
+	h.Frame(w)
+	// The target's directory is still loading: the scroll waits for it.
+	tr.Reveal("src/deep/Target.php")
+	h.Frame(w)
+	if tr.list.FirstVisible() != 0 || !tr.Expanded("src") || !tr.Expanded("src/deep") {
+		t.Fatalf("first %d, src expanded %v", tr.list.FirstVisible(), tr.Expanded("src"))
+	}
+	deep := &Node{Name: "deep", Path: "src/deep", Dir: true, Loaded: true}
+	src.Loaded, src.Children = true, []*Node{deep}
+	h.Frame(w)
+	if tr.reveal == "" {
+		t.Fatal("reveal dropped before the row existed")
+	}
+	deep.Children = []*Node{{Name: "Target.php", Path: "src/deep/Target.php"}}
+	h.Frame(w)
+	h.Frame(w)
+	if tr.reveal != "" || tr.Selected() != "src/deep/Target.php" {
+		t.Fatalf("reveal pending %q, selected %q", tr.reveal, tr.Selected())
+	}
+	// A row far below is scrolled into view.
+	tr.Reveal("f250.php")
+	h.Frame(w)
+	h.Frame(w)
+	if f, l := tr.list.FirstVisible(), tr.list.LastVisible(); f > 254 || l < 254 {
+		t.Fatalf("f250 (row 254) not visible: %d..%d", f, l)
 	}
 }
