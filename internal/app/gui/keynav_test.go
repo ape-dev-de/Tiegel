@@ -190,7 +190,10 @@ func TestPasteFromHistory(t *testing.T) {
 // Next/Previous Highlighted Error and Quick Documentation show the
 // diagnostics at the caret.
 func TestNextErrorAndQuickDoc(t *testing.T) {
-	e := newEnv(t, true)
+	// The project targets a PHP version that fits the sample code, so the
+	// PHP version check adds no diagnostic of its own (it raced with the
+	// published ones and could come first).
+	e := newEnvWith(t, true, map[string]string{"composer.json": `{"require": {"php": "^8.3"}}`}, nil)
 	file := filepath.Join(e.root, "src", "Shop.php")
 	s := e.openEditor("src/Shop.php")
 	e.app.Bus().Publish(api.TopicLSPDiagnostics, map[string]any{

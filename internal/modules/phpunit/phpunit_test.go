@@ -815,3 +815,25 @@ func TestRunOfPreviousProjectIgnored(t *testing.T) {
 		t.Fatal("sameProject")
 	}
 }
+
+// A late project.opened of the same project keeps a run started meanwhile
+// (the event is delivered asynchronously); another project drops it.
+func TestResetKeepsRunsOfCurrentProject(t *testing.T) {
+	a, m := newApp(t)
+	root := modtest.Project(t, a, fixture())
+	useFake(t, a, root)
+	var r api.TestRun
+	modtest.Call(t, a, "test.run", api.TestRunParams{TestScope: api.TestScope{Path: "tests/CalcTest.php"}}, &r)
+	m.reset() // the late event
+	var got api.TestRun
+	modtest.Call(t, a, "test.results", api.TestRunIDParams{RunID: r.RunID}, &got)
+	if got.RunID != r.RunID {
+		t.Fatalf("results %+v", got)
+	}
+	waitTests(t, a, r.RunID)
+	modtest.Project(t, a, fixture())
+	m.reset()
+	if err := a.CallLocal(context.Background(), "test.results", api.TestRunIDParams{RunID: r.RunID}, nil); err == nil {
+		t.Fatal("run of the previous project kept")
+	}
+}

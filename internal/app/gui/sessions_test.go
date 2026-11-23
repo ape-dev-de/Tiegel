@@ -247,9 +247,8 @@ func TestSessionsHibernateResumeRestoresTabs(t *testing.T) {
 	if e.cur().Project.Root != e.rootA || len(e.s.slots) != 1 {
 		t.Fatalf("shown %s, slots %d", e.cur().Project.Root, len(e.s.slots))
 	}
-	if beta.ctl.Context().Err() == nil {
-		t.Fatal("beta's controller still open")
-	}
+	// The controller closes in the background (it may wait for jobs).
+	e.waitFor("beta's controller closed", func() bool { return beta.ctl.Context().Err() != nil })
 	open, _ := e.s.Projects()
 	if len(open) != 2 || open[1].State != toolbar.ProjectHibernated {
 		t.Fatalf("projects %+v", open)

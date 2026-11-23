@@ -72,6 +72,8 @@ type Module struct {
 	sessions map[string]*session
 	order    []string // run IDs, oldest first
 	last     map[string]teamcity.Status
+	// resetRoot is the project the last reset was for.
+	resetRoot string
 }
 
 // New creates the module.
@@ -173,13 +175,38 @@ func (m *Module) Stop() error {
 }
 
 // reset forgets the results of the previous project.
+//
+// project.opened arrives asynchronously, possibly after a test run of the
+// new project already started (a client calling test.run right after
+// opening it), so only runs of other projects are dropped and the last
+// statuses are cleared only when the project really changed.
 func (m *Module) reset() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, s := range m.sessions {
-		s.stopTimer()
+	app := m.app
+	m.mu.Unlock()
+	root := ""
+	if app != nil {
+		root = app.ProjectRoot()
 	}
-	m.sessions, m.order, m.last = map[string]*session{}, nil, map[string]teamcity.Status{}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	order := m.order[:0]
+	for _, id := range m.order {
+		s := m.sessions[id]
+		if s != nil && root != "" && s.run.Project != "" && sameProject(s.run.Project, root) {
+			order = append(order, id)
+			continue
+		}
+		if s != nil {
+			s.stopTimer()
+		}
+		delete(m.sessions, id)
+	}
+	m.order = order
+	if root == "" || !sameProject(m.resetRoot, root) {
+		m.last = map[string]teamcity.Status{}
+	}
+	m.resetRoot = root
 }
 
 // setting reads a setting of the module (project before global).
