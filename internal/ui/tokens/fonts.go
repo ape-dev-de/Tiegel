@@ -129,7 +129,7 @@ func variableInstances(fps []fontscan.Footprint, families []string) []font.FontF
 		if norm == gtfont.NormalizeFamily(uiAlias) {
 			continue
 		}
-		var regular *fontscan.Footprint
+		var regular, italic *fontscan.Footprint
 		hasBold := false
 		for i := range fps {
 			fp := &fps[i]
@@ -141,6 +141,9 @@ func variableInstances(fps []fontscan.Footprint, families []string) []font.FontF
 			}
 			if fp.Aspect.Style == gtfont.StyleNormal && (regular == nil || regularity(fp.Aspect) < regularity(regular.Aspect)) {
 				regular = fp
+			}
+			if fp.Aspect.Style == gtfont.StyleItalic && (italic == nil || regularity(fp.Aspect) < regularity(italic.Aspect)) {
+				italic = fp
 			}
 		}
 		if regular == nil {
@@ -164,9 +167,36 @@ func variableInstances(fps []fontscan.Footprint, families []string) []font.FontF
 			}
 			out = append(out, font.FontFace{Font: font.Font{Typeface: uiAlias, Weight: w.gio}, Face: vf})
 		}
+		// The italic file of the family (e.g. SFNSItalic) gives italic
+		// instances; without them italic text would fall back to upright.
+		if italic != nil {
+			out = append(out, italicInstances(italic.Location)...)
+		}
 		return out
 	}
 	return nil
+}
+
+// italicInstances returns a regular and a bold italic instance of the
+// variable italic font at loc (nil when it cannot be read or is not
+// variable along the weight axis).
+func italicInstances(loc fontscan.Location) []font.FontFace {
+	var out []font.FontFace
+	for _, w := range []struct {
+		gio  font.Weight
+		wght float32
+	}{{font.Normal, 400}, {font.Bold, 700}} {
+		ft, err := loadFont(loc)
+		if err != nil {
+			return nil
+		}
+		vf := varFace{ft: ft, vars: []gtfont.Variation{{Tag: ot.MustNewTag("wght"), Value: w.wght}, {Tag: ot.MustNewTag("opsz"), Value: textOpticalSize}}}
+		if !hasNonZero(varFace{ft: ft, vars: []gtfont.Variation{{Tag: ot.MustNewTag("wght"), Value: 700}}}.Face().Coords()) {
+			return nil
+		}
+		out = append(out, font.FontFace{Font: font.Font{Typeface: uiAlias, Weight: w.gio, Style: font.Italic}, Face: vf})
+	}
+	return out
 }
 
 func hasNonZero[T comparable](cs []T) bool {

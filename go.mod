@@ -44,6 +44,7 @@ require (
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-json v0.24.8
 	github.com/tree-sitter/tree-sitter-php v0.25.1
+	github.com/yuin/goldmark v1.8.7
 )
 
 require github.com/mattn/go-pointer v0.0.1 // indirect

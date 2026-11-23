@@ -544,10 +544,13 @@ func (rt *richText) layout(gtx layout.Context, th *tokens.Theme, v *View, w int,
 			dx = fixed.I(w) - l.w
 		}
 		dx = max(dx, 0)
-		for _, p := range l.pieces {
+		for pi, p := range l.pieces {
 			t := &rt.toks[p.tok]
 			r := &rt.runs[t.run]
 			x := dx + p.x
+			// The next piece of the same run on this line: inline code
+			// keeps one background across the space between words.
+			joinNext := pi+1 < len(l.pieces) && rt.toks[l.pieces[pi+1].tok].run == t.run
 			if r.kind == runImage {
 				pt := image.Pt(x.Round(), l.base-p.imgH)
 				tr := op.Offset(pt).Push(gtx.Ops)
@@ -557,7 +560,7 @@ func (rt *richText) layout(gtx layout.Context, th *tokens.Theme, v *View, w int,
 				tr.Pop()
 				continue
 			}
-			rt.paintPiece(gtx, th, sh, l, p, t, r, x, col)
+			rt.paintPiece(gtx, th, sh, l, p, t, r, x, col, joinNext)
 			if r.link != nil {
 				inkEnd := x + p.w
 				if p.last {
@@ -581,7 +584,7 @@ func (rt *richText) layout(gtx layout.Context, th *tokens.Theme, v *View, w int,
 	return layout.Dimensions{Size: image.Pt(max(w, sz.X), sz.Y), Baseline: sz.Y - rt.firstBaseline()}
 }
 
-func (rt *richText) paintPiece(gtx layout.Context, th *tokens.Theme, sh *text.Shaper, l *line, p piece, t *tok, r *run, x fixed.Int26_6, col color.NRGBA) {
+func (rt *richText) paintPiece(gtx layout.Context, th *tokens.Theme, sh *text.Shaper, l *line, p piece, t *tok, r *run, x fixed.Int26_6, col color.NRGBA, joinNext bool) {
 	gx := x
 	if p.first {
 		gx += t.padL
@@ -592,7 +595,11 @@ func (rt *richText) paintPiece(gtx layout.Context, th *tokens.Theme, sh *text.Sh
 	}
 	switch r.kind {
 	case runCode:
-		bg := image.Rect(x.Floor(), l.base-r.asc.Ceil(), inkEnd.Ceil(), l.base+r.desc.Ceil())
+		end := inkEnd
+		if joinNext {
+			end = x + p.w
+		}
+		bg := image.Rect(x.Floor(), l.base-r.asc.Ceil(), end.Ceil(), l.base+r.desc.Ceil())
 		draw.RRect(gtx.Ops, bg, gtx.Dp(th.Radius.S), th.Color.SurfaceAlt)
 	case runChip:
 		bg := image.Rect(x.Floor(), l.base-r.asc.Ceil(), inkEnd.Ceil(), l.base+r.desc.Ceil())

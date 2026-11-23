@@ -307,3 +307,17 @@ func TestVariableInstances(t *testing.T) {
 		t.Fatalf("unreadable font must give no instances: %v", got)
 	}
 }
+
+func TestItalicInstances(t *testing.T) {
+	if got := italicInstances(fontscan.Location{File: "/nonexistent.ttf"}); got != nil {
+		t.Fatalf("unreadable font: %v", got)
+	}
+	const sf = "/System/Library/Fonts/SFNSItalic.ttf"
+	if _, err := os.Stat(sf); err != nil {
+		t.Skip("no SF italic font on this machine")
+	}
+	got := italicInstances(fontscan.Location{File: sf})
+	if len(got) != 2 || got[0].Font.Style != font.Italic || got[1].Font.Weight != font.Bold || got[0].Font.Typeface != uiAlias {
+		t.Fatalf("instances %+v", got)
+	}
+}

@@ -247,6 +247,8 @@ type Controller struct {
 	Composer *Composer
 	// Terminals is the terminal tool window state (terminal.go).
 	Terminals *Terminals
+	// Markdown holds the Markdown previews (markdown.go).
+	Markdown *Markdown
 }
 
 // New returns a controller for be. Call Close when done.
@@ -268,6 +270,7 @@ func New(be Backend) *Controller {
 	c.Tests = newTests(c)
 	c.Composer = newComposer(c)
 	c.Terminals = newTerminals(c)
+	c.Markdown = newMarkdown(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
 		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*", "qa.*", "test.*", "terminal.*", api.TopicPHPRootChanged}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
@@ -705,6 +708,7 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 		if json.Unmarshal(payload, &ev) == nil && ev.File != "" {
 			c.Tests.FileChanged(ev.File)
 			c.Composer.FileChanged(ev.File)
+			c.Markdown.FileChanged(ev.File)
 			c.rolesFileChanged(ev.File)
 		}
 	}
@@ -721,6 +725,9 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 	switch topic {
 	case "git.changed", "git.committed", api.TopicDocEdited:
 		c.Vcs.handleEvent(topic, payload)
+	}
+	if topic == api.TopicDocEdited {
+		c.Markdown.docEdited(payload)
 	}
 	switch topic {
 	case "lsp.diagnostics", "php.diagnostics":

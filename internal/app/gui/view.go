@@ -179,6 +179,7 @@ type View struct {
 	termd *termDock
 	tstd  *testDock
 	cmpd  *composerDock
+	mdd   *markdownDock
 	extd  *toolsDock
 	tasks *tasksDock
 	// termGlobal are the window shortcuts while the terminal has the
@@ -257,6 +258,7 @@ func newView(ctl *controller.Controller, goos string, sh *text.Shaper) *View {
 	v.rund = installRun(v)
 	v.tstd = installTests(v)
 	v.cmpd = installComposer(v)
+	v.mdd = installMarkdown(v)
 	v.extd = installExternalTools(v)
 	v.termd = installTerminal(v)
 	v.hdr = installHeader(v)
