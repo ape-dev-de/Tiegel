@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
+	"github.com/ape-dev-de/tiegel/internal/core/phproot"
 )
 
 // configNames are the configuration files PHPUnit looks for, in order.
@@ -18,6 +19,10 @@ var configNames = []string{"phpunit.xml", "phpunit.xml.dist", "phpunit.dist.xml"
 // project is what the plugin found in a project root.
 type project struct {
 	Root string
+	// Base is the PHP project root (D515): composer.json, vendor/ and
+	// the configuration live there; runs start in it. It is Root for
+	// projects with composer.json at the top.
+	Base string
 	// Executable is the absolute path of the phpunit script ("" = not
 	// found), Parallel the one of paratest.
 	Executable string
@@ -41,12 +46,10 @@ type suite struct {
 
 // detect inspects root with the current settings.
 func (m *Module) detect(root string) project {
-	p := project{Root: root, BinDir: binDir(root)}
+	base := m.phpRoot(root)
+	p := project{Root: root, Base: base, BinDir: phproot.BinDir(base)}
 	if exe := strings.TrimSpace(setting(m, SettingExecutable, "")); exe != "" {
-		p.Executable = abs(root, exe)
-		if !isFile(p.Executable) {
-			p.Executable = ""
-		}
+		p.Executable = resolveSetting(root, base, exe)
 	} else if f := filepath.Join(p.BinDir, "phpunit"); isFile(f) {
 		p.Executable = f
 	}
@@ -54,22 +57,55 @@ func (m *Module) detect(root string) project {
 		p.Parallel = f
 	}
 	if cfg := strings.TrimSpace(setting(m, SettingConfig, "")); cfg != "" {
-		if f := abs(root, cfg); isFile(f) {
-			p.Config = f
-		}
+		p.Config = resolveSetting(root, base, cfg)
 	} else {
-		for _, n := range configNames {
-			if f := filepath.Join(root, n); isFile(f) {
-				p.Config = f
-				break
-			}
-		}
+		p.Config = findConfig(base, root)
 	}
 	if p.Config != "" {
 		p.Suites = readSuites(p.Config)
 	}
-	p.Version = installedVersion(root, "phpunit/phpunit")
+	p.Version = installedVersion(base, "phpunit/phpunit")
 	return p
+}
+
+// phpRoot returns the PHP project root of the open project root (the
+// kernel decides, D515); root itself for other directories.
+func (m *Module) phpRoot(root string) string {
+	m.mu.Lock()
+	app := m.app
+	m.mu.Unlock()
+	if app != nil && root != "" && filepath.Clean(app.ProjectRoot()) == filepath.Clean(root) {
+		if b := app.PHPRoot(); b != "" {
+			return b
+		}
+	}
+	return root
+}
+
+// resolveSetting resolves a file setting: absolute, else project
+// relative, else relative to the PHP root; "" when no file exists.
+func resolveSetting(root, base, v string) string {
+	if f := abs(root, v); isFile(f) {
+		return f
+	}
+	if !filepath.IsAbs(v) && base != root {
+		if f := abs(base, v); isFile(f) {
+			return f
+		}
+	}
+	return ""
+}
+
+// findConfig returns the first configuration file in dirs.
+func findConfig(dirs ...string) string {
+	for _, d := range dirs {
+		for _, n := range configNames {
+			if f := filepath.Join(d, n); isFile(f) {
+				return f
+			}
+		}
+	}
+	return ""
 }
 
 // testDirs are the directories that hold tests: those of the
@@ -87,7 +123,7 @@ func (p project) testDirs() []string {
 	}
 	if len(out) == 0 {
 		for _, n := range []string{"tests", "test"} {
-			if d := filepath.Join(p.Root, n); isDir(d) {
+			if d := filepath.Join(p.Base, n); isDir(d) {
 				out = append(out, d)
 			}
 		}
@@ -101,7 +137,7 @@ func (m *Module) status(_ context.Context, _ struct{}) (api.TestStatus, error) {
 		return api.TestStatus{}, err
 	}
 	p := m.detect(root)
-	st := api.TestStatus{Framework: Framework, Available: p.Executable != "", Version: p.Version, ConfigType: ID}
+	st := api.TestStatus{Framework: Framework, Available: p.Executable != "", Version: p.Version, ConfigType: ID, Base: phproot.Rel(root, p.Base)}
 	if p.Executable != "" {
 		st.Executable = rel(root, p.Executable)
 	}
@@ -136,32 +172,10 @@ func (m *Module) root() (string, error) {
 	return app.RequireProject()
 }
 
-// binDir returns composer's bin directory (config.bin-dir, else
-// vendor-dir/bin).
-func binDir(root string) string {
-	var cj struct {
-		Config struct {
-			BinDir    string `json:"bin-dir"`
-			VendorDir string `json:"vendor-dir"`
-		} `json:"config"`
-	}
-	if b, err := os.ReadFile(filepath.Join(root, "composer.json")); err == nil {
-		_ = json.Unmarshal(b, &cj)
-	}
-	if cj.Config.BinDir != "" {
-		return abs(root, cj.Config.BinDir)
-	}
-	vendor := "vendor"
-	if cj.Config.VendorDir != "" {
-		vendor = cj.Config.VendorDir
-	}
-	return filepath.Join(abs(root, vendor), "bin")
-}
-
-// installedVersion reads the version of pkg from vendor/composer/
+// installedVersion reads the version of pkg from <vendor-dir>/composer/
 // installed.json (Composer 1 and 2 formats); "" when unknown.
 func installedVersion(root, pkg string) string {
-	b, err := os.ReadFile(filepath.Join(root, "vendor", "composer", "installed.json"))
+	b, err := os.ReadFile(filepath.Join(phproot.Vendor(root), "composer", "installed.json"))
 	if err != nil {
 		return ""
 	}

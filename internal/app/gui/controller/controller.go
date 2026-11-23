@@ -263,7 +263,7 @@ func New(be Backend) *Controller {
 	c.Composer = newComposer(c)
 	c.Terminals = newTerminals(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
-		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*", "qa.*", "test.*", "terminal.*"}, func(e api.Event) {
+		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*", "qa.*", "test.*", "terminal.*", api.TopicPHPRootChanged}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
 	})
 	if err != nil {
@@ -637,6 +637,30 @@ func (c *Controller) Abs(rel string) string {
 	return fspath.Resolve(c.Project.Root, rel)
 }
 
+// PHPRoot returns the PHP project root (absolute; the project root
+// unless composer.json lives in a subfolder, D515).
+func (c *Controller) PHPRoot() string {
+	if c.Project.PHPRoot == "" || c.Project.PHPRoot == "." {
+		return c.Project.Root
+	}
+	return c.Abs(c.Project.PHPRoot)
+}
+
+// phpRootChanged follows project.phpRootChanged: roles, Composer scripts
+// and the test status resolve from the PHP root.
+func (c *Controller) phpRootChanged(payload json.RawMessage) {
+	var ev struct {
+		Path string `json:"path"`
+	}
+	if json.Unmarshal(payload, &ev) != nil || !c.Project.Open {
+		return
+	}
+	c.Project.PHPRoot = ev.Path
+	c.LoadRoles()
+	c.Composer.Load(nil)
+	c.Tests.PHPRootChanged()
+}
+
 // Rel returns the project-relative slash path of abs (abs if outside).
 func (c *Controller) Rel(abs string) string {
 	if c.Project.Root == "" {
@@ -721,6 +745,8 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 				}
 			}
 		}
+	case api.TopicPHPRootChanged:
+		c.phpRootChanged(payload)
 	case "settings.changed":
 		if keymapSettingChanged(payload) {
 			c.LoadKeymap()

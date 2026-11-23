@@ -443,13 +443,14 @@ func (p *Plugin) resolve(key string) resolved {
 	}
 }
 
-// root returns the project root ("" without project).
+// root returns the PHP project root ("" without project): tools,
+// configurations and analysed paths resolve from it (D515).
 func (p *Plugin) root() string {
 	app := p.getApp()
 	if app == nil {
 		return ""
 	}
-	return app.ProjectRoot()
+	return app.PHPRoot()
 }
 
 func (p *Plugin) getApp() *api.App {

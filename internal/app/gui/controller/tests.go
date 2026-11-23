@@ -86,6 +86,14 @@ func (t *Tests) ProjectChanged() {
 	t.FilesVersion++
 }
 
+// PHPRootChanged reloads the status and the tests of open files (the
+// runner and its configuration resolve from the PHP root).
+func (t *Tests) PHPRootChanged() {
+	t.files = map[string]*fileTests{}
+	t.FilesVersion++
+	t.LoadStatus()
+}
+
 // LoadStatus fetches test.status.
 func (t *Tests) LoadStatus() {
 	if t.c.Project.Root == "" {

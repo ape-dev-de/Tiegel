@@ -56,7 +56,7 @@ func runTest(c *cli) error {
 				fmt.Fprintf(w, " (%s)", st.Version)
 			}
 			fmt.Fprintln(w)
-			for _, kv := range [][2]string{{"script", st.Executable}, {"parallel", st.Parallel}, {"config", st.Config},
+			for _, kv := range [][2]string{{"base", st.Base}, {"script", st.Executable}, {"parallel", st.Parallel}, {"config", st.Config},
 				{"suites", strings.Join(st.Suites, ", ")}, {"test dirs", strings.Join(st.TestDirs, ", ")}, {"hint", st.Hint}} {
 				if kv[1] != "" {
 					fmt.Fprintf(w, "  %-9s %s\n", kv[0]+":", kv[1])

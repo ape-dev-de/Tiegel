@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-
 	"io"
 	"io/fs"
 	"os"
@@ -18,6 +17,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/gitignore"
 	"github.com/ape-dev-de/tiegel/internal/core/history"
 	"github.com/ape-dev-de/tiegel/internal/core/langdetect"
+	"github.com/ape-dev-de/tiegel/internal/core/phproot"
 	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/core/watch"
 )
@@ -45,12 +45,15 @@ type PathParams struct {
 
 // ProjectInfo is the result of "project.open" and "project.info".
 type ProjectInfo struct {
-	Open         bool     `json:"open"`
-	Root         string   `json:"root,omitempty"`
-	Name         string   `json:"name,omitempty"`
-	SettingsDir  string   `json:"settingsDir,omitempty"`
-	Git          bool     `json:"git"`
-	Composer     bool     `json:"composer"`
+	Open        bool   `json:"open"`
+	Root        string `json:"root,omitempty"`
+	Name        string `json:"name,omitempty"`
+	SettingsDir string `json:"settingsDir,omitempty"`
+	Git         bool   `json:"git"`
+	Composer    bool   `json:"composer"`
+	// PHPRoot is the PHP project root, project relative ("." = Root,
+	// see project.phpRoot); Composer refers to it.
+	PHPRoot      string   `json:"phpRoot,omitempty"`
 	ComposeFiles []string `json:"composeFiles,omitempty"`
 	Interpreter  string   `json:"interpreter,omitempty"`
 	OpenDocs     int      `json:"openDocs"`
@@ -64,6 +67,7 @@ func (a *App) registerProject() {
 	mustHandle(a, "files.read", "Read a file from disk", a.filesRead)
 	mustHandle(a, "files.detectLanguage", "Detect the language of a file", a.filesDetectLanguage)
 	a.registerProjectRoles()
+	a.registerPHPRoot()
 }
 
 func (a *App) projectOpen(ctx context.Context, p PathParams) (ProjectInfo, error) {
@@ -140,7 +144,8 @@ func (a *App) projectInfo(_ context.Context, _ struct{}) (ProjectInfo, error) {
 		Name:        filepath.Base(pr.root),
 		SettingsDir: pr.settings.Dir(),
 		Git:         exists(filepath.Join(pr.root, ".git")),
-		Composer:    exists(filepath.Join(pr.root, "composer.json")),
+		Composer:    exists(filepath.Join(a.PHPRoot(), "composer.json")),
+		PHPRoot:     phproot.Rel(pr.root, a.PHPRoot()),
 		Interpreter: SelectedInterpreter(pr.settings),
 		OpenDocs:    docs,
 	}

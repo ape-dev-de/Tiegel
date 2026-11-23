@@ -41,10 +41,10 @@ func (c *Controller) LoadRoles() {
 	})
 }
 
-// rolesFileChanged reloads the roles when composer.json of the project
-// root was saved.
+// rolesFileChanged reloads the roles when composer.json of the PHP
+// project root was saved.
 func (c *Controller) rolesFileChanged(file string) {
-	if c.Project.Open && file == filepath.Join(c.Project.Root, "composer.json") {
+	if c.Project.Open && file == filepath.Join(c.PHPRoot(), "composer.json") {
 		c.LoadRoles()
 	}
 }

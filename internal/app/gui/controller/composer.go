@@ -41,7 +41,7 @@ func (m *Composer) ProjectChanged() {
 // FileChanged reloads the scripts when composer.json of the project was
 // saved.
 func (m *Composer) FileChanged(file string) {
-	if m.project != "" && filepath.Clean(file) == filepath.Join(m.project, "composer.json") {
+	if m.project != "" && filepath.Clean(file) == filepath.Join(m.c.PHPRoot(), "composer.json") {
 		m.Load(nil)
 	}
 }

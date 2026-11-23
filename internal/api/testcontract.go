@@ -112,6 +112,9 @@ type TestStatus struct {
 	Framework string `json:"framework"`
 	// Available is true when the test runner was found.
 	Available bool `json:"available"`
+	// Base is the PHP project root the runner starts in (project
+	// relative, "." = the project root; D515).
+	Base string `json:"base,omitempty"`
 	// Executable is the runner script (project relative where possible).
 	Executable string `json:"executable,omitempty"`
 	// Parallel is the parallel runner, if installed and enabled.

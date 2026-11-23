@@ -853,6 +853,20 @@ func (e *Editor) caretRect(sel cursor.Selection) (r image.Rectangle, ok bool) {
 	return r, visible
 }
 
+// GutterIconRect returns the rectangle of the icon column (gutter
+// markers such as run arrows and breakpoints) of 0-based document line
+// in the editor's coordinate space of the last Layout; ok is false when
+// the line is folded away or not visible.
+func (e *Editor) GutterIconRect(line int) (r image.Rectangle, ok bool) {
+	g := &e.geo
+	if !g.valid || line < 0 || line >= e.buf.LineCount() || e.folds.IsHidden(line) {
+		return image.Rectangle{}, false
+	}
+	y := e.lineRow(line)*g.lineH - e.scroll.Y
+	r = image.Rect(g.iconX, y, g.iconX+g.iconW, y+g.lineH)
+	return r, r.Max.Y > 0 && r.Min.Y < g.size.Y
+}
+
 // LineHeight returns the row height of the last Layout in pixels.
 func (e *Editor) LineHeight() int { return e.geo.lineH }
 

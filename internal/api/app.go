@@ -123,6 +123,7 @@ type App struct {
 	terms    terminal.Manager // terminal sessions (terminal.*, AP15.5)
 	qa       qaStore          // findings of the quality tool plugins (qa.*)
 	tasks    *tasks.Registry  // background tasks (tasks.*, D505)
+	phpRoot  phpRootCache     // effective PHP project root (D515)
 	// ws is the workspace (several projects, projects.*) this App hosts
 	// or belongs to; nil until one is enabled.
 	ws atomic.Pointer[Workspace]

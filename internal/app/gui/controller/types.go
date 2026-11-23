@@ -8,11 +8,14 @@ import "encoding/json"
 
 // ProjectInfo is the result of project.open/project.info.
 type ProjectInfo struct {
-	Open         bool     `json:"open"`
-	Root         string   `json:"root"`
-	Name         string   `json:"name"`
-	Git          bool     `json:"git"`
-	Composer     bool     `json:"composer"`
+	Open     bool   `json:"open"`
+	Root     string `json:"root"`
+	Name     string `json:"name"`
+	Git      bool   `json:"git"`
+	Composer bool   `json:"composer"`
+	// PHPRoot is the PHP project root, project relative ("." = Root,
+	// D515).
+	PHPRoot      string   `json:"phpRoot"`
 	ComposeFiles []string `json:"composeFiles"`
 	Interpreter  string   `json:"interpreter"`
 }

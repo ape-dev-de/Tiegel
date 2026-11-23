@@ -52,7 +52,8 @@ var fakeTests = []struct {
 
 func fakePHPUnit(args []string) int {
 	if f := os.Getenv(fakeArgsEnv); f != "" {
-		b, _ := json.Marshal(map[string]any{"args": args, "env": os.Environ()})
+		wd, _ := os.Getwd()
+		b, _ := json.Marshal(map[string]any{"args": args, "env": os.Environ(), "dir": wd})
 		_ = os.WriteFile(f, b, 0o644)
 	}
 	var filter *regexp.Regexp
@@ -209,6 +210,13 @@ func newApp(t *testing.T, mods ...module.Module) (*api.App, *Module) {
 // the project root; it returns the file the fake writes its argv to.
 func useFake(t *testing.T, a *api.App, root string) string {
 	t.Helper()
+	return useFakeAt(t, a, root)
+}
+
+// useFakeAt is useFake with /app mapped to host (e.g. only the PHP
+// project root is mounted into the container).
+func useFakeAt(t *testing.T, a *api.App, root string) string {
+	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -230,6 +238,7 @@ func useFake(t *testing.T, a *api.App, root string) string {
 type fakeCall struct {
 	Args []string `json:"args"`
 	Env  []string `json:"env"`
+	Dir  string   `json:"dir"`
 }
 
 func readCall(t *testing.T, f string) fakeCall {
