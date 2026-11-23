@@ -83,6 +83,7 @@ func installTests(v *View) *testDock {
 	for _, a := range d.actions() {
 		r.AddAction(a)
 	}
+	d.installTestMenus()
 	return d
 }
 
