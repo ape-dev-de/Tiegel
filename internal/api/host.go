@@ -21,6 +21,13 @@ const SettingInterpreter = "php-runtime.interpreter"
 // as fallback.
 const SettingInterpreterLegacy = "php.interpreter"
 
+// SettingComposeFiles lists the compose files of the project when they are
+// not in the project root (absolute or relative to it; the first file's
+// folder is the compose project directory). Declared by the docker module,
+// read by docker and php-runtime (D523); empty means the project root's
+// compose files.
+const SettingComposeFiles = "docker.composeFiles"
+
 // SelectedInterpreter returns the interpreter ID stored in s (new key,
 // then the legacy key), or "".
 func SelectedInterpreter(s *settings.Store) string {

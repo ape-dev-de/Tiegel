@@ -4,7 +4,8 @@
 // files), host/container path mappings and the Xdebug setup diagnosis.
 //
 // API: interp.list/select/version/probe/status/addImage/removeImage,
-// compose.detect, php.version, runtime.mappings.get/set, runtime.execMode,
+// interp.useCompose, compose.detect, compose.discover, php.version,
+// runtime.mappings.get/set, runtime.execMode,
 // runtime.diagnose.
 // Events: interpreter.changed (and interp.selected), runtime.mappingsChanged.
 // Hooks provided: php.resolveVersion, runtime.pathMappings and
@@ -128,7 +129,11 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "interp.status", "Docker context and service state (running/stopped) of a compose or image interpreter", m.interpStatus)
 	api.Add(p, "interp.addImage", "Add a Docker image interpreter (docker run --rm -v project:remote)", m.addImage)
 	api.Add(p, "interp.removeImage", "Remove a Docker image interpreter", m.removeImage)
+	m.registerDiscovery(p)
 	if err := p.Err(); err != nil {
+		return err
+	}
+	if err := m.provideCandidates(ctx); err != nil {
 		return err
 	}
 
@@ -166,7 +171,7 @@ func (m *Module) Start(ctx module.Context) error {
 	// from the settings dialog) invalidate the built interpreters.
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicDockerContextChanged, reset))
 	ctx.OnStop(settings.Changed.Subscribe(ctx.Bus(), func(ch settings.Change) {
-		if ch.Key == SettingExecMode || ch.Key == SettingImages {
+		if ch.Key == SettingExecMode || ch.Key == SettingImages || ch.Key == api.SettingComposeFiles {
 			reset(bus.Event{})
 		}
 	}))
@@ -203,6 +208,18 @@ type InterpreterInfo struct {
 	// State is the compose service state (running, stopped, missing) or
 	// "error"; only filled with interp.list status=true.
 	State string `json:"state,omitempty"`
+	// Discovered marks a candidate that is not configured yet (interp.list
+	// discover=true): selecting it (interp.select or interp.useCompose)
+	// stores its compose files first (D524).
+	Discovered bool `json:"discovered,omitempty"`
+	// Files, Dir and Relation describe the compose file set of a
+	// discovered compose service; Reasons explain its rank.
+	Files    []string `json:"files,omitempty"`
+	Dir      string   `json:"dir,omitempty"`
+	Relation string   `json:"relation,omitempty"`
+	Reasons  []string `json:"reasons,omitempty"`
+	// Mappings are the host/container mappings the interpreter would use.
+	Mappings []api.MappingInfo `json:"mappings,omitempty"`
 }
 
 // InterpListParams are the params of "interp.list".
@@ -213,6 +230,10 @@ type InterpListParams struct {
 	// Status asks the engine for the state of compose services
 	// (`docker compose ps`); off by default.
 	Status bool `json:"status,omitempty"`
+	// Discover adds compose services and Docker images found around the
+	// project (parent folders, subfolders; local files only) that are not
+	// configured yet, marked Discovered.
+	Discover bool `json:"discover,omitempty"`
 }
 
 // InterpSelectParams are the params of "interp.select".
@@ -263,6 +284,21 @@ func (m *Module) loadCompose(ctx context.Context, dir string, profiles []string)
 	return compose.Load(ctx, dir, compose.LoadOptions{Env: opts.ComposeEnv, Profiles: profiles})
 }
 
+// projectCompose loads the compose project of the open project: the
+// configured files (docker.composeFiles, D523) or the project root's.
+func (m *Module) projectCompose(ctx context.Context, profiles []string) (*compose.Project, error) {
+	root := m.app.ProjectRoot()
+	if root == "" {
+		return nil, compose.ErrNoComposeFile
+	}
+	return compose.LoadResolved(ctx, root, m.composeFiles(), compose.LoadOptions{Env: m.app.Options().ComposeEnv, Profiles: profiles})
+}
+
+// composeFiles returns the configured compose files.
+func (m *Module) composeFiles() []string {
+	return api.Setting(m.app, api.SettingComposeFiles, []string{})
+}
+
 func (m *Module) interpList(ctx context.Context, p InterpListParams) ([]InterpreterInfo, error) {
 	selected := api.SelectedInterpreter(m.store())
 	found := make(map[string]interp.Interpreter)
@@ -281,11 +317,12 @@ func (m *Module) interpList(ctx context.Context, p InterpListParams) ([]Interpre
 		out = append(out, InterpreterInfo{ID: w.ID(), Label: w.Label(), Kind: string(w.Kind()), Path: w.Path})
 	}
 	if root := m.app.ProjectRoot(); root != "" && (p.Compose == nil || *p.Compose) {
-		if proj, err := m.loadCompose(ctx, root, nil); err == nil {
-			for _, c := range compose.Detect(proj) {
+		if proj, err := m.projectCompose(ctx, nil); err == nil {
+			for _, c := range m.rankServices(ctx, proj, selected) {
 				ci := m.composeInterpreter(ctx, proj, c.Service)
 				found[ci.ID()] = ci
-				info := InterpreterInfo{ID: ci.ID(), Label: ci.Label(), Kind: string(ci.Kind()), Service: c.Service, Score: c.Score, Image: c.Image, Context: ci.Context}
+				info := InterpreterInfo{ID: ci.ID(), Label: ci.Label(), Kind: string(ci.Kind()), Service: c.Service, Score: c.Score, Image: c.Image, Context: ci.Context,
+					Reasons: c.Reasons, Mappings: toMappings(ci.Mappings)}
 				if p.Status {
 					info.State = m.serviceState(ctx, ci)
 				}
@@ -298,6 +335,9 @@ func (m *Module) interpList(ctx context.Context, p InterpListParams) ([]Interpre
 	for _, d := range m.imageInterpreters(ctx) {
 		found[d.ID()] = d
 		out = append(out, InterpreterInfo{ID: d.ID(), Label: d.Label(), Kind: string(d.Kind()), Image: d.Image, Remote: d.RemoteDir(), Context: d.Client.Context})
+	}
+	if p.Discover {
+		out = append(out, m.discovered(ctx, found)...)
 	}
 	for i := range out {
 		out[i].Selected = out[i].ID == selected
@@ -361,7 +401,10 @@ func (m *Module) interpSelect(ctx context.Context, p InterpSelectParams) (Interp
 	}
 	i, err := m.interpreter(ctx, p.ID)
 	if err != nil {
-		return InterpreterInfo{}, err
+		// A discovered compose service: configure its files first (D524).
+		if i, err = m.configureDiscovered(ctx, p.ID, err); err != nil {
+			return InterpreterInfo{}, err
+		}
 	}
 	prev := api.SelectedInterpreter(m.store())
 	if err := m.setMigrated(api.SettingInterpreter, api.SettingInterpreterLegacy, i.ID()); err != nil {
@@ -431,6 +474,12 @@ type CandidateInfo struct {
 	Image       string            `json:"image,omitempty"`
 	Mappings    []api.MappingInfo `json:"mappings"`
 	XdebugHints []HintInfo        `json:"xdebugHints"`
+	// ID is the interpreter ID of the service.
+	ID string `json:"id,omitempty"`
+	// Mount (covers, inside or "") and ProjectRemote tell how the service
+	// mounts the project's PHP root (D520).
+	Mount         string `json:"mount,omitempty"`
+	ProjectRemote string `json:"projectRemote,omitempty"`
 }
 
 // ComposeResult is the result of "compose.detect".
@@ -441,6 +490,15 @@ type ComposeResult struct {
 	Files      []string        `json:"files,omitempty"`
 	Services   []string        `json:"services,omitempty"`
 	Candidates []CandidateInfo `json:"candidates"`
+	// Source tells where the files come from: dir (the dir param),
+	// project (project root), configured (docker.composeFiles) or
+	// discovered (found around the project, not configured yet).
+	Source string `json:"source,omitempty"`
+	// Relation and Levels locate discovered files (ancestor, subdir).
+	Relation string `json:"relation,omitempty"`
+	Levels   int    `json:"levels,omitempty"`
+	// Overlays are optional extra compose files next to the files.
+	Overlays []string `json:"overlays,omitempty"`
 }
 
 func composeHints(proj *compose.Project, service, goos string) []HintInfo {
@@ -471,8 +529,21 @@ func (m *Module) composeDetect(ctx context.Context, p ComposeParams) (ComposeRes
 	if err != nil {
 		return ComposeResult{}, err
 	}
-	res := ComposeResult{Dir: abs, Candidates: []CandidateInfo{}}
-	proj, err := m.loadCompose(ctx, abs, p.Profiles)
+	res := ComposeResult{Dir: abs, Candidates: []CandidateInfo{}, Source: "dir"}
+	var proj *compose.Project
+	if p.Dir == "" {
+		proj, err = m.projectCompose(ctx, p.Profiles)
+		res.Source = "project"
+		if len(m.composeFiles()) > 0 {
+			res.Source = "configured"
+		}
+	} else {
+		proj, err = m.loadCompose(ctx, abs, p.Profiles)
+	}
+	if errors.Is(err, compose.ErrNoComposeFile) && p.Dir == "" {
+		// Not in the project root: look around it (D520).
+		return m.detectDiscovered(ctx, res)
+	}
 	if errors.Is(err, compose.ErrNoComposeFile) {
 		return res, nil
 	}
@@ -480,14 +551,15 @@ func (m *Module) composeDetect(ctx context.Context, p ComposeParams) (ComposeRes
 		return res, api.Errorf(api.CodeFailed, "compose: %w", err)
 	}
 	res.Found = true
-	res.Name, res.Files, res.Services = proj.Name, proj.Files, proj.ServiceNames()
-	for _, c := range compose.Detect(proj) {
-		ci := CandidateInfo{Service: c.Service, Score: c.Score, Reasons: c.Reasons, Image: c.Image,
-			Mappings: toMappings(c.Mappings), XdebugHints: composeHints(proj, c.Service, m.app.Options().GOOS)}
-		if ci.Reasons == nil {
-			ci.Reasons = []string{}
+	res.Name, res.Files, res.Services, res.Dir = proj.Name, proj.Files, proj.ServiceNames(), proj.Dir
+	if p.Dir != "" {
+		for _, c := range compose.Detect(proj) {
+			res.Candidates = append(res.Candidates, m.candidateInfo(proj, compose.DiscoveredService{Candidate: c}))
 		}
-		res.Candidates = append(res.Candidates, ci)
+		return res, nil
+	}
+	for _, c := range compose.Rank(proj, m.app.ToolRoot(ctx)) {
+		res.Candidates = append(res.Candidates, m.candidateInfo(proj, c))
 	}
 	return res, nil
 }
@@ -686,7 +758,7 @@ func (m *Module) mappingsGet(ctx context.Context, _ struct{}) (MappingsResult, e
 		res.Source, res.Image = "docker", image
 		return res, nil
 	}
-	proj, err := m.loadCompose(ctx, root, nil)
+	proj, err := m.projectCompose(ctx, nil)
 	if err != nil {
 		return res, nil
 	}
@@ -695,7 +767,7 @@ func (m *Module) mappingsGet(ctx context.Context, _ struct{}) (MappingsResult, e
 		service = id[strings.LastIndex(id, ":")+1:]
 	}
 	if service == "" {
-		if cands := compose.Detect(proj); len(cands) > 0 {
+		if cands := compose.Rank(proj, m.app.ToolRoot(ctx)); len(cands) > 0 && cands[0].Score > 0 {
 			service = cands[0].Service
 		}
 	}
@@ -822,7 +894,7 @@ func (m *Module) diagnose(ctx context.Context, p DiagnoseParams) (Diagnosis, err
 	if ci, ok := i.(*compose.Interpreter); ok {
 		res.Interpreter.Service = ci.Service
 		if root := m.app.ProjectRoot(); root != "" {
-			if proj, err := m.loadCompose(ctx, root, nil); err == nil {
+			if proj, err := m.projectCompose(ctx, nil); err == nil {
 				res.Hints = append(res.Hints, composeHints(proj, ci.Service, m.app.Options().GOOS)...)
 			}
 		}

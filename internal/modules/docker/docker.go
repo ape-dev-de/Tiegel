@@ -11,7 +11,7 @@
 // Hooks provided: docker.endpoint (binary, context and PATH for running
 // docker), used by php-runtime for compose and image interpreters.
 // Settings: docker.path, docker.context, docker.timeoutSeconds,
-// docker.servicesRefreshSeconds, docker.terminal.
+// docker.servicesRefreshSeconds, docker.terminal, docker.composeFiles (D523).
 package docker
 
 import (
@@ -112,6 +112,8 @@ func (m *Module) SettingSpecs() []settings.Spec {
 			Help: "Context for compose and image interpreters (e.g. orbstack, desktop-linux); empty uses docker's current context."},
 		{Key: SettingTimeout, Kind: settings.KindInt, Default: 5, Scope: settings.ScopeGlobal, Label: "Connection check timeout (seconds)",
 			Min: settings.IntPtr(1), Max: settings.IntPtr(120)},
+		{Key: api.SettingComposeFiles, Kind: settings.KindList, Default: []string{}, Scope: settings.ScopeProject, Label: "Compose files", Group: "Compose",
+			Help: "Compose files of the project when they are not in the project root (e.g. ../../docker-compose.yaml and its override); empty uses the project root's. Choose a discovered set or use a service on the Interpreter page."},
 	}, serviceSpecs()...)
 }
 
@@ -143,6 +145,9 @@ func (m *Module) Start(ctx module.Context) error {
 	if err := p.Err(); err != nil {
 		return err
 	}
+	if err := m.provideCandidates(ctx); err != nil {
+		return err
+	}
 	api.HookDockerEndpoint.On(ctx.Hooks(), 0, func(c context.Context, q api.DockerEndpointQuery) (api.DockerEndpointQuery, error) {
 		if q.Binary != "" {
 			return q, nil
@@ -169,7 +174,7 @@ func (m *Module) Start(ctx module.Context) error {
 		if ch.Key == SettingContext || ch.Key == SettingPath {
 			m.announce(string(ch.Scope))
 		}
-		if ch.Key == SettingContext || ch.Key == SettingPath || ch.Key == SettingRefresh {
+		if ch.Key == SettingContext || ch.Key == SettingPath || ch.Key == SettingRefresh || ch.Key == api.SettingComposeFiles {
 			// Followed logs belong to the old engine; a watch restarts
 			// with the new context or interval.
 			if ch.Key != SettingRefresh {

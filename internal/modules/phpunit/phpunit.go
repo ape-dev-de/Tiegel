@@ -132,6 +132,9 @@ func (m *Module) Start(ctx module.Context) error {
 	m.app = app
 	m.mu.Unlock()
 
+	if err := provideCandidates(ctx, app); err != nil {
+		return err
+	}
 	p := api.NewProvider(ctx)
 	api.Add(p, "test.status", "Test framework of the project: runner script, configuration file, suites, version; hint and install recipe when missing", m.status)
 	api.Add(p, "test.discover", "Test classes and methods of a file, a directory or the test directories (Tree-sitter), with the last result", m.discover)

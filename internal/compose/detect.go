@@ -16,16 +16,16 @@ import (
 // Candidate is a service that probably runs PHP.
 type Candidate struct {
 	// Service is the compose service name.
-	Service string
+	Service string `json:"service"`
 	// Score ranks candidates; higher is more likely. Only positive scores
 	// are reported.
-	Score int
+	Score int `json:"score"`
 	// Reasons explain the score in plain English, for tooltips.
-	Reasons []string
+	Reasons []string `json:"reasons"`
 	// Image is the service image, if any.
-	Image string
+	Image string `json:"image,omitempty"`
 	// Mappings are derived from the service's bind mounts.
-	Mappings Mappings
+	Mappings Mappings `json:"mappings"`
 }
 
 // Score weights of the heuristics.

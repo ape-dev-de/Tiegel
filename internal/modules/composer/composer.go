@@ -97,6 +97,9 @@ func (m *Module) Start(ctx module.Context) error {
 	m.mu.Lock()
 	m.app = app
 	m.mu.Unlock()
+	if err := provideCandidates(ctx, app); err != nil {
+		return err
+	}
 	p := api.NewProvider(ctx)
 	api.Add(p, "composer.scripts", "Scripts of the project's composer.json with commands, descriptions and lines", m.scripts)
 	api.Add(p, "composer.run", "Run a Composer script (composer run-script NAME [-- ARGS]) in the project interpreter; output as run.output events", m.run)

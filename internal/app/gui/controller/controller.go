@@ -196,6 +196,12 @@ type Controller struct {
 	// Schema is the result of settings.schema (core and plugin settings
 	// with values; nil until loaded).
 	Schema *SettingsSchema
+	// Cands caches settings.candidates per key and Discovered the
+	// interpreters found around the project (D521, D524).
+	Cands      CandidateCache
+	Discovered DiscoveredState
+	// Setup is the project setup sheet (D526).
+	Setup SetupState
 
 	// Reveal is set when a tab should move its caret (go to definition,
 	// problem click); the view applies and clears it.
@@ -590,6 +596,7 @@ func (c *Controller) projectOpened(info ProjectInfo) {
 	c.refreshRuntime()
 	c.RefreshQA()
 	c.checkIDEImportOffer()
+	c.checkProjectSetup()
 	c.Vcs.reset()
 	c.Debug.reset()
 	c.Debug.refresh()

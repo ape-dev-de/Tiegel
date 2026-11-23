@@ -58,6 +58,7 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 	v.handleProblems(gtx)
 	v.handleRecovery(gtx)
 	v.offerImportSettings()
+	v.offerProjectSetup()
 	v.handleOverlay(gtx)
 	v.closeStaleEditors()
 

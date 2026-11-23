@@ -53,7 +53,20 @@ const (
 	// ExtraKeymap replaces the page's fields by the keymap editor
 	// (Panel.Keymap), which fills the page.
 	ExtraKeymap = "keymap"
+	// ExtraPlugins lists every plugin with its on/off switch.
+	ExtraPlugins = "plugins"
+	// ExtraProject offers "Project Setup…" (D526).
+	ExtraProject = "project"
 )
+
+// Candidate is a discovered value of a field (settings.candidates, D521).
+type Candidate struct {
+	// Value is the value to store (string, []any/[]string, bool, number).
+	Value       any
+	Label       string
+	Detail      string
+	Recommended bool
+}
 
 // Field is one declared setting with its current value.
 type Field struct {
@@ -85,6 +98,14 @@ type Field struct {
 	// either); ReadOnlyHint tells where it is changed.
 	ReadOnly     bool
 	ReadOnlyHint string
+	// CandidateSource is set for settings whose values can be discovered
+	// (Spec.Candidates): the field then offers Candidates as a choice
+	// list (recommended first) with "Custom…" for free input and a
+	// refresh button (D521). CandidatesLoading shows that they are
+	// being looked up.
+	CandidateSource   string
+	Candidates        []Candidate
+	CandidatesLoading bool
 }
 
 // Module describes the plugin of a plugin page.
@@ -108,6 +129,21 @@ type Page struct {
 	Fields []Field
 	// Extra names a special part drawn after the fields (Extra*).
 	Extra string
+	// Section is the navigation group ("Project", "General", "PHP",
+	// "Docker & Compose", …); empty means "General" for core pages and
+	// "Plugins" for plugin pages (D525).
+	Section string
+}
+
+// SectionOf returns the navigation group of p.
+func SectionOf(p Page) string {
+	switch {
+	case p.Section != "":
+		return p.Section
+	case p.Plugin():
+		return "Plugins"
+	}
+	return "General"
 }
 
 // Plugin reports whether p is a plugin page.
@@ -153,6 +189,16 @@ type RuntimeEvent struct{ Event runtime.Event }
 // CloseEvent: the dialog was closed.
 type CloseEvent struct{}
 
+// RefreshCandidatesEvent: the refresh button of a candidate field was
+// clicked; the host looks the candidates up again.
+type RefreshCandidatesEvent struct{ Key string }
+
+// ProjectSetupEvent: "Project Setup…" was clicked (ExtraProject).
+type ProjectSetupEvent struct{}
+
+func (RefreshCandidatesEvent) isSettingsEvent() {}
+func (ProjectSetupEvent) isSettingsEvent()      {}
+
 // KeymapEvent wraps an event of the keymap page.
 type KeymapEvent struct{ Event keymapeditor.Event }
 
@@ -192,17 +238,20 @@ type Panel struct {
 	Interpreter runtime.InterpreterPicker
 	Mappings    runtime.PathMappingEditor
 	Hints       runtime.XdebugHintsList
+	// Discovered lists interpreters found around the project with a
+	// "Use" button (ExtraInterpreter, D524).
+	Discovered runtime.DiscoveredList
 	// Keymap is the keymap page (ExtraKeymap); the host fills its data.
 	Keymap keymapeditor.Editor
 
 	search   *molecules.SearchField
 	scopeSel *molecules.Dropdown
 	nav      map[string]*molecules.TreeRow
-	coreRow  molecules.TreeRow
-	plugRow  molecules.TreeRow
+	sections map[string]*molecules.TreeRow
 	fields   map[string]*fieldState
 	modBoxes map[string]*atoms.Checkbox
 	checkNow atoms.Button
+	setupBtn atoms.Button
 	closeBtn atoms.IconButton
 	scroll   molecules.ScrollList
 	navList  molecules.ScrollList
@@ -221,8 +270,8 @@ func (p *Panel) init() {
 	p.nav = map[string]*molecules.TreeRow{}
 	p.fields = map[string]*fieldState{}
 	p.modBoxes = map[string]*atoms.Checkbox{}
-	p.coreRow = molecules.TreeRow{Name: "Core", Expandable: true, Expanded: true, Glyph: atoms.GlyphSettings}
-	p.plugRow = molecules.TreeRow{Name: "Plugins", Expandable: true, Expanded: true, Glyph: atoms.GlyphList}
+	p.sections = map[string]*molecules.TreeRow{}
+	p.setupBtn = atoms.Button{Text: "Project Setup…", Kind: atoms.Secondary, Glyph: atoms.GlyphSearch}
 	p.checkNow = atoms.Button{Text: "Check now", Kind: atoms.Secondary, Glyph: atoms.GlyphRefresh}
 	p.closeBtn = atoms.IconButton{Glyph: atoms.GlyphClose, Description: "Close (Escape)"}
 }
@@ -261,13 +310,18 @@ func (p *Panel) editScope(f Field) string {
 }
 
 // Matches reports whether f (on page) matches every word of query
-// (case-insensitive: key, label, help, group, page title, plugin ID).
+// (case-insensitive: key, label, help, group, page title, section, plugin
+// ID).
 func Matches(page Page, f Field, query string) bool {
 	words := strings.Fields(strings.ToLower(query))
 	if len(words) == 0 {
 		return true
 	}
-	hay := strings.ToLower(strings.Join([]string{f.Key, f.Label, f.Help, f.Group, page.Title}, "\x00"))
+	id := ""
+	if page.Module != nil {
+		id = page.Module.ID
+	}
+	hay := strings.ToLower(strings.Join([]string{f.Key, f.Label, f.Help, f.Group, page.Title, SectionOf(page), id}, "\x00"))
 	for _, w := range words {
 		if !strings.Contains(hay, w) {
 			return false
@@ -277,7 +331,8 @@ func Matches(page Page, f Field, query string) bool {
 }
 
 // Results returns the pages with only the fields matching query (pages
-// without matches are left out). An empty query returns all pages.
+// without matches are left out; a page with a special part whose title
+// matches is kept, e.g. "interpreter"). An empty query returns all pages.
 func Results(pages []Page, query string) []Page {
 	if strings.TrimSpace(query) == "" {
 		return pages
@@ -291,7 +346,7 @@ func Results(pages []Page, query string) []Page {
 				r.Fields = append(r.Fields, f)
 			}
 		}
-		if len(r.Fields) > 0 {
+		if len(r.Fields) > 0 || (pg.Extra != "" && pg.Extra != ExtraKeymap && Matches(Page{Title: pg.Title, Section: SectionOf(pg)}, Field{}, query)) {
 			out = append(out, r)
 		}
 	}
@@ -411,8 +466,9 @@ func (p *Panel) Update(gtx layout.Context) []Event {
 			p.Scope = ScopeProject
 		}
 	}
-	p.coreRow.Update(gtx)
-	p.plugRow.Update(gtx)
+	for _, r := range p.sections {
+		r.Update(gtx)
+	}
 	for i := range p.Pages {
 		pg := &p.Pages[i]
 		if r := p.nav[pg.ID]; r != nil {
@@ -437,6 +493,9 @@ func (p *Panel) Update(gtx layout.Context) []Event {
 	if p.checkNow.Clicked(gtx) {
 		out = append(out, CheckNowEvent{})
 	}
+	if p.setupBtn.Clicked(gtx) {
+		out = append(out, ProjectSetupEvent{})
+	}
 	if !p.NoProject {
 		for _, e := range p.Interpreter.Update(gtx) {
 			out = append(out, RuntimeEvent{e})
@@ -445,6 +504,9 @@ func (p *Panel) Update(gtx layout.Context) []Event {
 			out = append(out, RuntimeEvent{e})
 		}
 		for _, e := range p.Hints.Update(gtx) {
+			out = append(out, RuntimeEvent{e})
+		}
+		for _, e := range p.Discovered.Update(gtx) {
 			out = append(out, RuntimeEvent{e})
 		}
 	}
@@ -523,11 +585,11 @@ func (p *Panel) layoutNav(gtx layout.Context, th *tokens.Theme) layout.Dimension
 		title string
 	}
 	var rows []row
-	add := func(header *molecules.TreeRow, plugins bool) {
+	add := func(header *molecules.TreeRow, section string) {
 		var kids []row
 		for i := range p.Pages {
 			pg := &p.Pages[i]
-			if pg.Plugin() != plugins || (query != "" && !visible[pg.ID]) {
+			if SectionOf(*pg) != section || (query != "" && !visible[pg.ID]) {
 				continue
 			}
 			r := p.navRow(pg.ID)
@@ -549,8 +611,9 @@ func (p *Panel) layoutNav(gtx layout.Context, th *tokens.Theme) layout.Dimension
 			rows = append(rows, kids...)
 		}
 	}
-	add(&p.coreRow, false)
-	add(&p.plugRow, true)
+	for _, s := range p.sectionOrder() {
+		add(p.sectionRow(s), s)
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(th.Space.S).Layout(gtx, func(gtx layout.Context) layout.Dimensions { return p.search.Layout(gtx, th) })
@@ -573,12 +636,7 @@ func (p *Panel) layoutContent(gtx layout.Context, th *tokens.Theme) layout.Dimen
 			rows = append(rows, atoms.Small("No setting matches.").Fn(th))
 		}
 		for _, pg := range res {
-			title := pg.Title
-			if pg.Plugin() {
-				title = "Plugins › " + title
-			} else {
-				title = "Core › " + title
-			}
+			title := SectionOf(pg) + " › " + pg.Title
 			spacer(th.Space.M)
 			rows = append(rows, molecules.SectionHeader{Title: title}.Fn(th))
 			spacer(th.Space.S)
@@ -701,8 +759,79 @@ func (p *Panel) moduleRow(gtx layout.Context, th *tokens.Theme, m Module) layout
 	)
 }
 
+// sectionOrder returns the sections in the order of their first page.
+func (p *Panel) sectionOrder() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, pg := range p.Pages {
+		if s := SectionOf(pg); !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// sectionRow returns the (expandable) header row of a section.
+func (p *Panel) sectionRow(s string) *molecules.TreeRow {
+	r := p.sections[s]
+	if r == nil {
+		g := atoms.GlyphSettings
+		switch s {
+		case "Plugins":
+			g = atoms.GlyphList
+		case "Docker & Compose":
+			g = atoms.GlyphContainer
+		case "Project":
+			g = atoms.GlyphFolder
+		case "PHP", "Tests", "Quality Tools":
+			g = atoms.GlyphFileCode
+		}
+		r = &molecules.TreeRow{Name: s, Expandable: true, Expanded: true, Glyph: g}
+		p.sections[s] = r
+	}
+	return r
+}
+
+// pluginsOverview lists every plugin page with its switch.
+func (p *Panel) pluginsOverview(th *tokens.Theme) []layout.Widget {
+	var out []layout.Widget
+	for i := range p.Pages {
+		pg := p.Pages[i]
+		m := pg.Module
+		if m == nil {
+			continue
+		}
+		out = append(out, func(gtx layout.Context) layout.Dimensions {
+			b := p.box(m.ID)
+			b.State = checkState(m.Enabled)
+			return layout.Inset{Bottom: th.Space.S}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return b.Layout(gtx, th) }),
+					layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
+					layout.Rigid(atoms.Text(SectionOf(pg)+" › "+pg.Title).Fn(th)),
+					layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
+					layout.Flexed(1, atoms.Small(m.ID).SingleLine().Fn(th)),
+				)
+			})
+		})
+	}
+	return out
+}
+
 func (p *Panel) extra(th *tokens.Theme, kind string) []layout.Widget {
 	switch kind {
+	case ExtraPlugins:
+		return p.pluginsOverview(th)
+	case ExtraProject:
+		if p.NoProject {
+			return []layout.Widget{atoms.Small("Open a project to set it up.").Fn(th)}
+		}
+		return []layout.Widget{
+			atoms.Small("Finds the PHP root, the interpreter (also Docker Compose services in parent folders), PHPUnit and quality tools and proposes them; nothing changes before you apply.").Fn(th),
+			layout.Spacer{Height: th.Space.S}.Layout,
+			func(gtx layout.Context) layout.Dimensions { return p.setupBtn.Layout(gtx, th) },
+		}
 	case ExtraFontPreview:
 		return []layout.Widget{func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(460))
@@ -723,13 +852,25 @@ func (p *Panel) extra(th *tokens.Theme, kind string) []layout.Widget {
 		if p.NoProject {
 			return []layout.Widget{atoms.Small("Open a project to choose its interpreter.").Fn(th)}
 		}
-		return []layout.Widget{
-			atoms.Small("Local PHP binaries and Docker Compose services of this project.").Fn(th),
+		ws := []layout.Widget{
+			atoms.Small("Local PHP binaries, Docker Compose services and Docker images of this project.").Fn(th),
 			layout.Spacer{Height: th.Space.S}.Layout,
 			func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(480))
 				return p.Interpreter.Layout(gtx, th)
 			}, layout.Spacer{Height: th.Space.L}.Layout,
+		}
+		if len(p.Discovered.Items) > 0 || p.Discovered.Loading {
+			ws = append(ws,
+				molecules.SectionHeader{Title: "Found around the project"}.Fn(th),
+				atoms.Small("Not configured yet: Use stores the compose files and selects the service; the path mappings follow from its volumes.").Fn(th),
+				layout.Spacer{Height: th.Space.S}.Layout,
+				func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(560))
+					return p.Discovered.Layout(gtx, th)
+				}, layout.Spacer{Height: th.Space.L}.Layout)
+		}
+		return append(ws,
 			molecules.SectionHeader{Title: "Path mappings"}.Fn(th),
 			func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Max.Y = min(gtx.Constraints.Max.Y, gtx.Dp(160))
@@ -740,7 +881,7 @@ func (p *Panel) extra(th *tokens.Theme, kind string) []layout.Widget {
 				gtx.Constraints.Max.Y = min(gtx.Constraints.Max.Y, gtx.Dp(140))
 				return p.Hints.Layout(gtx, th)
 			},
-		}
+		)
 	}
 	return nil
 }

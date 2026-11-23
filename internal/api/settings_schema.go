@@ -48,6 +48,10 @@ type ModuleSettings struct {
 	Error     string        `json:"error,omitempty"`
 	DependsOn []string      `json:"dependsOn"`
 	Settings  []SettingInfo `json:"settings"`
+	// Section and Title name the settings page (module.PageProvider,
+	// D525); empty when the module does not name it.
+	Section string `json:"section,omitempty"`
+	Title   string `json:"title,omitempty"`
 }
 
 // SettingsSchema is the result of "settings.schema".
@@ -132,6 +136,9 @@ func checkRaw(spec settings.Spec, raw json.RawMessage) error {
 
 func (a *App) settingInfo(spec settings.Spec, project *settings.Store) SettingInfo {
 	si := SettingInfo{Spec: spec}
+	if src := a.cands.source(spec.Key); src != "" && si.Candidates == "" {
+		si.Candidates = src
+	}
 	check := func(raw json.RawMessage) {
 		if err := checkRaw(spec, raw); err != nil && si.Invalid == "" {
 			si.Invalid = err.Error()
@@ -191,7 +198,8 @@ func (a *App) settingsSchema(_ context.Context, p SchemaParams) (SettingsSchema,
 			if p.Module != "" && m.ID != p.Module {
 				continue
 			}
-			ms := ModuleSettings{ID: m.ID, Enabled: m.Enabled, Running: m.Running, DependsOn: append([]string{}, m.DependsOn...), Settings: []SettingInfo{}}
+			ms := ModuleSettings{ID: m.ID, Enabled: m.Enabled, Running: m.Running, DependsOn: append([]string{}, m.DependsOn...), Settings: []SettingInfo{},
+				Section: m.Section, Title: m.Title}
 			if m.Err != nil {
 				ms.Error = m.Err.Error()
 			}

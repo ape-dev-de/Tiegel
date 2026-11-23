@@ -138,6 +138,16 @@ type Info struct {
 	Running   bool
 	// Err is the last start/stop error, if any.
 	Err error
+	// Section and Title name the module's settings page (PageProvider);
+	// empty when the module does not name it.
+	Section, Title string
+}
+
+// PageProvider is implemented by modules that name their settings page:
+// the navigation section (e.g. "Quality Tools") and the page title (e.g.
+// the tool name), so the settings dialog needs no plugin knowledge (D525).
+type PageProvider interface {
+	SettingsPage() (section, title string)
 }
 
 type entry struct {
@@ -246,7 +256,11 @@ func (r *Registry) Modules() []Info {
 	out := make([]Info, 0, len(r.order))
 	for _, id := range r.order {
 		e := r.mods[id]
-		out = append(out, Info{ID: id, DependsOn: append([]string(nil), e.deps...), Enabled: e.enabled, Running: e.running, Err: e.err})
+		info := Info{ID: id, DependsOn: append([]string(nil), e.deps...), Enabled: e.enabled, Running: e.running, Err: e.err}
+		if pp, ok := e.mod.(PageProvider); ok {
+			info.Section, info.Title = pp.SettingsPage()
+		}
+		out = append(out, info)
 	}
 	return out
 }

@@ -28,6 +28,9 @@ type SettingSpec struct {
 	// how to change them).
 	ReadOnly     bool   `json:"readOnly,omitempty"`
 	ReadOnlyHint string `json:"readOnlyHint,omitempty"`
+	// Candidates describes where values can be discovered
+	// (settings.candidates, D521); empty without a provider.
+	Candidates string `json:"candidates,omitempty"`
 }
 
 // ModuleSettings are the settings of one plugin.
@@ -38,6 +41,9 @@ type ModuleSettings struct {
 	Error     string        `json:"error"`
 	DependsOn []string      `json:"dependsOn"`
 	Settings  []SettingSpec `json:"settings"`
+	// Section and Title name the settings page (D525).
+	Section string `json:"section"`
+	Title   string `json:"title"`
 }
 
 // SettingsSchema is the result of settings.schema.

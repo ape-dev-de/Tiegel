@@ -33,7 +33,7 @@ func newApp(t *testing.T, opts Options) (*api.App, *Module) {
 
 func TestSettingSpecs(t *testing.T) {
 	specs := New(Options{}).SettingSpecs()
-	if len(specs) != 5 {
+	if len(specs) != 6 {
 		t.Fatalf("specs %+v", specs)
 	}
 	for _, s := range specs {
