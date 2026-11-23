@@ -355,35 +355,10 @@ func (a *App) absProjectPath(p string) string {
 	return filepath.Join(root, filepath.FromSlash(p))
 }
 
-// ToolRoot returns the absolute PHP root of the open project: the answer
-// of "project.phpRoot" when that method exists, else the stored
-// project.phpRoot setting, else the first Composer project (the root
-// itself or a subfolder up to depth 2), else the project root. Tool
-// candidates (PHPUnit, QA tools, Composer) are resolved against it.
-func (a *App) ToolRoot(ctx context.Context) string {
-	root := a.ProjectRoot()
-	if root == "" {
-		return ""
-	}
-	var ans phpRootAnswer
-	if err := a.CallLocal(ctx, "project.phpRoot", nil, &ans); err == nil && ans.Path != "" {
-		return a.absProjectPath(ans.Path)
-	}
-	if v := Setting(a, keyPHPRoot, ""); v != "" {
-		if st, err := os.Stat(a.absProjectPath(v)); err == nil && st.IsDir() {
-			return a.absProjectPath(v)
-		}
-	}
-	if ps := toolfind.ComposerProjects(root, "", 0); len(ps) > 0 {
-		for _, p := range ps {
-			if p.Dir == root {
-				return root
-			}
-		}
-		return ps[0].Dir
-	}
-	return root
-}
+// ToolRoot returns the absolute PHP root of the open project (PHPRoot,
+// D515); tool candidates (PHPUnit, QA tools, Composer) are resolved
+// against it.
+func (a *App) ToolRoot(ctx context.Context) string { return a.PHPRoot() }
 
 func (a *App) phpRootCandidates(ctx context.Context, q SettingCandidatesQuery) ([]SettingCandidate, error) {
 	if q.Root == "" {

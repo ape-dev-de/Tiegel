@@ -9,16 +9,12 @@ import (
 )
 
 func TestToolRootFromPHPRootMethod(t *testing.T) {
-	a := newTestApp(t, func(a *App) error {
-		return Handle(a, "project.phpRoot", "test", func(context.Context, struct{}) (map[string]any, error) {
-			return map[string]any{"path": "sub", "auto": true, "candidates": []map[string]any{
-				{"path": "sub", "reasons": []string{"composer.json"}, "recommended": true},
-				{"path": ".", "reasons": []string{"root"}},
-			}}, nil
-		})
-	})
+	a := newTestApp(t)
 	dir := t.TempDir()
+	// sub has vendor/ (ranked first), other only composer.json.
 	writeFile(t, filepath.Join(dir, "sub", "composer.json"), "{}")
+	writeFile(t, filepath.Join(dir, "sub", "vendor", "autoload.php"), "<?php")
+	writeFile(t, filepath.Join(dir, "other", "composer.json"), "{}")
 	call(t, a, "project.open", PathParams{Path: dir}, nil)
 	root := a.ProjectRoot()
 	if got := a.ToolRoot(context.Background()); got != filepath.Join(root, "sub") {
@@ -26,7 +22,7 @@ func TestToolRootFromPHPRootMethod(t *testing.T) {
 	}
 	var res CandidatesResult
 	call(t, a, "settings.candidates", CandidatesParams{Key: keyPHPRoot}, &res)
-	if len(res.Candidates) != 2 || res.Candidates[0].Value != "sub" || !res.Candidates[0].Recommended || res.Candidates[1].Label != "." {
+	if len(res.Candidates) != 2 || res.Candidates[0].Value != "sub" || !res.Candidates[0].Recommended || res.Candidates[1].Value != "other" {
 		t.Fatalf("php root candidates %+v", res)
 	}
 	if a.absProjectPath("") != root || a.absProjectPath("/x") != "/x" {
