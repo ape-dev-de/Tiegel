@@ -69,9 +69,9 @@ func MenuSupported() bool { return true }
 // asynchronously on the main thread.
 //
 // onAction receives the ID of a chosen item ("app.about", "app.settings",
-// "app.quit" for the application menu). It runs on the main thread inside
-// the Cocoa event loop and must return quickly, e.g. by handing the ID to
-// another goroutine; it must not block on the Gio window.
+// "app.quit" for the application menu). It runs on a dispatcher goroutine
+// (never on the main thread, where waiting for the Gio window would
+// deadlock), one call after another; a panic in it is recovered.
 func SetMenus(menus []Menu, onAction func(id string)) {
 	menuMu.Lock()
 	menuGen++
@@ -94,7 +94,8 @@ func tiegelMenuAction(tag C.longlong) {
 	}
 	menuMu.Unlock()
 	if id != "" && fn != nil {
-		fn(id)
+		// Never run the action on the main thread (see dispatch.go).
+		callbacks.post(func() { fn(id) })
 	}
 }
 
@@ -105,7 +106,8 @@ func GesturesSupported() bool { return true }
 // SetGestureHandler installs (once) a Cocoa event monitor for the mouse
 // side buttons (buttons 4 and 5) and trackpad swipes (with "swipe between
 // pages" set to three fingers) and reports them as Gesture* names. fn
-// runs on the main thread and must return quickly; nil stops reporting.
+// runs on the dispatcher goroutine (like menu actions); nil stops
+// reporting.
 func SetGestureHandler(fn func(gesture string)) {
 	gestureMu.Lock()
 	onGesture = fn
@@ -121,6 +123,6 @@ func tiegelGesture(code C.int) {
 	fn := onGesture
 	gestureMu.Unlock()
 	if g := gestureName(int(code)); g != "" && fn != nil {
-		fn(g)
+		callbacks.post(func() { fn(g) })
 	}
 }

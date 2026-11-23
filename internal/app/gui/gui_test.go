@@ -408,3 +408,14 @@ func TestScreenshots(t *testing.T) {
 		}
 	}
 }
+
+// A panicking action reports itself instead of taking the window down.
+func TestRunActionRecoversPanic(t *testing.T) {
+	e := newEnv(t, false)
+	e.v.Registry.AddAction(Action{ID: "test.boom", Title: "Boom…", Run: func(*View) { panic("kaputt") }})
+	e.v.RunAction("test.boom")
+	if n := e.ctl.Status.Notice; n != "Boom failed: kaputt" {
+		t.Fatalf("notice %q", n)
+	}
+	e.frame()
+}

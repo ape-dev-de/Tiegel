@@ -262,7 +262,7 @@ func (v *View) Theme() *tokens.Theme { return v.th }
 // actions are run by the editor with its document locked).
 func (v *View) RunAction(id keymap.Action) {
 	if a, ok := v.Registry.Action(id); ok && a.Run != nil {
-		a.Run(v)
+		v.safeRun(a)
 	}
 }
 

@@ -3,6 +3,8 @@ package gui
 import (
 	"fmt"
 	"image"
+	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -115,6 +117,19 @@ func (v *View) runAction(id keymap.Action) {
 		s.doc.Lock()
 		defer s.doc.Unlock()
 	}
+	v.safeRun(a)
+}
+
+// safeRun runs action a. A failing action (of the shell or a module)
+// reports itself in the status bar and on stderr and leaves the window
+// running.
+func (v *View) safeRun(a Action) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "tiegel: action %s panicked: %v\n%s", a.ID, r, debug.Stack())
+			v.ctl.Status.Notice = fmt.Sprintf("%s failed: %v", orTitle(a.Title, string(a.ID)), r)
+		}
+	}()
 	a.Run(v)
 }
 
@@ -318,4 +333,12 @@ func (v *View) runMenuID(id string) {
 		}
 		v.runAction(keymap.Action(id))
 	}
+}
+
+// orTitle returns title, or id when it is empty.
+func orTitle(title, id string) string {
+	if title != "" {
+		return strings.TrimSuffix(title, "…")
+	}
+	return id
 }
