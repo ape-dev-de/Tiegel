@@ -46,6 +46,11 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 			v.termGlobal.keep = keepShortcut(v.goos == "darwin")
 			v.termGlobal.build(v.Registry, ScopeGlobal, nil)
 			v.termGlobal.process(gtx, v)
+		} else if v.termd.focused() {
+			// The terminal's own copy/paste keys stay with it.
+			v.termOwn.keep = notTerminalOwnKey(v.goos == "darwin")
+			v.termOwn.build(v.Registry, ScopeGlobal, nil)
+			v.termOwn.process(gtx, v)
 		} else {
 			v.global.build(v.Registry, ScopeGlobal, nil)
 			v.global.process(gtx, v)

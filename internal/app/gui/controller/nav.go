@@ -66,6 +66,9 @@ type CodeNav struct {
 	Find        *FindState
 	FindVersion uint64
 	findSeq     uint64
+	// findTexts caches the file texts of the Find in Files preview for
+	// the current search (FindText).
+	findTexts map[string]*FindText
 }
 
 // NavTarget is a jump target of nav.* (index and/or language server) or

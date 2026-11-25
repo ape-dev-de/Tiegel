@@ -185,6 +185,9 @@ type View struct {
 	// termGlobal are the window shortcuts while the terminal has the
 	// focus (terminal.overrideIdeShortcuts).
 	termGlobal shortcuts
+	// termOwn are the window shortcuts while the terminal has the focus
+	// and does not override them: all but its copy/paste keys.
+	termOwn shortcuts
 	// work is the file side: tree menu, external changes, diff and
 	// history tabs, remote git (filesdock.go and friends).
 	work *workDock

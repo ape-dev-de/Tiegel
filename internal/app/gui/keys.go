@@ -63,7 +63,13 @@ const (
 // not; menus show the keymap's chord.
 func editorMenuAction(a keymap.Action, title, section string) Action {
 	return Action{ID: a, Title: title, Menu: "Edit", Section: section,
-		Run: func(v *View) { v.pendingEdit = a; v.focusEditor = true }}
+		Run: func(v *View) {
+			if v.termd.editAction(a) {
+				return
+			}
+			v.pendingEdit = a
+			v.focusEditor = true
+		}}
 }
 
 // defaultActions is the global shortcut table (data; Mac and PC chords)

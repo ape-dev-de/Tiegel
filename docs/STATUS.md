@@ -71,3 +71,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-23: Markdown-Reader ohne WebView: Parser `internal/markdown` (goldmark), API `md.*`, headless `md`, Organismus `mdview`, Vorschau-Tab (auch daneben) mit Live-Update, Links, lokalen Bildern; kursive UI-Schrift auf macOS (D534).
 - 2026-11-23: Tests-Fenster zeigt Assertions je Test/Klasse/Lauf und die Fundstelle des Tests (JUnit-Log über stderr, D536). Mit PHPUnit 11.5 geprüft.
 - 2026-11-25: `make install` baut Tiegel für diesen Rechner und installiert es (macOS: `Tiegel.app` nach `/Applications`, sonst Binary nach `~/.local/bin`; `APP_DIR`, `BIN_DIR`, `ARCH`).
+- 2026-11-25: Find in Files mit Live-Suche, Trefferliste und Code-Vorschau im Dialog (D537); Einfügen/Kopieren ins fokussierte Terminal geht nie mehr in den Editor, Klick ins Terminal-Fenster fokussiert es (D538).

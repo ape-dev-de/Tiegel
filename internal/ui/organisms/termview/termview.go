@@ -133,6 +133,8 @@ type View struct {
 
 	focused  bool
 	focusReq bool
+	// pasteReq reads the clipboard on the next frame (Paste).
+	pasteReq bool
 	blurReq  bool
 	// follow keeps the view at the bottom; otherwise top is the first
 	// visible absolute line.
@@ -191,6 +193,13 @@ func (v *View) Focus() { v.focusReq, v.blurReq = true, false }
 // Blur gives the keyboard focus up on the next frame (if nothing else
 // took it meanwhile).
 func (v *View) Blur() { v.blurReq, v.focusReq = true, false }
+
+// Paste pastes the clipboard into the terminal on the next frame (Edit
+// menu while the terminal has the focus).
+func (v *View) Paste() { v.pasteReq = true }
+
+// Copy copies the selection (Edit menu while the terminal has the focus).
+func (v *View) Copy() { v.copySelection() }
 
 // Focused reports whether the view has the keyboard focus.
 func (v *View) Focused() bool { return v.focused }
@@ -276,6 +285,10 @@ func (v *View) Update(gtx layout.Context) []Event {
 		if gtx.Focused(v) {
 			gtx.Execute(key.FocusCmd{})
 		}
+	}
+	if v.pasteReq {
+		v.pasteReq = false
+		gtx.Execute(clipboard.ReadCmd{Tag: v})
 	}
 	v.syncDropped()
 	v.processKeys(gtx)

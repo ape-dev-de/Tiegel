@@ -42,6 +42,8 @@ type findDock struct {
 	preview   bool
 
 	stop, apply atoms.Button
+
+	live liveState
 }
 
 func newFindDock(d *navDock) *findDock {
@@ -103,11 +105,12 @@ func (f *findDock) openDialog(replace bool) {
 		s.doc.Unlock()
 	}
 	f.pattern.Editor.SetCaret(len(f.pattern.Text()), 0)
-	title, ok := "Find in Files", "Find"
+	f.liveReset()
+	title, ok := "Find in Files", "Open in Find Window"
 	if replace {
 		title, ok = "Replace in Files", "Find…"
 	}
-	v.OpenPopup(&Popup{Title: title, Width: 520, Body: f.layoutDialog,
+	v.OpenPopup(&Popup{Title: title, Width: 860, BodyHeight: 600, Body: f.layoutDialog,
 		Buttons: []*PopupButton{
 			{Text: ok, Kind: atoms.Primary, OnClick: f.start},
 			{Text: "Cancel", Kind: atoms.Secondary},
@@ -120,6 +123,11 @@ func (f *findDock) start() {
 	if p.Pattern == "" {
 		return
 	}
+	// The live search of the dialog already runs these options.
+	if l := &f.live; !p.Replace && !l.pending && l.st != nil && l.st == f.d.n.Find && liveKey(p) == l.key {
+		f.d.showTool(ToolFind)
+		return
+	}
 	f.d.n.StartFind(p)
 	f.d.showTool(ToolFind)
 }
@@ -130,6 +138,7 @@ func (f *findDock) layoutDialog(gtx layout.Context, th *tokens.Theme) layout.Dim
 		f.focus = false
 		gtx.Execute(key.FocusCmd{Tag: &f.pattern.Editor})
 	}
+	f.liveKeys(gtx)
 	for _, tf := range []*atoms.TextField{&f.pattern, &f.replace, &f.mask, &f.dir} {
 		for {
 			ev, ok := tf.Editor.Update(gtx)
@@ -138,6 +147,11 @@ func (f *findDock) layoutDialog(gtx layout.Context, th *tokens.Theme) layout.Dim
 			}
 			if _, ok := ev.(widget.SubmitEvent); ok && f.pattern.Text() != "" {
 				v.Post(func() {
+					// Enter opens the selected match (Find); Replace and
+					// a search without matches go to the Find window.
+					if !f.replaceMode && !f.live.pending && f.openSelected() {
+						return
+					}
 					v.ClosePopup()
 					f.start()
 				})
@@ -145,6 +159,7 @@ func (f *findDock) layoutDialog(gtx layout.Context, th *tokens.Theme) layout.Dim
 		}
 	}
 	f.scope.Update(gtx)
+	f.liveUpdate(gtx)
 	row := func(w layout.Widget) layout.FlexChild {
 		return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: th.Space.S}.Layout(gtx, w)
@@ -181,6 +196,9 @@ func (f *findDock) layoutDialog(gtx layout.Context, th *tokens.Theme) layout.Dim
 			)
 		}),
 	)
+	rows = append(rows, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+		return f.layoutLive(gtx, th)
+	}))
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
 }
 

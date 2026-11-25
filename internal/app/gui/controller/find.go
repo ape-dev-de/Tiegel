@@ -64,6 +64,7 @@ func (n *CodeNav) StartFind(p FindParams) {
 		return
 	}
 	n.CancelFind()
+	n.findTexts = nil
 	n.findSeq++
 	id := fmt.Sprintf("gui-%p-%d", n, n.findSeq)
 	st := &FindState{Params: p, ID: id, Running: true}
@@ -184,4 +185,56 @@ func (n *CodeNav) ApplyReplace(paths []string) {
 			}
 		}
 	})
+}
+
+// FindText is the text of a file shown in the preview of the Find in
+// Files dialog (Loading until it arrived, Err when it failed).
+type FindText struct {
+	Text    string
+	Err     string
+	Loading bool
+}
+
+// FindText returns the text of a matched file of the current search for
+// the preview: the open document (unsaved edits included, open) or the
+// file on disk. It loads in the background on first use; FindVersion
+// changes when it arrived.
+func (n *CodeNav) FindText(path string, open bool) *FindText {
+	if t := n.findTexts[path]; t != nil {
+		return t
+	}
+	if n.findTexts == nil {
+		n.findTexts = map[string]*FindText{}
+	}
+	t := &FindText{Loading: true}
+	n.findTexts[path] = t
+	c := n.c
+	c.Go(func(ctx context.Context) func() {
+		var text string
+		var err error
+		if open {
+			var dt api.DocText
+			if err = c.call(ctx, "doc.text", api.DocTextParams{Path: path}, &dt); err == nil {
+				text = dt.Text
+			}
+		}
+		if !open || err != nil {
+			var fc api.FileContent
+			err = c.call(ctx, "files.read", api.FilesReadParams{Path: path, MaxBytes: 4 << 20}, &fc)
+			text = fc.Content
+			if err == nil && fc.Encoding != "utf-8" {
+				err = fmt.Errorf("binary file")
+			}
+		}
+		return func() {
+			t.Loading = false
+			if err != nil {
+				t.Err = err.Error()
+			} else {
+				t.Text = text
+			}
+			n.FindVersion++
+		}
+	})
+	return t
 }

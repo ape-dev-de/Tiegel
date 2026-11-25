@@ -313,7 +313,7 @@ func keepShortcut(mac bool) func(keymap.Chord) bool {
 	return func(c keymap.Chord) bool {
 		fkey := len(c.Key) >= 2 && c.Key[0] == 'F' && c.Key[1] >= '1' && c.Key[1] <= '9'
 		switch {
-		case mac && c.Mods == keymap.Cmd && len(c.Key) == 1 && strings.Contains("CVAF", c.Key):
+		case terminalOwnKey(mac, c):
 			return false
 		case mac && c.Mods&keymap.Cmd != 0:
 			return true
@@ -324,6 +324,58 @@ func keepShortcut(mac bool) func(keymap.Chord) bool {
 		}
 		return false
 	}
+}
+
+// terminalOwnKey reports the chords the terminal view handles itself
+// (copy, paste, select all, find): they never run window shortcuts
+// while the terminal has the focus, whatever terminal.overrideIdeShortcuts
+// says (otherwise Cmd+V pastes into the editor).
+func terminalOwnKey(mac bool, c keymap.Chord) bool {
+	if len(c.Key) != 1 || !strings.Contains("CVAF", c.Key) {
+		return false
+	}
+	if mac {
+		return c.Mods == keymap.Cmd
+	}
+	return c.Mods == keymap.Ctrl|keymap.Shift
+}
+
+// notTerminalOwnKey keeps every window shortcut but the terminal's own
+// keys (terminal.overrideIdeShortcuts off).
+func notTerminalOwnKey(mac bool) func(keymap.Chord) bool {
+	return func(c keymap.Chord) bool { return !terminalOwnKey(mac, c) }
+}
+
+// editAction runs an Edit menu action on the terminal when it has the
+// focus; it reports whether it did.
+func (d *termDock) editAction(a keymap.Action) bool {
+	if !d.focused() {
+		return false
+	}
+	tv := d.views[d.shownID]
+	switch a {
+	case keymap.Paste:
+		tv.Paste()
+	case keymap.Copy:
+		tv.Copy()
+	case keymap.SelectAll:
+		tv.SelectAll()
+	case keymap.Find:
+		d.openFind()
+	default:
+		return false
+	}
+	d.v.Invalidate()
+	return true
+}
+
+// pressed focuses the terminal after a click anywhere in its window
+// (tab row, empty area), unless an input of the window takes the keys.
+func (d *termDock) pressed() {
+	if d.find.open || d.focused() {
+		return
+	}
+	d.focusNext = true
 }
 
 // openRename asks for a new name of the current tab.

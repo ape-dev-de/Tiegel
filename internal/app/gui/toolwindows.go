@@ -305,6 +305,9 @@ func (v *View) handleBenchEvent(ev templates.Event) {
 		v.toolsVersion = l.Version
 	case templates.PanelPressEvent:
 		v.activeTool = e.ID
+		if e.ID == ToolTerminal {
+			v.termd.pressed()
+		}
 	case templates.DismissEvent:
 		v.closeOverlay()
 	}
