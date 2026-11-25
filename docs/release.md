@@ -25,6 +25,10 @@ Voraussetzungen: macOS mit Xcode bzw. Command Line Tools (`xcode-select --instal
 ```sh
 make app                 # dist/Tiegel.app, universal, ad-hoc signiert
 make dmg                 # zusätzlich dist/Tiegel-<version>.dmg
+make install             # für diesen Mac bauen und nach /Applications installieren
+
+APP_DIR=~/Applications make install   # anderes Zielverzeichnis
+ARCH=universal make install           # beide Architekturen
 
 scripts/macos/build-app.sh --arch arm64   # nur Apple Silicon (schneller)
 scripts/macos/build-app.sh --no-sign      # ohne Signatur

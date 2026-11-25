@@ -1,4 +1,4 @@
-.PHONY: check fmt vet test build run catalog
+.PHONY: check fmt vet test build run catalog install
 
 # Apple's linker (Xcode 15+) warns "ignoring duplicate libraries: '-lobjc'"
 # because several cgo packages (Gio, native, trash) compile Objective-C.
@@ -30,6 +30,12 @@ run:
 
 catalog:
 	go run ./cmd/tiegel-catalog
+
+# Builds Tiegel for this machine and installs it: macOS → Tiegel.app in
+# APP_DIR (default /Applications), elsewhere → binary in BIN_DIR (default
+# ~/.local/bin). ARCH=universal builds both Mac architectures.
+install:
+	scripts/install.sh
 
 # --- macOS packaging (M8) -------------------------------------------------
 # Signs ad-hoc unless TIEGEL_SIGN_IDENTITY is set; see docs/release.md.
