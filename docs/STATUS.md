@@ -72,3 +72,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-23: Tests-Fenster zeigt Assertions je Test/Klasse/Lauf und die Fundstelle des Tests (JUnit-Log über stderr, D536). Mit PHPUnit 11.5 geprüft.
 - 2026-11-25: `make install` baut Tiegel für diesen Rechner und installiert es (macOS: `Tiegel.app` nach `/Applications`, sonst Binary nach `~/.local/bin`; `APP_DIR`, `BIN_DIR`, `ARCH`).
 - 2026-11-25: Find in Files mit Live-Suche, Trefferliste und Code-Vorschau im Dialog (D537); Einfügen/Kopieren ins fokussierte Terminal geht nie mehr in den Editor, Klick ins Terminal-Fenster fokussiert es (D538).
+- 2026-11-25: Neues minimalistisches Logo: hellgrauer Tiegel mit Hitzestrichen auf dunkelgrüner Kachel, SVG in `packaging/macos/icon.svg` (D539).

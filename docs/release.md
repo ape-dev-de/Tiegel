@@ -37,7 +37,7 @@ scripts/macos/build-app.sh --no-sign      # ohne Signatur
 - **Version:** `git describe --tags --always --dirty` (überschreibbar mit `TIEGEL_VERSION`). Daraus werden `CFBundleShortVersionString` (`x.y.z`, ohne Tag `0.0.0`), `CFBundleVersion` (Anzahl Commits, monoton steigend) und die Werte in `internal/version` (`Version`, `Commit`, `Date` per `-ldflags -X`) gesetzt. `Date` ist die Commit-Zeit (reproduzierbar).
 - **Mindest-macOS:** 11.0 (Go 1.24 unterstützt nichts Älteres; Gio/Metal ist kein Engpass). Wird als `LSMinimumSystemVersion` und `-mmacosx-version-min` gesetzt.
 - **Universal Binary:** beide Architekturen werden mit `CGO_ENABLED=1` gebaut (Gio und Tree-sitter brauchen cgo) und mit `lipo` vereint. Das Cross-Compiling nach amd64 funktioniert auf Apple Silicon ohne Zusatzwerkzeuge, weil Apples `clang` beide Architekturen kann; das Skript verwendet bewusst `/usr/bin/clang` und `/usr/bin/lipo` (Xcode-Shims), damit kein `clang`/`lipo` aus Conda oder Homebrew dazwischenfunkt.
-- **Icon:** `go run ./packaging/macos/mkicon -png icon.png -svg icon.svg` erzeugt das Icon aus Vektorformen; `build-app.sh` macht daraus mit `sips` und `iconutil` die `.icns`. Keine fremden Assets.
+- **Icon:** `go run ./packaging/macos/mkicon -png icon.png -svg icon.svg` erzeugt das Icon (hellgrauer Tiegel auf dunkelgrüner Kachel, D539; SVG unter `packaging/macos/icon.svg`) aus Vektorformen; `build-app.sh` macht daraus mit `sips` und `iconutil` die `.icns`. Keine fremden Assets.
 
 Ad-hoc-signierte Apps laufen auf dem eigenen Mac. Auf anderen Macs blockiert Gatekeeper sie („nicht verifizierter Entwickler“); dort hilft nur Rechtsklick → Öffnen oder `xattr -dr com.apple.quarantine Tiegel.app`.
 

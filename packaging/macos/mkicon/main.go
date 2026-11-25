@@ -1,5 +1,5 @@
-// Command mkicon renders Tiegel's app icon (a stylised crucible with molten
-// metal) from vector shapes defined in this file.
+// Command mkicon renders Tiegel's app icon (a minimal crucible with rising
+// heat, light grey on dark green) from vector shapes defined in this file.
 //
 // The design is original and lives only here: the same shape list is written
 // as PNG (for iconutil) and optionally as SVG (for documentation or editing).
@@ -86,67 +86,27 @@ func hex(s string) color.NRGBA {
 	return color.NRGBA{r, g, b, 0xff}
 }
 
-// design returns the icon as an ordered list of filled shapes (back to front).
+// Colours: a light grey crucible on a dark green tile.
+var (
+	tileTop    = hex("#24493A")
+	tileBottom = hex("#173126")
+	glyph      = hex("#E3E6E1")
+)
+
+// design returns the icon as an ordered list of filled shapes (back to
+// front): a minimal crucible – a solid trapezoid narrowing downwards with
+// rounded corners – with two rising strokes of heat above it.
 func design() []shape {
-	var out []shape
-
-	// Background tile following the macOS icon grid (824 px tile, 100 px margin).
-	out = append(out, shape{
-		path: roundedRect(100, 100, 924, 924, 184),
-		fill: linear(512, 100, 512, 924, hex("#2E3D58"), hex("#121826")),
-	})
-	// Sparks rising from the melt.
-	for _, s := range []struct{ x, y, r float32 }{{448, 286, 16}, {560, 232, 12}, {612, 300, 10}, {500, 196, 8}} {
-		out = append(out, shape{path: ellipse(s.x, s.y, s.r, s.r), fill: solid(hex("#FFC857"))})
+	return []shape{
+		// Background tile following the macOS icon grid (824 px tile,
+		// 100 px margin).
+		{path: roundedRect(100, 100, 924, 924, 184), fill: linear(512, 100, 512, 924, tileTop, tileBottom)},
+		// Heat: a shorter stroke left, a taller one right.
+		{path: roundedRect(437, 316, 477, 424, 10), fill: solid(glyph)},
+		{path: roundedRect(533, 250, 573, 388, 10), fill: solid(glyph)},
+		// Crucible body.
+		{path: roundedPolygon([]pt{{268, 472}, {756, 472}, {668, 774}, {356, 774}}, []float32{22, 22, 34, 34}), fill: solid(glyph)},
 	}
-	// Molten surface; its lower half disappears behind the rim.
-	out = append(out, shape{
-		path: ellipse(512, 392, 238, 46),
-		fill: linear(512, 346, 512, 438, hex("#FFD166"), hex("#FF6B1A")),
-	})
-	// Crucible body: a trapezoid narrowing downwards with a rounded base.
-	out = append(out, shape{
-		path: crucibleBody(),
-		fill: linear(268, 0, 756, 0, hex("#ECE6DC"), hex("#9C9184")),
-	})
-	// Darker band around the body for depth.
-	out = append(out, shape{
-		path: polygon(pt{289, 560}, pt{735, 560}, pt{725, 600}, pt{299, 600}),
-		fill: linear(290, 0, 734, 0, hex("#B9AFA2"), hex("#7D7366")),
-	})
-	// Rim.
-	out = append(out, shape{
-		path: roundedRect(232, 392, 792, 446, 27),
-		fill: linear(232, 0, 792, 0, hex("#F7F3EC"), hex("#B7AEA2")),
-	})
-	// Glowing drip running down the inside edge of the rim.
-	out = append(out, shape{
-		path: drip(),
-		fill: linear(0, 440, 0, 520, hex("#FF8A1F"), hex("#FF5A12")),
-	})
-	return out
-}
-
-func crucibleBody() path {
-	var p path
-	p.moveTo(262, 430)
-	p.lineTo(762, 430)
-	p.lineTo(690, 742)
-	p.cubeTo(682, 778, 656, 796, 620, 796)
-	p.lineTo(404, 796)
-	p.cubeTo(368, 796, 342, 778, 334, 742)
-	p.close()
-	return p
-}
-
-func drip() path {
-	var p path
-	p.moveTo(596, 444)
-	p.lineTo(636, 444)
-	p.cubeTo(636, 470, 630, 496, 616, 512)
-	p.cubeTo(602, 496, 596, 470, 596, 444)
-	p.close()
-	return p
 }
 
 // ---------------------------------------------------------------------------
@@ -196,26 +156,30 @@ func roundedRect(x0, y0, x1, y1, r float32) path {
 	return p
 }
 
-func ellipse(cx, cy, rx, ry float32) path {
-	kx, ky := rx*kappa, ry*kappa
+// roundedPolygon is a closed polygon whose corners are rounded with the
+// given radii (one per point, measured along the edges).
+func roundedPolygon(pts []pt, radii []float32) path {
 	var p path
-	p.moveTo(cx+rx, cy)
-	p.cubeTo(cx+rx, cy+ky, cx+kx, cy+ry, cx, cy+ry)
-	p.cubeTo(cx-kx, cy+ry, cx-rx, cy+ky, cx-rx, cy)
-	p.cubeTo(cx-rx, cy-ky, cx-kx, cy-ry, cx, cy-ry)
-	p.cubeTo(cx+kx, cy-ry, cx+rx, cy-ky, cx+rx, cy)
-	p.close()
-	return p
-}
-
-func polygon(pts ...pt) path {
-	var p path
-	for i, q := range pts {
-		if i == 0 {
-			p.moveTo(q.x, q.y)
-		} else {
-			p.lineTo(q.x, q.y)
+	n := len(pts)
+	toward := func(a, b pt, d float32) pt {
+		dx, dy := b.x-a.x, b.y-a.y
+		l := float32(math.Hypot(float64(dx), float64(dy)))
+		if l == 0 {
+			return a
 		}
+		return pt{a.x + dx*d/l, a.y + dy*d/l}
+	}
+	lerp := func(a, b pt, t float32) pt { return pt{a.x + (b.x-a.x)*t, a.y + (b.y-a.y)*t} }
+	for i := range pts {
+		prev, cur, next := pts[(i+n-1)%n], pts[i], pts[(i+1)%n]
+		in, out := toward(cur, prev, radii[i]), toward(cur, next, radii[i])
+		if i == 0 {
+			p.moveTo(in.x, in.y)
+		} else {
+			p.lineTo(in.x, in.y)
+		}
+		c1, c2 := lerp(in, cur, kappa), lerp(out, cur, kappa)
+		p.cubeTo(c1.x, c1.y, c2.x, c2.y, out.x, out.y)
 	}
 	p.close()
 	return p

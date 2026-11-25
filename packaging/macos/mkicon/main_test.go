@@ -17,15 +17,19 @@ func TestRender(t *testing.T) {
 	if _, _, _, a := img.At(1, 1).RGBA(); a != 0 {
 		t.Errorf("corner alpha = %d, want 0", a)
 	}
-	// The crucible body is opaque and light.
-	r, g, b, a := img.At(64, 85).RGBA()
-	if a != 0xffff || r < 0x9000 || g < 0x9000 || b < 0x8000 {
-		t.Errorf("body pixel = %x %x %x %x", r, g, b, a)
+	light := func(x, y int, what string) {
+		t.Helper()
+		r, g, b, a := img.At(x, y).RGBA()
+		if a != 0xffff || r < 0xd000 || g < 0xd000 || b < 0xd000 {
+			t.Errorf("%s pixel = %x %x %x %x, want light grey", what, r, g, b, a)
+		}
 	}
-	// The molten surface is orange (red dominates blue).
-	r, _, b, _ = img.At(64, 46).RGBA()
-	if r <= b {
-		t.Errorf("melt pixel not orange: r=%x b=%x", r, b)
+	light(64, 78, "body")
+	light(69, 40, "heat")
+	// The tile is dark green.
+	r, g, b, _ := img.At(20, 64).RGBA()
+	if g <= r || g <= b || g > 0x6000 {
+		t.Errorf("tile pixel = %x %x %x, want dark green", r, g, b)
 	}
 }
 
