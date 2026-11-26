@@ -79,6 +79,21 @@ type NewSessionRequest struct {
 	MCPServers []any  `json:"mcpServers"`
 }
 
+// EnvVariable is an environment variable of an MCP server.
+type EnvVariable struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// MCPServerStdio is an MCP server the agent starts as child process and
+// talks to over stdio (supported by every ACP agent).
+type MCPServerStdio struct {
+	Name    string        `json:"name"`
+	Command string        `json:"command"`
+	Args    []string      `json:"args"`
+	Env     []EnvVariable `json:"env"`
+}
+
 // Value is a config option value: agents send strings, other scalars are
 // kept in their JSON text form.
 type Value string

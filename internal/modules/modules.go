@@ -19,6 +19,7 @@
 //	              live templates with tab stops (templates.*; AP17.3)
 //	php-generate  Generate: constructor, accessors, server code actions (generate.*; AP17.3)
 //	agent         AI coding agent over the Agent Client Protocol, e.g. opencode (agent.*; D540)
+//	knowledge     project knowledge base: agents describe data flows, hybrid search, MCP for the agent (knowledge.*; D560)
 //
 // The modules never import each other; they share data through the bus and
 // the hook points declared in internal/api/contract.go. None of them imports
@@ -33,6 +34,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/modules/debugxdebug"
 	"github.com/ape-dev-de/tiegel/internal/modules/docker"
 	"github.com/ape-dev-de/tiegel/internal/modules/git"
+	"github.com/ape-dev-de/tiegel/internal/modules/knowledge"
 	"github.com/ape-dev-de/tiegel/internal/modules/langphp"
 	"github.com/ape-dev-de/tiegel/internal/modules/livetemplates"
 	"github.com/ape-dev-de/tiegel/internal/modules/lspplugins"
@@ -47,15 +49,16 @@ import (
 
 // Options configure all modules (tests replace single ones).
 type Options struct {
-	Runtime  phpruntime.Options
-	Features phpfeatures.Options
-	LangPHP  langphp.Options
-	Git      git.Options
-	Debug    debugxdebug.Options
-	Index    phpindex.Options
-	Docker   docker.Options
-	PHPUnit  phpunit.Options
-	Agent    agent.Options
+	Runtime   phpruntime.Options
+	Features  phpfeatures.Options
+	LangPHP   langphp.Options
+	Git       git.Options
+	Debug     debugxdebug.Options
+	Index     phpindex.Options
+	Docker    docker.Options
+	PHPUnit   phpunit.Options
+	Agent     agent.Options
+	Knowledge knowledge.Options
 }
 
 // All returns new instances of all compiled-in modules in dependency order.
@@ -80,7 +83,7 @@ func All(opts Options) []module.Module {
 	for _, p := range qa.All() {
 		mods = append(mods, p)
 	}
-	mods = append(mods, livetemplates.New(), phpgenerate.New(), agent.New(opts.Agent))
+	mods = append(mods, livetemplates.New(), phpgenerate.New(), agent.New(opts.Agent), knowledge.New(opts.Knowledge))
 	return mods
 }
 

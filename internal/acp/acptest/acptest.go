@@ -38,6 +38,14 @@ type Agent struct {
 	prompts  []string
 	cancels  map[string]context.CancelFunc
 	inits    []acp.InitializeRequest
+	news     []acp.NewSessionRequest
+}
+
+// NewSessions returns the session/new requests received.
+func (a *Agent) NewSessions() []acp.NewSessionRequest {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]acp.NewSessionRequest(nil), a.news...)
 }
 
 // Prompts returns the texts of all prompts received so far.
@@ -146,7 +154,10 @@ func (a *Agent) handle(ctx context.Context, conn *acp.Conn, method string, param
 		if a.AuthRequired {
 			return nil, &acp.Error{Code: acp.CodeAuthRequired, Message: "Authentication required"}
 		}
+		var nr acp.NewSessionRequest
+		_ = json.Unmarshal(params, &nr)
 		a.mu.Lock()
+		a.news = append(a.news, nr)
 		a.sessions++
 		id := fmt.Sprintf("ses_%d", a.sessions)
 		a.mu.Unlock()

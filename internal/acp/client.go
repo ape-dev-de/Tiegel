@@ -104,8 +104,24 @@ func (c *Client) Authenticate(ctx context.Context, methodID string) error {
 
 // NewSession creates a session working in cwd.
 func (c *Client) NewSession(ctx context.Context, cwd string) (NewSessionResponse, error) {
+	return c.NewSessionWith(ctx, cwd, nil)
+}
+
+// NewSessionWith creates a session working in cwd that may use the
+// given MCP servers.
+func (c *Client) NewSessionWith(ctx context.Context, cwd string, servers []MCPServerStdio) (NewSessionResponse, error) {
 	var res NewSessionResponse
-	err := c.conn.Call(ctx, MethodSessionNew, NewSessionRequest{Cwd: cwd, MCPServers: []any{}}, &res)
+	list := make([]any, 0, len(servers))
+	for _, s := range servers {
+		if s.Args == nil {
+			s.Args = []string{}
+		}
+		if s.Env == nil {
+			s.Env = []EnvVariable{}
+		}
+		list = append(list, s)
+	}
+	err := c.conn.Call(ctx, MethodSessionNew, NewSessionRequest{Cwd: cwd, MCPServers: list}, &res)
 	return res, err
 }
 

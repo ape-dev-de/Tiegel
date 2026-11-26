@@ -22,9 +22,36 @@ var parser = goldmark.New(goldmark.WithExtensions(
 // Parse parses Markdown source into a document. It never fails: invalid
 // Markdown is text.
 func Parse(src []byte) *Doc {
+	src = frontMatterAsCode(src)
 	root := parser.Parse(text.NewReader(src))
 	c := conv{src: src, lines: lineStarts(src), anchors: map[string]int{}}
 	return &Doc{Blocks: c.blocks(root)}
+}
+
+// frontMatterAsCode shows YAML front matter ("---" … "---" at the very
+// start) as a yaml code block instead of a rule and a setext heading.
+// The line count stays the same, so source lines keep matching.
+func frontMatterAsCode(src []byte) []byte {
+	s := strings.ReplaceAll(string(src), "\r\n", "\n")
+	if !strings.HasPrefix(s, "---\n") {
+		return src
+	}
+	end := strings.Index(s[4:], "\n---\n")
+	if end < 0 {
+		if !strings.HasSuffix(s, "\n---") {
+			return src
+		}
+		end = len(s) - 4 - 4
+	}
+	body := s[4 : 4+end]
+	if strings.Contains(body, "```") || !strings.Contains(body, ":") {
+		return src
+	}
+	rest := ""
+	if 4+end+5 <= len(s) {
+		rest = s[4+end+5:]
+	}
+	return []byte("```yaml\n" + body + "\n```\n" + rest)
 }
 
 type conv struct {
