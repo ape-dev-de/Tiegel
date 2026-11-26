@@ -39,7 +39,7 @@ func (a *App) registerMarkdown() {
 	})
 }
 
-func (a *App) mdRender(_ context.Context, p MarkdownParams) (MarkdownResult, error) {
+func (a *App) mdRender(ctx context.Context, p MarkdownParams) (MarkdownResult, error) {
 	var res MarkdownResult
 	src := []byte(p.Text)
 	if p.Text == "" {
@@ -56,6 +56,10 @@ func (a *App) mdRender(_ context.Context, p MarkdownParams) (MarkdownResult, err
 		res.Path = abs
 	}
 	res.Doc = markdown.Parse(src)
+	if !p.Plain {
+		// Code block highlighting for the reader (plain text has no colors).
+		res.Doc.Highlight(ctx)
+	}
 	res.Outline = res.Doc.Outline()
 	if res.Outline == nil {
 		res.Outline = []markdown.OutlineEntry{}

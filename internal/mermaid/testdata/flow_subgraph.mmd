@@ -1,0 +1,17 @@
+flowchart LR
+    subgraph one [Frontend]
+        a1[Browser] --> a2[SPA]
+    end
+    subgraph two [Backend]
+        b1[(Database)] --> b2[[API]]
+        b2 --> b3{{Cache}}
+    end
+    subgraph three
+        c1>Queue] --> c2((Worker))
+    end
+    a2 == HTTP ==> b2
+    b3 --> c1
+    c2 -. writes .-> b1
+    classDef hot fill:#f96,stroke:#333,stroke-width:2px
+    class c2 hot
+    style a1 fill:#bbf

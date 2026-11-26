@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="328" height="500.4" viewBox="0 0 328 500.4">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<path d="M162.89 44.9 C162.89 63.13 169.43 63.13 169.43 81.35 C169.43 94.03 163.53 94.03 163.53 106.7" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M163.53 117.8 L158.53 106.7 L163.53 108.92 L168.52 106.7 Z" fill="#5c6370"/>
+<path d="M163.53 154.7 L163.53 193.6" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M163.53 204.7 L158.53 193.6 L163.53 195.82 L168.52 193.6 Z" fill="#5c6370"/>
+<path d="M147.53 287.7 C147.53 309.93 105.8 309.93 105.8 332.15 C105.8 344.83 48 344.83 48 357.5" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M48 368.6 L43.01 357.5 L48 359.72 L53 357.5 Z" fill="#5c6370"/>
+<path d="M163.53 295.7 L163.8 332.15 L166 357.5" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M166 368.6 L161.01 357.5 L166 359.72 L171 357.5 Z" fill="#5c6370"/>
+<path d="M179.53 287.7 C179.53 309.93 218.8 309.93 218.8 332.15 C218.8 344.83 272 344.83 272 357.5" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M272 368.6 L267.01 357.5 L272 359.72 L277 357.5 Z" fill="#5c6370"/>
+<path d="M48 405.5 C48 424.95 142.93 424.95 142.93 444.4" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M142.93 455.5 L137.94 444.4 L142.93 446.62 L147.93 444.4 Z" fill="#5c6370"/>
+<path d="M166 405.5 C166 424.95 156.42 424.95 156.42 444.4" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M156.42 455.5 L151.42 444.4 L156.42 446.62 L161.41 444.4 Z" fill="#5c6370"/>
+<path d="M272 405.5 C272 424.95 169.9 424.95 169.9 444.4" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M169.9 455.5 L164.9 444.4 L169.9 446.62 L174.89 444.4 Z" fill="#5c6370"/>
+<path d="M183.38 455.5 C183.38 443 319.64 443 319.64 430.5 L320 387.05 L319.27 332.15 L318.55 250.2 L317.89 179.7 L317.31 136.25 L316.94 81.35 C316.94 68.68 178.89 68.68 178.89 56" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="2.8 4.2"/>
+<path d="M178.89 44.9 L183.88 56 L178.89 53.78 L173.89 56 Z" fill="#5c6370"/>
+<path d="M132.43 69.9 L206.43 69.9 C208.08 69.9 209.43 71.24 209.43 72.9 L209.43 89.8 C209.43 91.46 208.08 92.8 206.43 92.8 L132.43 92.8 C130.77 92.8 129.43 91.46 129.43 89.8 L129.43 72.9 C129.43 71.24 130.77 69.9 132.43 69.9 Z" fill="#ffffff"/>
+<text x="169.43" y="86.25" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Get money</text>
+<path d="M91.8 320.7 L119.8 320.7 C121.46 320.7 122.8 322.04 122.8 323.7 L122.8 340.6 C122.8 342.26 121.46 343.6 119.8 343.6 L91.8 343.6 C90.15 343.6 88.8 342.26 88.8 340.6 L88.8 323.7 C88.8 322.04 90.15 320.7 91.8 320.7 Z" fill="#ffffff"/>
+<text x="105.8" y="337.05" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">One</text>
+<path d="M148.8 320.7 L178.8 320.7 C180.46 320.7 181.8 322.04 181.8 323.7 L181.8 340.6 C181.8 342.26 180.46 343.6 178.8 343.6 L148.8 343.6 C147.15 343.6 145.8 342.26 145.8 340.6 L145.8 323.7 C145.8 322.04 147.15 320.7 148.8 320.7 Z" fill="#ffffff"/>
+<text x="163.8" y="337.05" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Two</text>
+<path d="M196.8 320.7 L240.8 320.7 C242.46 320.7 243.8 322.04 243.8 323.7 L243.8 340.6 C243.8 342.26 242.46 343.6 240.8 343.6 L196.8 343.6 C195.15 343.6 193.8 342.26 193.8 340.6 L193.8 323.7 C193.8 322.04 195.15 320.7 196.8 320.7 Z" fill="#ffffff"/>
+<text x="218.8" y="337.05" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Three</text>
+<path d="M119.89 8 L221.89 8 L221.89 44.9 L119.89 44.9 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="170.89" y="31.35" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Christmas</text>
+<path d="M113.53 117.8 L213.53 117.8 C216.84 117.8 219.53 120.49 219.53 123.8 L219.53 148.7 C219.53 152.01 216.84 154.7 213.53 154.7 L113.53 154.7 C110.21 154.7 107.53 152.01 107.53 148.7 L107.53 123.8 C107.53 120.49 110.21 117.8 113.53 117.8 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="163.53" y="141.15" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Go shopping</text>
+<path d="M163.53 204.7 L254.53 250.2 L163.53 295.7 L72.53 250.2 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="163.53" y="255.1" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Let me think</text>
+<path d="M8 368.6 L88 368.6 L88 405.5 L8 405.5 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="48" y="391.95" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Laptop</text>
+<path d="M128 368.6 L204 368.6 L204 405.5 L128 405.5 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="166" y="391.95" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">iPhone</text>
+<path d="M244 368.6 L300 368.6 L300 405.5 L244 405.5 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="272" y="391.95" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Car</text>
+<path d="M141.16 455.5 L185.16 455.5 C195.35 455.5 203.61 463.76 203.61 473.95 L203.61 473.95 C203.61 484.14 195.35 492.4 185.16 492.4 L141.16 492.4 C130.97 492.4 122.71 484.14 122.71 473.95 L122.71 473.95 C122.71 463.76 130.97 455.5 141.16 455.5 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="163.16" y="478.85" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Done</text>
+</svg>

@@ -1,0 +1,17 @@
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Loading : fetch()
+    Loading --> Ready : 200
+    Loading --> Failed : error
+    Failed --> Loading : retry
+    Ready --> [*]
+    state Ready {
+        [*] --> Viewing
+        Viewing --> Editing : edit
+        Editing --> Viewing : save
+    }
+    state check <<choice>>
+    Failed --> check
+    check --> Idle : give up
+    Idle : waits for input
+    note right of Failed : shows a toast

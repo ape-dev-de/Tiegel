@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="430.73" height="626.21" viewBox="0 0 430.73 626.21">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<path d="M164.23 322.81 C164.23 343.81 85.5 343.81 85.5 364.81" fill="none" stroke="#5c6370" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M164.23 308.81 L171.23 322.81 L157.23 322.81 Z" fill="#ffffff" stroke="#5c6370" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M194.23 322.81 C194.23 348.53 273 348.53 273 374.26" fill="none" stroke="#5c6370" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M194.23 308.81 L201.23 322.81 L187.23 322.81 Z" fill="#ffffff" stroke="#5c6370" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M179.23 104.48 L179.23 141.5 L179.23 180.95" fill="none" stroke="#5c6370" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M179.23 86.48 L184.63 95.48 L179.23 104.48 L173.83 95.48 Z" fill="#ffffff" stroke="#5c6370" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M85.5 476.41 L85.5 515.86 L85.5 553.36" fill="none" stroke="#5c6370" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="6.5 5.2"/>
+<path d="M80 545.31 L85.5 555.31 L91 545.31" fill="none" stroke="#5c6370" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M354.23 116.05 L354.23 213.43" fill="none" stroke="#5c6370" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="6.5 5.2"/>
+<path d="M354.23 102.05 L361.23 116.05 L347.23 116.05 Z" fill="#ffffff" stroke="#5c6370" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M154.23 130.05 L204.23 130.05 C205.89 130.05 207.23 131.4 207.23 133.05 L207.23 149.95 C207.23 151.61 205.89 152.95 204.23 152.95 L154.23 152.95 C152.57 152.95 151.23 151.61 151.23 149.95 L151.23 133.05 C151.23 131.4 152.57 130.05 154.23 130.05 Z" fill="#ffffff"/>
+<text x="179.23" y="146.4" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">houses</text>
+<text x="167.23" y="112.69" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="12.04" fill="#6a737d" text-anchor="middle">1</text>
+<text x="191.23" y="163.17" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="12.04" fill="#6a737d" text-anchor="middle">*</text>
+<path d="M68.5 504.41 L102.5 504.41 C104.16 504.41 105.5 505.75 105.5 507.41 L105.5 524.31 C105.5 525.96 104.16 527.31 102.5 527.31 L68.5 527.31 C66.84 527.31 65.5 525.96 65.5 524.31 L65.5 507.41 C65.5 505.75 66.84 504.41 68.5 504.41 Z" fill="#ffffff"/>
+<text x="85.5" y="520.76" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">uses</text>
+<path d="M102.73 180.95 L255.73 180.95 C257.39 180.95 258.73 182.3 258.73 183.95 L258.73 305.81 C258.73 307.46 257.39 308.81 255.73 308.81 L102.73 308.81 C101.07 308.81 99.73 307.46 99.73 305.81 L99.73 183.95 C99.73 182.3 101.07 180.95 102.73 180.95 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="179.23" y="201.3" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="12.04" fill="#6a737d" text-anchor="middle">«abstract»</text>
+<text x="179.23" y="219.56" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle" font-weight="bold">Animal</text>
+<path d="M99.73 232.11 L258.73 232.11" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M99.73 279.91 L258.73 279.91" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="109.73" y="251.46" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">+String name</text>
+<text x="109.73" y="270.36" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">+int age</text>
+<text x="109.73" y="299.26" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start" font-style="italic">+makeSound() void</text>
+<path d="M11 364.81 L160 364.81 C161.66 364.81 163 366.15 163 367.81 L163 473.41 C163 475.06 161.66 476.41 160 476.41 L11 476.41 C9.34 476.41 8 475.06 8 473.41 L8 367.81 C8 366.15 9.34 364.81 11 364.81 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="85.5" y="387.16" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle" font-weight="bold">Duck</text>
+<path d="M8 399.71 L163 399.71" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M8 428.61 L163 428.61" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="18" y="419.06" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">+String beakColor</text>
+<text x="18" y="447.96" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">+swim()</text>
+<text x="18" y="466.86" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">+quack()</text>
+<path d="M206 374.26 L340 374.26 C341.66 374.26 343 375.6 343 377.26 L343 463.96 C343 465.61 341.66 466.96 340 466.96 L206 466.96 C204.34 466.96 203 465.61 203 463.96 L203 377.26 C203 375.6 204.34 374.26 206 374.26 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="273" y="396.61" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle" font-weight="bold">Fish</text>
+<path d="M203 409.16 L343 409.16" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M203 438.06 L343 438.06" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="213" y="428.51" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">-int sizeInFeet</text>
+<text x="213" y="457.41" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">-canEat()</text>
+<path d="M137.23 23.58 L221.23 23.58 C222.89 23.58 224.23 24.92 224.23 26.58 L224.23 83.48 C224.23 85.13 222.89 86.48 221.23 86.48 L137.23 86.48 C135.57 86.48 134.23 85.13 134.23 83.48 L134.23 26.58 C134.23 24.92 135.57 23.58 137.23 23.58 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="179.23" y="45.93" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle" font-weight="bold">Zoo</text>
+<path d="M134.23 58.48 L224.23 58.48" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M134.23 72.48 L224.23 72.48" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M43.5 555.31 L127.5 555.31 C129.16 555.31 130.5 556.65 130.5 558.31 L130.5 615.21 C130.5 616.86 129.16 618.21 127.5 618.21 L43.5 618.21 C41.84 618.21 40.5 616.86 40.5 615.21 L40.5 558.31 C40.5 556.65 41.84 555.31 43.5 555.31 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="85.5" y="577.66" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle" font-weight="bold">Pond</text>
+<path d="M40.5 590.21 L130.5 590.21" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M40.5 604.21 L130.5 604.21" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M288.73 8 L419.73 8 C421.39 8 422.73 9.34 422.73 11 L422.73 99.05 C422.73 100.71 421.39 102.05 419.73 102.05 L288.73 102.05 C287.07 102.05 285.73 100.71 285.73 99.05 L285.73 11 C285.73 9.34 287.07 8 288.73 8 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="354.23" y="28.34" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="12.04" fill="#6a737d" text-anchor="middle">«interface»</text>
+<text x="354.23" y="46.6" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle" font-weight="bold">Repository&lt;T&gt;</text>
+<path d="M285.73 59.15 L422.73 59.15" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M285.73 73.15 L422.73 73.15" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="295.73" y="92.5" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">+find(id) T</text>
+<path d="M301.73 213.43 L406.73 213.43 C408.39 213.43 409.73 214.77 409.73 216.43 L409.73 273.33 C409.73 274.99 408.39 276.33 406.73 276.33 L301.73 276.33 C300.07 276.33 298.73 274.99 298.73 273.33 L298.73 216.43 C298.73 214.77 300.07 213.43 301.73 213.43 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="354.23" y="235.78" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle" font-weight="bold">AnimalRepo</text>
+<path d="M298.73 248.33 L409.73 248.33" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M298.73 262.33 L409.73 262.33" fill="none" stroke="#5b7fbf" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

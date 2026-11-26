@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="474.82" height="281.27" viewBox="0 0 474.82 281.27">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<path d="M128.18 151.74 L128.18 41.74 C175.55 41.74 217.59 72.05 232.55 116.99 C247.51 161.93 232.03 211.4 194.12 239.78 Z" fill="#4e79a7" stroke="#ffffff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M128.18 151.74 L194.12 239.78 C149.4 273.27 86.69 267.92 48.29 227.35 C9.89 186.78 8 123.87 43.89 81.06 Z" fill="#f28e2b" stroke="#ffffff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M128.18 151.74 L43.89 81.06 C57.7 64.59 76.04 52.52 96.64 46.35 Z" fill="#59a14f" stroke="#ffffff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M128.18 151.74 L96.64 46.35 C106.87 43.29 117.5 41.74 128.18 41.74 Z" fill="#e15759" stroke="#ffffff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M270.18 105.39 L278.18 105.39 C279.29 105.39 280.18 106.28 280.18 107.39 L280.18 115.39 C280.18 116.49 279.29 117.39 278.18 117.39 L270.18 117.39 C269.08 117.39 268.18 116.49 268.18 115.39 L268.18 107.39 C268.18 106.28 269.08 105.39 270.18 105.39 Z" fill="#4e79a7"/>
+<text x="288.18" y="116.29" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">Calcium [42.96]</text>
+<text x="429.02" y="116.29" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#6a737d" text-anchor="start">39.8%</text>
+<path d="M270.18 130.29 L278.18 130.29 C279.29 130.29 280.18 131.18 280.18 132.29 L280.18 140.29 C280.18 141.39 279.29 142.29 278.18 142.29 L270.18 142.29 C269.08 142.29 268.18 141.39 268.18 140.29 L268.18 132.29 C268.18 131.18 269.08 130.29 270.18 130.29 Z" fill="#f28e2b"/>
+<text x="288.18" y="141.19" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">Potassium [50.05]</text>
+<text x="429.02" y="141.19" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#6a737d" text-anchor="start">46.3%</text>
+<path d="M270.18 155.19 L278.18 155.19 C279.29 155.19 280.18 156.08 280.18 157.19 L280.18 165.19 C280.18 166.29 279.29 167.19 278.18 167.19 L270.18 167.19 C269.08 167.19 268.18 166.29 268.18 165.19 L268.18 157.19 C268.18 156.08 269.08 155.19 270.18 155.19 Z" fill="#59a14f"/>
+<text x="288.18" y="166.08" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">Magnesium [10.01]</text>
+<text x="429.02" y="166.08" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#6a737d" text-anchor="start">9.3%</text>
+<path d="M270.18 180.08 L278.18 180.08 C279.29 180.08 280.18 180.98 280.18 182.08 L280.18 190.08 C280.18 191.19 279.29 192.08 278.18 192.08 L270.18 192.08 C269.08 192.08 268.18 191.19 268.18 190.08 L268.18 182.08 C268.18 180.98 269.08 180.08 270.18 180.08 Z" fill="#e15759"/>
+<text x="288.18" y="190.99" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="start">Iron [5]</text>
+<text x="429.02" y="190.99" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#6a737d" text-anchor="start">4.6%</text>
+<text x="237.41" y="24.5" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="16.1" fill="#1f2328" text-anchor="middle" font-weight="bold">Key elements in Product X</text>
+</svg>

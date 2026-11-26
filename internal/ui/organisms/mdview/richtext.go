@@ -111,6 +111,7 @@ type run struct {
 	glyphs    []text.Glyph
 	asc, desc fixed.Int26_6
 	link      *link
+	role      tokens.SyntaxRole // code highlighting (RolePlain: none)
 	img       *loadedImage
 	// natural image size in pixels (runImage).
 	imgW, imgH int
@@ -145,6 +146,7 @@ type line struct {
 // span boundaries. Shaping is cached per shapeKey, wrapping per width.
 type richText struct {
 	spans []markdown.Span
+	roles []tokens.SyntaxRole // per span (code blocks with highlighting), or nil
 	style textStyle
 
 	key             shapeKey
@@ -205,7 +207,7 @@ func (rt *richText) shape(gtx layout.Context, th *tokens.Theme, v *View) {
 		rt.defAsc, rt.defDesc = gs[0].Ascent, gs[0].Descent
 	}
 	var cur *link
-	for _, sp := range rt.spans {
+	for si, sp := range rt.spans {
 		if sp.Link != "" && !sp.Image {
 			if cur == nil || cur.dest != sp.Link {
 				cur = &link{dest: sp.Link}
@@ -232,6 +234,9 @@ func (rt *richText) shape(gtx layout.Context, th *tokens.Theme, v *View) {
 			}
 			s := strings.ReplaceAll(sp.Text, "\n", " ")
 			r := run{kind: kind, style: sp.Style, link: cur, glyphs: shapeString(sh, f, size, s)}
+			if si < len(rt.roles) {
+				r.role = rt.roles[si]
+			}
 			r.asc, r.desc = metrics(r.glyphs, rt.defAsc, rt.defDesc)
 			var padL, padR fixed.Int26_6
 			if kind == runCode {
@@ -617,6 +622,9 @@ func (rt *richText) paintPiece(gtx layout.Context, th *tokens.Theme, sh *text.Sh
 	}
 	if r.link != nil {
 		col = th.Color.Accent
+	}
+	if r.role != tokens.RolePlain && col == th.Editor.Text {
+		col = th.SyntaxColor(r.role)
 	}
 	drawGlyphs(gtx, sh, r.glyphs[p.g0:p.g1], gx, l.base, col)
 	thick := max(1, gtx.Dp(th.Size.BorderWidth))

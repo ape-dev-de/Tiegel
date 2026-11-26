@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080.75" height="356.38" viewBox="0 0 1080.75 356.38">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<path d="M12 69.19 L233 69.19 C235.21 69.19 237 70.98 237 73.19 L237 152.99 C237 155.2 235.21 156.99 233 156.99 L12 156.99 C9.79 156.99 8 155.2 8 152.99 L8 73.19 C8 70.98 9.79 69.19 12 69.19 Z" fill="#f6f7f9" stroke="#c9ced6" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="122.5" y="87.54" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Frontend</text>
+<path d="M340 8 L1068.75 8 C1070.96 8 1072.75 9.79 1072.75 12 L1072.75 193.48 C1072.75 195.69 1070.96 197.48 1068.75 197.48 L340 197.48 C337.79 197.48 336 195.69 336 193.48 L336 12 C336 9.79 337.79 8 340 8 Z" fill="#f6f7f9" stroke="#c9ced6" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="704.38" y="26.35" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Backend</text>
+<path d="M621.45 205.48 L855.75 205.48 C857.96 205.48 859.75 207.27 859.75 209.48 L859.75 344.38 C859.75 346.59 857.96 348.38 855.75 348.38 L621.45 348.38 C619.24 348.38 617.45 346.59 617.45 344.38 L617.45 209.48 C617.45 207.27 619.24 205.48 621.45 205.48 Z" fill="#f6f7f9" stroke="#c9ced6" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="738.6" y="223.83" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">three</text>
+<path d="M112 124.54 L150.9 124.54" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M162 124.54 L150.9 129.53 L153.12 124.54 L150.9 119.54 Z" fill="#5c6370"/>
+<path d="M963.75 146.03 C937.75 146.03 937.75 45.3 911.75 45.3 L805.75 44.9 L740.75 45.95 L673.6 46.86 L592.45 47.6 L522.23 48.16 L452 48.35 C445.05 48.35 445.05 116.54 438.1 116.54" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M427 116.54 L438.1 111.54 L435.88 116.54 L438.1 121.53 Z" fill="#5c6370"/>
+<path d="M427 132.54 C446.45 132.54 446.45 136.21 465.9 136.21" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M477 136.21 L465.9 141.21 L468.12 136.21 L465.9 131.22 Z" fill="#5c6370"/>
+<path d="M715.75 272.83 C735.2 272.83 735.2 294.38 754.65 294.38" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M765.75 294.38 L754.65 299.38 L756.87 294.38 L754.65 289.39 Z" fill="#5c6370"/>
+<path d="M223 124.54 L286.5 124.54 L336.5 124.54" fill="none" stroke="#5c6370" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M350 124.54 L336.5 130.61 L339.2 124.54 L336.5 118.46 Z" fill="#5c6370"/>
+<path d="M567.45 136.21 C593.9 136.21 593.9 272.83 620.35 272.83" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M631.45 272.83 L620.35 277.83 L622.57 272.83 L620.35 267.84 Z" fill="#5c6370"/>
+<path d="M845.75 294.38 C878.75 294.38 878.75 253.83 911.75 253.83 C932.2 253.83 932.2 162.03 952.65 162.03" fill="none" stroke="#5c6370" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="2.8 4.2"/>
+<path d="M963.75 162.03 L952.65 167.03 L954.87 162.03 L952.65 157.04 Z" fill="#5c6370"/>
+<path d="M265 113.09 L308 113.09 C309.66 113.09 311 114.43 311 116.09 L311 132.99 C311 134.64 309.66 135.99 308 135.99 L265 135.99 C263.34 135.99 262 134.64 262 132.99 L262 116.09 C262 114.43 263.34 113.09 265 113.09 Z" fill="#ffffff"/>
+<text x="286.5" y="129.44" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">HTTP</text>
+<path d="M887.75 242.38 L935.75 242.38 C937.41 242.38 938.75 243.73 938.75 245.38 L938.75 262.28 C938.75 263.94 937.41 265.28 935.75 265.28 L887.75 265.28 C886.09 265.28 884.75 263.94 884.75 262.28 L884.75 245.38 C884.75 243.73 886.09 242.38 887.75 242.38 Z" fill="#ffffff"/>
+<text x="911.75" y="258.73" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">writes</text>
+<path d="M22 106.09 L112 106.09 L112 142.99 L22 142.99 Z" fill="#bbbbff" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="67" y="129.44" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Browser</text>
+<path d="M162 106.09 L223 106.09 L223 142.99 L162 142.99 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="192.5" y="129.44" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">SPA</text>
+<path d="M963.75 135.58 C963.75 129.51 985.02 124.58 1011.25 124.58 C1037.48 124.58 1058.75 129.51 1058.75 135.58 L1058.75 172.48 C1058.75 178.56 1037.48 183.48 1011.25 183.48 C985.02 183.48 963.75 178.56 963.75 172.48 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M963.75 135.58 C963.75 141.66 985.02 146.58 1011.25 146.58 C1037.48 146.58 1058.75 141.66 1058.75 135.58" fill="none" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1011.25" y="164.43" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Database</text>
+<path d="M350 106.09 L427 106.09 L427 142.99 L350 142.99 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M358 106.09 L358 142.99 M419 106.09 L419 142.99" fill="none" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="388.5" y="129.44" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">API</text>
+<path d="M486.23 117.76 L558.23 117.76 L567.45 136.21 L558.23 154.66 L486.23 154.66 L477 136.21 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="522.23" y="141.11" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Cache</text>
+<path d="M631.45 254.38 L715.75 254.38 L715.75 291.28 L631.45 291.28 L643.75 272.83 Z" fill="#eef3fb" stroke="#5b7fbf" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="679.75" y="277.73" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Queue</text>
+<path d="M845.75 294.38 C845.75 316.47 827.84 334.38 805.75 334.38 C783.66 334.38 765.75 316.47 765.75 294.38 C765.75 272.29 783.66 254.38 805.75 254.38 C827.84 254.38 845.75 272.29 845.75 294.38 Z" fill="#ff9966" stroke="#333333" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="805.75" y="299.28" font-family="-apple-system, &#39;Segoe UI&#39;, Helvetica, Arial, sans-serif" font-size="14" fill="#1f2328" text-anchor="middle">Worker</text>
+</svg>
