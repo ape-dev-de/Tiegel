@@ -62,9 +62,15 @@ func (t *Tree) merge(fn *FileNode) {
 		cn.Name, cn.Dir, cn.Ignored, cn.Library = ch.Name, ch.Dir, ch.Ignored, ch.Library
 		n.Children = append(n.Children, cn)
 		t.byPath[ch.Path] = cn
+		delete(old, ch.Path)
 		if ch.Dir && !ch.Collapsed && ch.Children != nil {
 			t.merge(ch)
 		}
+	}
+	// Entries that are gone (deleted, renamed) leave the index with their
+	// whole subtree.
+	for _, gone := range old {
+		t.forget(gone)
 	}
 	sort.SliceStable(n.Children, func(i, j int) bool {
 		a, b := n.Children[i], n.Children[j]
@@ -75,6 +81,16 @@ func (t *Tree) merge(fn *FileNode) {
 	})
 	n.Loaded = true
 	t.Version++
+}
+
+// forget removes n and its descendants from the path index.
+func (t *Tree) forget(n *Node) {
+	if t.byPath[n.Path] == n {
+		delete(t.byPath, n.Path)
+	}
+	for _, ch := range n.Children {
+		t.forget(ch)
+	}
 }
 
 // LoadDir lists the directory rel (one level) and merges it into the tree.

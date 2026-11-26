@@ -63,6 +63,13 @@ func newWsEnv(t *testing.T) *wsEnv {
 
 func newWsEnvOnSwitch(t *testing.T, onSwitch string) *wsEnv {
 	t.Helper()
+	return newWsEnvWith(t, onSwitch, nil)
+}
+
+// newWsEnvWith is newWsEnvOnSwitch with changed options (e.g. the file
+// watcher of the real app).
+func newWsEnvWith(t *testing.T, onSwitch string, mod func(*api.Options)) *wsEnv {
+	t.Helper()
 	home := t.TempDir()
 	opts := api.Options{
 		ConfigDir: t.TempDir(),
@@ -74,6 +81,9 @@ func newWsEnvOnSwitch(t *testing.T, onSwitch string) *wsEnv {
 		},
 	}
 	opts.Extensions = append(opts.Extensions, modules.Install)
+	if mod != nil {
+		mod(&opts)
+	}
 	host, err := api.New(opts)
 	if err != nil {
 		t.Fatal(err)
