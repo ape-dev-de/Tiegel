@@ -39,7 +39,8 @@ const (
 const modMask = key.ModShift | key.ModCtrl | key.ModAlt | key.ModCommand | key.ModSuper
 
 // Recorder is a field that captures the next key chord while it has the
-// keyboard focus: modifiers plus a key, DoubleShift (Shift pressed twice
+// keyboard focus: modifiers plus a key (a modifier pressed twice and held
+// gives a double-modifier chord such as "Alt+Alt+Up"), DoubleShift (Shift pressed twice
 // within DoubleShiftDelay), and pointer or gesture inputs the host routes
 // in through Gesture (mouse back/forward, swipes). Escape cancels; Enter
 // or focus loss confirms the captured chord (plain Enter is recorded as a
@@ -62,6 +63,7 @@ type Recorder struct {
 	shiftDown bool // Shift pressed with no other key so far
 	shiftUp   time.Time
 	shiftSkip bool
+	mods      keymap.ModTracker // double-pressed Ctrl/Alt/Cmd ("Alt+Alt+Up")
 	err       string
 }
 
@@ -149,6 +151,12 @@ func isModifier(n key.Name) bool {
 	return false
 }
 
+// trackedMods are the modifier keys that can be doubled in a chord.
+var trackedMods = map[key.Name]keymap.Mods{
+	key.NameCtrl: keymap.Ctrl, key.NameAlt: keymap.Alt,
+	key.NameCommand: keymap.Cmd, key.NameSuper: keymap.Cmd,
+}
+
 func (r *Recorder) key(now time.Time, e key.Event) RecordResult {
 	if e.Name == key.NameShift {
 		switch e.State {
@@ -167,11 +175,16 @@ func (r *Recorder) key(now time.Time, e key.Event) RecordResult {
 		}
 		return RecordIdle
 	}
+	if m, ok := trackedMods[e.Name]; ok {
+		r.mods.Modifier(m, e.State == key.Press, now)
+		return RecordIdle
+	}
 	if e.State != key.Press || isModifier(e.Name) {
 		return RecordIdle
 	}
 	r.shiftDown, r.shiftUp = false, time.Time{}
-	c := editorview.ChordOf(e)
+	c := r.mods.Resolve(editorview.ChordOf(e))
+	r.mods.Key()
 	if c.Mods == 0 {
 		switch c.Key {
 		case keymap.KeyEscape:

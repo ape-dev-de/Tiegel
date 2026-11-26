@@ -27,11 +27,12 @@ var ActionMap = map[string]keymap.Action{
 	"EditorPageUpWithSelection": keymap.SelectPageUp, "EditorPageDownWithSelection": keymap.SelectPageDown,
 	"EditorTextStartWithSelection": keymap.SelectDocStart, "EditorTextEndWithSelection": keymap.SelectDocEnd,
 	"EditorCloneCaretAbove": keymap.AddCursorAbove, "EditorCloneCaretBelow": keymap.AddCursorBelow,
-	"EditorEscape":         keymap.CollapseSelection,
-	"$SelectAll":           keymap.SelectAll,
-	"EditorSelectWord":     keymap.ExpandSelection,
-	"EditorUnSelectWord":   keymap.ShrinkSelection,
-	"SelectNextOccurrence": keymap.AddNextOccurrence, "SelectAllOccurrences": keymap.SelectAllOccurrences,
+	"EditorToggleColumnMode": keymap.ColumnSelectionMode,
+	"EditorEscape":           keymap.CollapseSelection,
+	"$SelectAll":             keymap.SelectAll,
+	"EditorSelectWord":       keymap.ExpandSelection,
+	"EditorUnSelectWord":     keymap.ShrinkSelection,
+	"SelectNextOccurrence":   keymap.AddNextOccurrence, "SelectAllOccurrences": keymap.SelectAllOccurrences,
 	// Editing.
 	"EditorEnter": keymap.Newline, "EditorBackSpace": keymap.DeleteBackward, "EditorDelete": keymap.DeleteForward,
 	"EditorDeleteToWordStart": keymap.DeleteWordBackward, "EditorDeleteToWordEnd": keymap.DeleteWordForward,
@@ -149,6 +150,17 @@ func ConvertKeystroke(s string) (keymap.Chord, error) {
 		return keymap.Chord{}, err
 	}
 	return c, nil
+}
+
+// convertGesture converts a keyboard-gesture-shortcut (a modifier pressed
+// twice, e.g. keystroke "shift SHIFT" with modifier "dblClick"). Only the
+// double Shift has a counterpart.
+func convertGesture(keystroke, modifier string) (keymap.Chord, bool) {
+	f := strings.Fields(strings.ToLower(keystroke))
+	if !strings.EqualFold(modifier, "dblClick") || len(f) == 0 || f[len(f)-1] != "shift" {
+		return keymap.Chord{}, false
+	}
+	return keymap.Chord{Key: keymap.KeyDoubleShift}, true
 }
 
 // mouseButtons maps mouse shortcuts to Tiegel's pointer chords.
@@ -307,6 +319,14 @@ func mapKeymap(active, source string, byName map[string]*keymapFile, goos string
 				}
 				chords = appendChord(chords, c)
 			}
+			for _, gs := range el.All("keyboard-gesture-shortcut") {
+				// Only Shift pressed twice has a counterpart (DoubleShift).
+				if c, ok := convertGesture(gs.Attr("keystroke"), gs.Attr("modifier")); ok {
+					chords = appendChord(chords, c)
+				} else {
+					badChords = append(badChords, ref+": "+gs.Attr("modifier")+" "+gs.Attr("keystroke"))
+				}
+			}
 			for _, ms := range el.All("mouse-shortcut") {
 				if k, ok := mouseButtons[strings.ToLower(strings.TrimSpace(ms.Attr("keystroke")))]; ok {
 					chords = appendChord(chords, keymap.Chord{Key: k})
@@ -320,6 +340,15 @@ func mapKeymap(active, source string, byName map[string]*keymapFile, goos string
 			// default chords.
 			for _, c := range defaults[a] {
 				chords = appendChord(chords, c)
+			}
+		} else {
+			// The reference IDE keeps its double-modifier chords (Option
+			// Option ↑ for Clone Caret Above) outside the keymap files, so
+			// a changed entry never lists them: keep the defaults.
+			for _, c := range defaults[a] {
+				if c.Double != 0 {
+					chords = appendChord(chords, c)
+				}
 			}
 		}
 		if sameChords(chords, defaults[a]) {

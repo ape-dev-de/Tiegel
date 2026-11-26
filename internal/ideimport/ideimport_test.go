@@ -442,6 +442,18 @@ func TestKeymapImport(t *testing.T) {
 	if got := chords("navigate.gotoClass"); got != nil {
 		t.Errorf("goto class = %v", got)
 	}
+	// Clone Caret keeps its double-modifier chord, which reference keymap
+	// files never list.
+	if got := chords(keymap.AddCursorAbove); !reflect.DeepEqual(got, []string{"Alt+Alt+Up", "Ctrl+Shift+Up"}) {
+		t.Errorf("clone caret above = %v", got)
+	}
+	if got := chords(keymap.ColumnSelectionMode); !reflect.DeepEqual(got, []string{"Alt+Shift+C"}) {
+		t.Errorf("column mode = %v", got)
+	}
+	// Double Shift as a keyboard gesture.
+	if got := chords("navigate.searchEverywhere"); !reflect.DeepEqual(got, []string{"Cmd+Shift+P", "DoubleShift"}) {
+		t.Errorf("search everywhere = %v", got)
+	}
 	un := item(t, plan.Items, "Shortcuts without counterpart")
 	if un.Status != StatusUnsupported || !strings.Contains(un.Detail, "SomePluginAction") {
 		t.Errorf("unmapped = %+v", un)
@@ -693,5 +705,16 @@ func TestProjectLanguageLevelAndScripts(t *testing.T) {
 	env := RunEnv(&Element{Children: []*Element{{Name: "env", Attrs: nil}}})
 	if env != nil {
 		t.Errorf("env without name = %v", env)
+	}
+}
+
+func TestConvertGesture(t *testing.T) {
+	if c, ok := convertGesture("shift SHIFT", "dblClick"); !ok || c.Key != keymap.KeyDoubleShift {
+		t.Errorf("double shift = %v %v", c, ok)
+	}
+	for _, in := range [][2]string{{"ctrl control", "dblClick"}, {"shift SHIFT", "hold"}, {"", "dblClick"}} {
+		if _, ok := convertGesture(in[0], in[1]); ok {
+			t.Errorf("%v converted", in)
+		}
 	}
 }

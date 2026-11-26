@@ -98,8 +98,11 @@ func TestReferenceMacParity(t *testing.T) {
 // The PC preset binds every action the mac preset binds.
 func TestPCPresetCoversMac(t *testing.T) {
 	mac, pc := NewScheme(PresetMac, nil), NewScheme(PresetPC, nil)
+	// The reference PC chord of Column Selection Mode (Alt+Shift+Insert)
+	// uses the Insert key, which the UI toolkit does not report.
+	macOnly := map[Action]bool{ColumnSelectionMode: true}
 	for _, e := range mac.Entries() {
-		if len(e.Chords) > 0 && len(pc.Chords(e.ID)) == 0 {
+		if len(e.Chords) > 0 && !macOnly[e.ID] && len(pc.Chords(e.ID)) == 0 {
 			t.Errorf("%s bound on mac (%v) but not on pc", e.ID, e.Chords)
 		}
 	}

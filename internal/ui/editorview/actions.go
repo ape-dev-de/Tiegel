@@ -2,6 +2,7 @@ package editorview
 
 import (
 	"io"
+	"slices"
 	"strings"
 
 	"gioui.org/io/clipboard"
@@ -56,6 +57,10 @@ func (e *Editor) Do(gtx layout.Context, a keymap.Action) bool {
 	if a != keymap.ExpandSelection && a != keymap.ShrinkSelection {
 		e.expand = e.expand[:0]
 	}
+	if e.colMode && e.extendBlock(a) {
+		e.RevealCaret()
+		return true
+	}
 	if m, ok := movements[a]; ok {
 		e.cur.Move(m.mv, m.extend)
 		e.RevealCaret()
@@ -69,6 +74,8 @@ func (e *Editor) Do(gtx layout.Context, a keymap.Action) bool {
 		e.cur.AddCursorVertical(1)
 	case keymap.CollapseSelection:
 		e.cur.CollapseToPrimary()
+	case keymap.ColumnSelectionMode:
+		e.colMode = !e.colMode
 	case keymap.SelectAll:
 		e.cur.SelectAll()
 	case keymap.ExpandSelection:
@@ -144,6 +151,48 @@ func (e *Editor) Do(gtx layout.Context, a keymap.Action) bool {
 	}
 	e.scrollCare = true
 	return ok
+}
+
+// ColumnMode reports whether column selection mode is on.
+func (e *Editor) ColumnMode() bool { return e.colMode }
+
+// SetColumnMode switches column selection mode (keymap.ColumnSelectionMode)
+// on or off: while it is on, Shift+arrow keys and mouse drags select a
+// rectangular block.
+func (e *Editor) SetColumnMode(on bool) { e.colMode = on }
+
+// extendBlock moves the head corner of the block selection for the
+// Select{Left,Right,Up,Down} actions in column selection mode. It starts
+// from the block of the last drag or block step when the selections are
+// still the ones it produced, otherwise from the current selections. The
+// head column may go past the line end; shorter lines get carets at their
+// end. It reports whether a was such an action.
+func (e *Editor) extendBlock(a keymap.Action) bool {
+	switch a {
+	case keymap.SelectLeft, keymap.SelectRight, keymap.SelectUp, keymap.SelectDown:
+	default:
+		return false
+	}
+	b := e.colBlock
+	if !slices.Equal(e.cur.Selections(), e.colSels) {
+		b = e.cur.CurrentBlock(e.tabWidth())
+	}
+	switch a {
+	case keymap.SelectLeft:
+		b.HeadCol = max(0, b.HeadCol-1)
+	case keymap.SelectRight:
+		b.HeadCol++
+	case keymap.SelectUp:
+		if row := e.folds.DocToVisible(b.HeadLine); row > 0 {
+			b.HeadLine = e.folds.VisibleToDoc(row - 1)
+		}
+	case keymap.SelectDown:
+		if row := e.folds.DocToVisible(b.HeadLine); row+1 < e.folds.VisibleCount() {
+			b.HeadLine = e.folds.VisibleToDoc(row + 1)
+		}
+	}
+	e.setBlock(b, nil)
+	return true
 }
 
 // indent inserts an indentation unit at every caret, or indents the

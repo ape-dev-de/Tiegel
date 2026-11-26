@@ -7,17 +7,20 @@ import (
 
 func TestParseChord(t *testing.T) {
 	cases := map[string]Chord{
-		"Cmd+Shift+Z":  {Cmd | Shift, "Z"},
-		"alt+left":     {Alt, KeyLeft},
-		"Ctrl+/":       {Ctrl, "/"},
-		"cmd++":        {Cmd, "+"},
-		"Option+Esc":   {Alt, KeyEscape},
-		"Meta+return":  {Cmd, KeyEnter},
-		"d":            {0, "D"},
-		"Shift+F3":     {Shift, "F3"},
-		"Ctrl+Cmd+g":   {Ctrl | Cmd, "G"},
-		" Cmd+Minus ":  {Cmd, "-"},
-		"command+plus": {Cmd, "="},
+		"Cmd+Shift+Z":        {Mods: Cmd | Shift, Key: "Z"},
+		"alt+left":           {Mods: Alt, Key: KeyLeft},
+		"Ctrl+/":             {Mods: Ctrl, Key: "/"},
+		"cmd++":              {Mods: Cmd, Key: "+"},
+		"Option+Esc":         {Mods: Alt, Key: KeyEscape},
+		"Meta+return":        {Mods: Cmd, Key: KeyEnter},
+		"d":                  {Mods: 0, Key: "D"},
+		"Shift+F3":           {Mods: Shift, Key: "F3"},
+		"Ctrl+Cmd+g":         {Mods: Ctrl | Cmd, Key: "G"},
+		" Cmd+Minus ":        {Mods: Cmd, Key: "-"},
+		"command+plus":       {Mods: Cmd, Key: "="},
+		"Alt+Alt+Up":         {Mods: Alt, Key: KeyUp, Double: Alt},
+		"ctrl+Ctrl+Down":     {Mods: Ctrl, Key: KeyDown, Double: Ctrl},
+		"Shift+Alt+alt+Left": {Mods: Alt | Shift, Key: KeyLeft, Double: Alt},
 	}
 	for in, want := range cases {
 		got, err := ParseChord(in)
@@ -25,7 +28,7 @@ func TestParseChord(t *testing.T) {
 			t.Errorf("ParseChord(%q) = %v, %v; want %v", in, got, err, want)
 		}
 	}
-	for _, bad := range []string{"", "Cmd+", "Hyper+X", "Cmd+Foo"} {
+	for _, bad := range []string{"", "Cmd+", "Hyper+X", "Cmd+Foo", "Shift+Shift+Up", "Alt+Alt+Ctrl+Ctrl+Up", "Alt+Alt+Alt+Up", "Alt+Alt", "Alt+Alt+MouseBack"} {
 		if _, err := ParseChord(bad); !errors.Is(err, ErrBadChord) {
 			t.Errorf("ParseChord(%q) err = %v", bad, err)
 		}
@@ -36,7 +39,7 @@ func TestParseChord(t *testing.T) {
 }
 
 func TestChordString(t *testing.T) {
-	for _, s := range []string{"Cmd+Ctrl+Alt+Shift+K", "Cmd+/", "Left", "Alt+Shift+Up"} {
+	for _, s := range []string{"Cmd+Ctrl+Alt+Shift+K", "Cmd+/", "Left", "Alt+Shift+Up", "Alt+Alt+Up", "Cmd+Ctrl+Ctrl+Shift+Down"} {
 		if got := MustParse(s).String(); got != s {
 			t.Errorf("round trip %q → %q", s, got)
 		}

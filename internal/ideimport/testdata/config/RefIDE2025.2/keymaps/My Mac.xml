@@ -18,6 +18,19 @@
     <keyboard-shortcut first-keystroke="meta O" />
     <keyboard-shortcut first-keystroke="ctrl K" second-keystroke="ctrl C" />
   </action>
+  <action id="EditorCloneCaretAbove">
+    <keyboard-shortcut first-keystroke="ctrl shift UP" />
+  </action>
+  <action id="EditorToggleColumnMode">
+    <keyboard-shortcut first-keystroke="alt shift C" />
+  </action>
+  <action id="SearchEverywhere">
+    <keyboard-gesture-shortcut keystroke="shift SHIFT" modifier="dblClick" />
+    <keyboard-shortcut first-keystroke="meta shift P" />
+  </action>
+  <action id="RunAnything">
+    <keyboard-gesture-shortcut keystroke="ctrl control" modifier="dblClick" />
+  </action>
   <action id="SomePluginAction">
     <keyboard-shortcut first-keystroke="meta alt P" />
   </action>

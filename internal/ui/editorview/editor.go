@@ -133,6 +133,12 @@ type Editor struct {
 	expand   []cursor.State // selection expand history
 	lineClip string         // clipboard text copied as whole lines
 	scratch  []byte
+
+	mods keymap.ModTracker // double-pressed modifiers ("Alt+Alt+Up")
+
+	colMode  bool               // column selection mode (ColumnSelectionMode)
+	colBlock cursor.Block       // the last block set by a drag or column mode
+	colSels  []cursor.Selection // the selections colBlock produced
 }
 
 // New returns an editor for b with one caret at the start. Call Close

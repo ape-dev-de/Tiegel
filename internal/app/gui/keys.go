@@ -300,6 +300,12 @@ func (s *shortcuts) build(r *Registry, scope ActionScope, focus event.Tag) {
 			if keymap.IsGesture(c) {
 				continue // pointer and gestures: View.Gesture
 			}
+			if c.Double != 0 {
+				// Double-modifier chords ("Alt+Alt+Up") are detected by the
+				// editor widget only; a window filter for the plain chord
+				// would steal it from the editor.
+				continue
+			}
 			if s.keep != nil && !s.keep(c) {
 				continue
 			}
