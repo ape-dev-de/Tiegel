@@ -21,6 +21,7 @@ type Document struct {
 
 	mu     sync.Mutex
 	src    []byte
+	lexed  []Span // spans of a lexed language (see Language.Lexed)
 	closed bool
 }
 
@@ -30,7 +31,7 @@ func NewDocument(_ context.Context, lang Language, src []byte) (*Document, error
 	if lang.HasTree() {
 		return nil, ErrNoTreeSitter
 	}
-	return &Document{lang: lang, src: bytes.Clone(src)}, nil
+	return &Document{lang: lang, src: bytes.Clone(src), lexed: lex(lang, src)}, nil
 }
 
 // Language returns the document's language.
@@ -47,17 +48,19 @@ func (d *Document) Source() []byte {
 // Edit is a no-op without a syntax tree.
 func (d *Document) Edit(InputEdit) {}
 
-// Reparse stores the new text.
+// Reparse stores the new text (and tokenizes lexed languages).
 func (d *Document) Reparse(_ context.Context, src []byte) error {
+	src = bytes.Clone(src)
+	if src == nil {
+		src = []byte{}
+	}
+	spans := lex(d.lang, src)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
 		return ErrClosed
 	}
-	d.src = bytes.Clone(src)
-	if d.src == nil {
-		d.src = []byte{}
-	}
+	d.src, d.lexed = src, spans
 	return nil
 }
 
@@ -74,8 +77,8 @@ func (d *Document) HasError() bool { return false }
 // SExpr is always empty without a syntax tree.
 func (d *Document) SExpr() string { return "" }
 
-// Highlights returns spans that tile [start, end): dotenv files are
-// tokenized, everything else is RolePlain.
+// Highlights returns spans that tile [start, end): dotenv files and lexed
+// languages are tokenized, everything else is RolePlain.
 func (d *Document) Highlights(start, end int) []Span {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -89,6 +92,9 @@ func (d *Document) Highlights(start, end int) []Span {
 	}
 	if d.lang == LangEnv {
 		return envHighlights(d.src, start, end)
+	}
+	if d.lang.Lexed() {
+		return tile(d.lexed, start, end)
 	}
 	return []Span{{Start: start, End: end, Role: RolePlain}}
 }

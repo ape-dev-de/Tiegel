@@ -135,7 +135,16 @@ func TestDetectLanguage(t *testing.T) {
 		{".env.local", "", LangEnv},
 		{"prod.env", "", LangEnv},
 		{"bin/console", "#!/usr/bin/env php\n<?php", LangPHP},
-		{"bin/run", "#!/bin/sh\necho", LangPlain},
+		{"bin/run", "#!/bin/sh\necho", LangShell},
+		{"Dockerfile", "", LangDockerfile},
+		{"docker/Dockerfile.dev", "", LangDockerfile},
+		{"api.dockerfile", "", LangDockerfile},
+		{"Containerfile", "", LangDockerfile},
+		{".dockerignore", "", LangIgnore},
+		{"Makefile", "", LangMake},
+		{"php.ini", "", LangINI},
+		{"schema.sql", "", LangSQL},
+		{"deploy.sh", "", LangShell},
 		{"script", "  <?php echo 1;", LangPHP},
 		{"feed", "<?xml version=\"1.0\"?>", LangXML},
 		{"README", "hello", LangPlain},
@@ -143,6 +152,18 @@ func TestDetectLanguage(t *testing.T) {
 	for _, c := range cases {
 		if got := DetectLanguage(c.path, []byte(c.head)); got != c.want {
 			t.Errorf("DetectLanguage(%q) = %q, want %q", c.path, got, c.want)
+		}
+	}
+}
+
+func TestFromID(t *testing.T) {
+	for in, want := range map[string]Language{
+		"php": LangPHP, "dotenv": LangEnv, "env": LangEnv, "plaintext": LangPlain, "": LangPlain,
+		"dockerfile": LangDockerfile, "Dockerfile": LangDockerfile, "shell": LangShell, "makefile": LangMake,
+		"ini": LangINI, "sql": LangSQL, "ignore": LangIgnore, "cobol": LangPlain,
+	} {
+		if got := FromID(in); got != want {
+			t.Errorf("FromID(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

@@ -41,7 +41,7 @@ import (
 // line comment prefix. Hosts set Editor.LineComment from it.
 var LineComments = map[string]string{
 	"php": "//", "javascript": "//", "typescript": "//", "go": "//", "css": "",
-	"json": "", "xml": "", "html": "", "yaml": "#", "env": "#", "shell": "#",
+	"json": "", "xml": "", "html": "", "yaml": "#", "env": "#", "dotenv": "#", "shell": "#", "ignore": "#",
 	"dockerfile": "#", "ini": ";", "sql": "--", "twig": "", "makefile": "#",
 	"python": "#", "toml": "#", "markdown": "",
 }

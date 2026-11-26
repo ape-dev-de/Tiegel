@@ -457,30 +457,16 @@ func parseLanguage(s string) (syntax.Language, bool, error) {
 		return syntax.LangPlain, false, nil
 	case "plaintext", "plain", "text":
 		return syntax.LangPlain, true, nil
-	case "dotenv", "env":
-		return syntax.LangEnv, true, nil
-	case "php", "json", "yaml", "xml":
-		return syntax.Language(s), true, nil
 	}
-	return "", false, api.Errorf(api.CodeInvalidParams, "unknown language %q (php, json, yaml, xml, dotenv, plaintext)", s)
+	if l := syntax.FromID(s); l != syntax.LangPlain {
+		return l, true, nil
+	}
+	return "", false, api.Errorf(api.CodeInvalidParams,
+		"unknown language %q (php, json, yaml, xml, dotenv, dockerfile, shell, makefile, ini, sql, ignore, plaintext)", s)
 }
 
 // fromLangdetect maps the language of an open document to a syntax language.
-func fromLangdetect(l string) syntax.Language {
-	switch langdetect.Language(l) {
-	case langdetect.PHP:
-		return syntax.LangPHP
-	case langdetect.JSON:
-		return syntax.LangJSON
-	case langdetect.YAML:
-		return syntax.LangYAML
-	case langdetect.XML:
-		return syntax.LangXML
-	case langdetect.DotEnv:
-		return syntax.LangEnv
-	}
-	return syntax.LangPlain
-}
+func fromLangdetect(l string) syntax.Language { return syntax.FromID(l) }
 
 // lineIndex maps zero-based lines to byte offsets.
 type lineIndex struct {

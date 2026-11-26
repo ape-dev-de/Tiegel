@@ -49,7 +49,7 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `methods` | alle API-Methoden mit Kurzbeschreibung | `app.methods` |
 | `files [SUBDIR] [--tree] [--depth N] [--ignored] [--libraries]` | Projektdateien; `.gitignore` wird (grob) beachtet, `vendor/` und `node_modules/` werden markiert und nicht aufgeklappt | `files.list` |
 | `read FILE` | Dateiinhalt ausgeben (binär unverändert) | `files.read` |
-| `lang FILE...` | Sprache erkennen (php, json, yaml, xml, dotenv, plaintext) | `files.detectLanguage` |
+| `lang FILE...` | Sprache erkennen (php, json, yaml, xml, dotenv, dockerfile, shell, makefile, ini, sql, ignore, plaintext; D555) | `files.detectLanguage` |
 | `new-file DATEI [--content TEXT \| --template ART [--namespace NS] [--dry-run]]` | Datei im Projekt anlegen (Elternordner nach Bedarf; Fehler, wenn sie existiert); mit `--template` aus der PHP-Dateivorlage ART (wie `new-class` mit Ordner und Name aus DATEI) | `files.createFile`, `files.createPhpClass` |
 | `new-dir ORDNER` | Ordner anlegen | `files.createDir` |
 | `rename PFAD NEUER-NAME\|NEUER-PFAD [--overwrite]` | umbenennen bzw. verschieben (enthält das Ziel `/`, ist es ein Pfad); offene Dokumente (auch ungespeicherte) und Local History ziehen mit | `files.rename` |
@@ -724,7 +724,7 @@ Headless: `terminal [--send TEXT]… [--find TEXT]` öffnet eine Sitzung (siehe 
 | `debug.breakpoints.remove` | `file`+`line` oder `id` | Liste + `changed` |
 | `debug.breakpoints.enable` | `file`+`line` oder `id`, `enabled` | Liste + `changed` |
 
-**syntax** – Highlighting, Faltbereiche und Struktur vom Backend, v.a. für Clients ohne Tree-sitter (Windows-UI ohne cgo gegen ein WSL-Backend, D80). Quelle ist ein offenes Dokument (inkrementell aus `doc.edited` geparst), sonst die Datei – oder `text` (Sprache aus `language` bzw. der Endung von `path`). `language`: `php`, `json`, `yaml`, `xml`, `dotenv`, `plaintext`. Ergebnisse enthalten immer `path`, `language` (`php`, `json`, `yaml`, `xml`, `env`, `""`), `version` (Pufferversion, 0 bei Dateien), `open`, `length`. Ohne Tree-sitter (Build ohne cgo) liefern PHP/JSON/YAML/XML `-32005`.
+**syntax** – Highlighting, Faltbereiche und Struktur vom Backend, v.a. für Clients ohne Tree-sitter (Windows-UI ohne cgo gegen ein WSL-Backend, D80). Quelle ist ein offenes Dokument (inkrementell aus `doc.edited` geparst), sonst die Datei – oder `text` (Sprache aus `language` bzw. der Endung von `path`). `language`: `php`, `json`, `yaml`, `xml`, `dotenv`, `dockerfile`, `shell`, `makefile`, `ini`, `sql`, `ignore`, `plaintext`. Ergebnisse enthalten immer `path`, `language` (`php`, `json`, `yaml`, `xml`, `env`, `dockerfile`, `shell`, `makefile`, `ini`, `sql`, `ignore`, `""`), `version` (Pufferversion, 0 bei Dateien), `open`, `length`. Ohne Tree-sitter (Build ohne cgo) liefern PHP/JSON/YAML/XML `-32005`; dotenv und die Lexer-Sprachen (Dockerfile, Shell, Makefile, INI, SQL, Ignore-Listen, D555) funktionieren in jedem Build, haben aber keine Faltbereiche und keine Struktur.
 
 | Methode | Parameter | Ergebnis |
 |---|---|---|

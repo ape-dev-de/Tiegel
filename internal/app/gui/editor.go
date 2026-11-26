@@ -22,6 +22,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/editor/search"
 	"github.com/ape-dev-de/tiegel/internal/editor/snippet"
 	"github.com/ape-dev-de/tiegel/internal/editor/wrap"
+	"github.com/ape-dev-de/tiegel/internal/syntax"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/editorview"
 	"github.com/ape-dev-de/tiegel/internal/ui/molecules"
@@ -131,7 +132,9 @@ func (v *View) session(g *controller.EditorGroup, t *controller.Tab) *editorSess
 	if lc, ok := editorview.LineComments[t.Language]; ok {
 		ed.LineComment = lc
 	}
-	hl := tshighlight.New(buf, tshighlight.Options{Path: t.File, Invalidate: func() { v.Invalidate() }})
+	// The tab's language honours files.associations; plain text falls back
+	// to detection from the path.
+	hl := tshighlight.New(buf, tshighlight.Options{Path: t.File, Language: syntax.FromID(t.Language), Invalidate: func() { v.Invalidate() }})
 	ed.Highlighter = hl
 	ed.SetFoldRanges(highlight.BraceFolds(buf.Snapshot()))
 	if off, ok := v.restoreCarets[t.File]; ok {

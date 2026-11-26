@@ -12,7 +12,7 @@ import (
 func TestSettingsAndAssociations(t *testing.T) {
 	a, _ := newApp(t)
 	big := "<?php\n" + strings.Repeat("echo 1;\n", 3000) // ~24 KB
-	modtest.Project(t, a, map[string]string{"big.php": big, "app.cfg": "A=1\n"})
+	modtest.Project(t, a, map[string]string{"big.php": big, "app.tpl": "A=1\n"})
 	modtest.Call(t, a, "settings.set", api.SettingsSetParams{Key: SettingMaxFileKB, Value: json.RawMessage(`16`)}, nil)
 	var f FoldsResult
 	modtest.Call(t, a, "syntax.folds", Source{Path: "big.php"}, &f)
@@ -26,12 +26,12 @@ func TestSettingsAndAssociations(t *testing.T) {
 	}
 
 	// files.associations is honoured for files that are not open.
-	modtest.Call(t, a, "syntax.folds", Source{Path: "app.cfg"}, &f)
+	modtest.Call(t, a, "syntax.folds", Source{Path: "app.tpl"}, &f)
 	if f.Language != "" {
 		t.Fatalf("before %+v", f.Info)
 	}
-	modtest.Call(t, a, "settings.set", api.SettingsSetParams{Key: "files.associations", Scope: "project", Value: json.RawMessage(`["*.cfg=dotenv"]`)}, nil)
-	modtest.Call(t, a, "syntax.folds", Source{Path: "app.cfg"}, &f)
+	modtest.Call(t, a, "settings.set", api.SettingsSetParams{Key: "files.associations", Scope: "project", Value: json.RawMessage(`["*.tpl=dotenv"]`)}, nil)
+	modtest.Call(t, a, "syntax.folds", Source{Path: "app.tpl"}, &f)
 	if f.Language != "env" {
 		t.Fatalf("after %+v", f.Info)
 	}

@@ -4,11 +4,14 @@
 // Detection order:
 //
 //  0. User file type associations (DetectWith; setting files.associations).
-//  1. Well-known file names (composer.lock, .env, .env.local, …).
+//  1. Well-known file names (composer.lock, .env, .env.local, Dockerfile,
+//     Dockerfile.dev, Containerfile, Makefile, .dockerignore, …).
 //  2. File extension (.php, .json, .yml, .xml, …); a trailing ".dist"
 //     (phpunit.xml.dist) is ignored.
-//  3. Shebang line (#!/usr/bin/env php, #!/usr/bin/php, php8.3, …).
-//  4. Content markers (<?php, <?xml).
+//  3. Shebang line (#!/usr/bin/env php, #!/usr/bin/php, php8.3, …; sh,
+//     bash, zsh, … for shell scripts; make -f for makefiles).
+//  4. Content markers (<?php, <?xml, a leading "# syntax=…dockerfile"
+//     parser directive).
 //  5. PlainText otherwise.
 //
 // Ambiguous extensions such as .inc only count as PHP if the content says
@@ -30,16 +33,25 @@ type Language string
 
 // Supported languages.
 const (
-	PHP       Language = "php"
-	JSON      Language = "json"
-	YAML      Language = "yaml"
-	XML       Language = "xml"
-	DotEnv    Language = "dotenv"
+	PHP    Language = "php"
+	JSON   Language = "json"
+	YAML   Language = "yaml"
+	XML    Language = "xml"
+	DotEnv Language = "dotenv"
+	// Dockerfile covers Dockerfile, Containerfile, Dockerfile.* and
+	// *.dockerfile.
+	Dockerfile Language = "dockerfile"
+	Shell      Language = "shell"
+	Makefile   Language = "makefile"
+	INI        Language = "ini"
+	SQL        Language = "sql"
+	// Ignore is a gitignore-style pattern list (.gitignore, .dockerignore).
+	Ignore    Language = "ignore"
 	PlainText Language = "plaintext"
 )
 
 // All lists every supported language.
-var All = []Language{PHP, JSON, YAML, XML, DotEnv, PlainText}
+var All = []Language{PHP, JSON, YAML, XML, DotEnv, Dockerfile, Shell, Makefile, INI, SQL, Ignore, PlainText}
 
 // HeadSize is the number of leading bytes Detect needs at most. Callers can
 // read just this much of a file.
@@ -51,13 +63,27 @@ var byExt = map[string]Language{
 	".json": JSON, ".jsonc": JSON, ".json5": JSON,
 	".yaml": YAML, ".yml": YAML, ".neon": YAML, // NEON (PHPStan) is close enough to YAML for highlighting
 	".xml": XML, ".xsd": XML, ".xsl": XML, ".xslt": XML, ".svg": XML, ".xlf": XML, ".xliff": XML,
-	".env": DotEnv,
+	".env":        DotEnv,
+	".dockerfile": Dockerfile, ".containerfile": Dockerfile,
+	".sh": Shell, ".bash": Shell, ".zsh": Shell, ".ksh": Shell, ".dash": Shell, ".command": Shell,
+	".mk": Makefile, ".mak": Makefile, ".make": Makefile,
+	".ini": INI, ".conf": INI, ".cfg": INI, ".cnf": INI, ".properties": INI,
+	".sql": SQL, ".ddl": SQL,
 	".txt": PlainText, ".text": PlainText, ".log": PlainText,
 }
 
 var byName = map[string]Language{
 	"composer.lock": JSON,
 	".php_cs":       PHP,
+	"dockerfile":    Dockerfile,
+	"containerfile": Dockerfile,
+	"makefile":      Makefile,
+	"gnumakefile":   Makefile,
+	".bashrc":       Shell, ".bash_profile": Shell, ".bash_logout": Shell, ".bash_aliases": Shell,
+	".zshrc": Shell, ".zshenv": Shell, ".zprofile": Shell, ".profile": Shell,
+	".editorconfig": INI, ".gitconfig": INI, ".npmrc": INI,
+	".dockerignore": Ignore, ".gitignore": Ignore, ".npmignore": Ignore, ".eslintignore": Ignore,
+	".prettierignore": Ignore, ".stylelintignore": Ignore, ".helmignore": Ignore, ".gcloudignore": Ignore,
 }
 
 // ambiguousExt are extensions that are PHP only if the content confirms it.
@@ -74,6 +100,14 @@ func ByPath(path string) (lang Language, ok bool) {
 	if name == ".env" || strings.HasPrefix(name, ".env.") {
 		return DotEnv, true
 	}
+	// Dockerfile.dev, Containerfile.prod, …
+	if strings.HasPrefix(name, "dockerfile.") || strings.HasPrefix(name, "containerfile.") {
+		return Dockerfile, true
+	}
+	// php.ini-development, php.ini-production
+	if strings.Contains(name, ".ini-") {
+		return INI, true
+	}
 	name = strings.TrimSuffix(name, ".dist")
 	if l, ok := byName[name]; ok {
 		return l, true
@@ -84,19 +118,30 @@ func ByPath(path string) (lang Language, ok bool) {
 	return "", false
 }
 
-// shebangRE matches interpreter lines invoking PHP directly or via env,
-// with optional version suffix (php8.3) and env flags (env -S php -d …).
-var shebangRE = regexp.MustCompile(`^#!\s*(?:\S*/)?(?:env\s+(?:-\S+\s+)*)?php[0-9.]*(?:\s|$)`)
+// shebangRE matches interpreter lines invoking an interpreter directly or
+// via env, with env flags (env -S php -d …); the submatch is the
+// interpreter name including a version suffix (php8.3, bash5).
+var shebangRE = regexp.MustCompile(`^#!\s*(?:\S*/)?(?:env\s+(?:-\S+\s+)*)?([a-z]+)[0-9.]*(?:\s|$)`)
 
-// ByShebang inspects the first line of content for a PHP shebang.
+// shebangLang maps interpreter names to languages.
+var shebangLang = map[string]Language{
+	"php": PHP,
+	"sh":  Shell, "bash": Shell, "zsh": Shell, "ksh": Shell, "dash": Shell, "ash": Shell, "mksh": Shell,
+	"make": Makefile,
+}
+
+// ByShebang inspects the first line of content for a PHP, shell or make
+// shebang.
 func ByShebang(head []byte) (lang Language, ok bool) {
 	line := head
 	if i := bytes.IndexByte(line, '\n'); i >= 0 {
 		line = line[:i]
 	}
 	line = bytes.TrimRight(line, "\r")
-	if shebangRE.Match(line) {
-		return PHP, true
+	if m := shebangRE.FindSubmatch(line); m != nil {
+		if l, ok := shebangLang[string(m[1])]; ok {
+			return l, true
+		}
 	}
 	return "", false
 }
@@ -104,7 +149,8 @@ func ByShebang(head []byte) (lang Language, ok bool) {
 var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 // ByContent inspects leading content for language markers: "<?php" anywhere
-// in head (PHP files may start with HTML) and a leading "<?xml".
+// in head (PHP files may start with HTML), a leading "<?xml" and a leading
+// BuildKit parser directive ("# syntax=docker/dockerfile:1").
 func ByContent(head []byte) (lang Language, ok bool) {
 	if len(head) > HeadSize {
 		head = head[:HeadSize]
@@ -119,7 +165,23 @@ func ByContent(head []byte) (lang Language, ok bool) {
 	if bytes.HasPrefix(trimmed, []byte("<?=")) {
 		return PHP, true
 	}
+	if isDockerDirective(trimmed) {
+		return Dockerfile, true
+	}
 	return "", false
+}
+
+// isDockerDirective reports whether the first line is a BuildKit syntax
+// directive naming a Dockerfile frontend.
+func isDockerDirective(head []byte) bool {
+	line, _, _ := bytes.Cut(head, []byte("\n"))
+	line = bytes.ToLower(bytes.TrimSpace(line))
+	rest, ok := bytes.CutPrefix(line, []byte("#"))
+	if !ok {
+		return false
+	}
+	rest = bytes.TrimSpace(rest)
+	return bytes.HasPrefix(rest, []byte("syntax")) && bytes.Contains(rest, []byte("=")) && bytes.Contains(rest, []byte("dockerfile"))
 }
 
 func containsFold(s, sub []byte) bool {

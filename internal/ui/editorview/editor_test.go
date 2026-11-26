@@ -597,6 +597,20 @@ func TestLineComments(t *testing.T) {
 	r.focus()
 	r.press("Cmd+/")
 	r.expectText("# a: 1")
+	// Dockerfiles, ignore lists and .env files (langdetect IDs) use "#".
+	for _, id := range []string{"dockerfile", "ignore", "dotenv", "shell", "makefile"} {
+		if LineComments[id] != "#" {
+			t.Fatalf("line comment of %s: %q", id, LineComments[id])
+		}
+	}
+	r = newRig(t, "FROM alpine\nRUN ls")
+	r.e.LineComment = LineComments["dockerfile"]
+	r.focus()
+	r.e.Cursor().SetSelections([]cursor.Selection{cursor.Range(0, r.e.Buffer().Len())}, 0)
+	r.press("Cmd+/")
+	r.expectText("# FROM alpine\n# RUN ls")
+	r.press("Cmd+/")
+	r.expectText("FROM alpine\nRUN ls")
 	r.e.LineComment = ""
 	if r.e.Do(layout.Context{}, keymap.ToggleComment) {
 		t.Fatal("toggle comment without prefix")

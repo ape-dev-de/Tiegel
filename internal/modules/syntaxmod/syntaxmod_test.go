@@ -80,13 +80,35 @@ func TestEnvAndPlain(t *testing.T) {
 	modtest.WantCode(t, a, "syntax.folds", Source{Path: ".env"}, api.CodeModuleDisabled)
 }
 
+// Dockerfiles are lexed: highlighting works in every build, for files and
+// open documents.
+func TestDockerfile(t *testing.T) {
+	a, _ := newApp(t)
+	modtest.Project(t, a, map[string]string{"Dockerfile.dev": "FROM alpine\nRUN echo $X\n"})
+	var h HighlightsResult
+	modtest.Call(t, a, "syntax.highlights", HighlightsParams{Source: Source{Path: "Dockerfile.dev"}}, &h)
+	if h.Language != "dockerfile" || len(h.Spans) == 0 || h.Spans[0] != (Span{0, 4, "keyword"}) {
+		t.Fatalf("file %+v", h)
+	}
+	modtest.Call(t, a, "doc.open", api.DocOpenParams{Path: "Dockerfile.dev"}, nil)
+	modtest.Call(t, a, "syntax.highlights", HighlightsParams{Source: Source{Path: "Dockerfile.dev"}, StartLine: 2, EndLine: 2}, &h)
+	if !h.Open || h.Language != "dockerfile" || len(h.Spans) != 2 || h.Spans[0].Role != "keyword" || h.Spans[1].Role != "variable" {
+		t.Fatalf("open %+v", h)
+	}
+	modtest.Call(t, a, "syntax.highlights", HighlightsParams{Source: Source{Text: ptr("FROM x"), Path: "Containerfile"}}, &h)
+	if h.Language != "dockerfile" {
+		t.Fatalf("text %+v", h)
+	}
+}
+
 func TestHelpers(t *testing.T) {
-	for in, want := range map[string]syntax.Language{"": syntax.LangPlain, "text": syntax.LangPlain, "env": syntax.LangEnv, "php": syntax.LangPHP} {
+	for in, want := range map[string]syntax.Language{"": syntax.LangPlain, "text": syntax.LangPlain, "env": syntax.LangEnv, "php": syntax.LangPHP, "dockerfile": syntax.LangDockerfile, "sql": syntax.LangSQL} {
 		if got, _, err := parseLanguage(in); err != nil || got != want {
 			t.Errorf("parseLanguage(%q) = %q, %v", in, got, err)
 		}
 	}
-	for in, want := range map[string]syntax.Language{"php": syntax.LangPHP, "json": syntax.LangJSON, "yaml": syntax.LangYAML, "xml": syntax.LangXML, "dotenv": syntax.LangEnv, "plaintext": syntax.LangPlain} {
+	for in, want := range map[string]syntax.Language{"php": syntax.LangPHP, "json": syntax.LangJSON, "yaml": syntax.LangYAML, "xml": syntax.LangXML, "dotenv": syntax.LangEnv, "plaintext": syntax.LangPlain,
+		"dockerfile": syntax.LangDockerfile, "shell": syntax.LangShell, "makefile": syntax.LangMake, "ignore": syntax.LangIgnore} {
 		if got := fromLangdetect(in); got != want {
 			t.Errorf("fromLangdetect(%q) = %q", in, got)
 		}
