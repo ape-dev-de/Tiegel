@@ -146,7 +146,7 @@ func (m *Module) resolve(ctx context.Context, p StartParams) (resolution, error)
 			// Unknown server: pass the PHP version the common way.
 			d = api.LSPServerDecl{Definition: servers.Definition{ID: id, Name: id, PHPVersionOption: "php.version"}}
 		}
-		return resolution{target: m.target(d, id, p.Command, p.Args, dirs, php), php: php}, nil
+		return phpScript(resolution{target: m.target(d, id, p.Command, p.Args, dirs, php), php: php}, d.ScriptPHP, dirs), nil
 	}
 	switch sel {
 	case SelectNone:
@@ -164,7 +164,7 @@ func (m *Module) resolve(ctx context.Context, p StartParams) (resolution, error)
 		}
 		for _, d := range cands {
 			if path, err := locate(d, dirs); err == nil {
-				return resolution{target: m.target(d, d.ID, path, d.EffectiveArgs(), dirs, php), php: php, note: d.Note}, nil
+				return phpScript(resolution{target: m.target(d, d.ID, path, d.EffectiveArgs(), dirs, php), php: php, note: d.Note}, d.ScriptPHP, dirs), nil
 			}
 		}
 		first := cands[0]
@@ -183,7 +183,28 @@ func (m *Module) resolve(ctx context.Context, p StartParams) (resolution, error)
 	if err != nil {
 		return resolution{notFound: true, target: m.target(d, d.ID, "", d.EffectiveArgs(), dirs, php), reason: err.Error(), note: d.Note}, nil
 	}
-	return resolution{target: m.target(d, d.ID, path, d.EffectiveArgs(), dirs, php), php: php, note: d.Note}, nil
+	return phpScript(resolution{target: m.target(d, d.ID, path, d.EffectiveArgs(), dirs, php), php: php, note: d.Note}, d.ScriptPHP, dirs), nil
+}
+
+// phpScript runs a server installed as PHP script or PHAR with a local PHP
+// that is new enough (D548) instead of relying on its "#!/usr/bin/env php"
+// line, which fails with the minimal PATH of a GUI app.
+func phpScript(r resolution, minPHP string, dirs []string) resolution {
+	t := &r.target
+	if r.notFound || t.Command == "" || !servers.IsPHPScript(t.Command) {
+		return r
+	}
+	if minPHP == "" {
+		minPHP = "7.4"
+	}
+	host, err := servers.HostPHP(dirs, minPHP)
+	if err != nil {
+		return resolution{notFound: true, target: r.target, note: r.note,
+			reason: fmt.Sprintf("%s (%s) is a PHP script and needs a local PHP to run it: %v. The project's PHP version does not matter here – it is passed to the server.", t.Name, t.Command, err)}
+	}
+	t.Args = append([]string{t.Command}, t.Args...)
+	t.Command = host
+	return r
 }
 
 // phpShort resolves the project's PHP version ("8.3"; "" unknown).

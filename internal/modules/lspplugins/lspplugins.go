@@ -56,7 +56,7 @@ func Phpactor() *Plugin {
 		def: servers.Definition{
 			ID: "phpactor", Name: "Phpactor", Binaries: []string{"phpactor"},
 			Args: []string{"language-server"}, License: "MIT",
-			PHPVersionOption: "php.version",
+			PHPVersionOption: "php.version", ScriptPHP: "8.2",
 		},
 		order: 10, defaultOn: true, autoSelect: true,
 		recipe: install.Recipe{

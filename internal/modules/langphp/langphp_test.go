@@ -75,7 +75,10 @@ func setup(t *testing.T) (*api.App, *Module, *fakes, string) {
 	t.Helper()
 	f := &fakes{}
 	m := New(Options{Connect: f.connect, Supervisor: fastSupervisor})
-	a := modtest.NewApp(t, withPlugins(m), nil)
+	// An empty PATH: servers installed on the developer's machine must
+	// not be found.
+	empty := t.TempDir()
+	a := modtest.NewApp(t, withPlugins(m), func(o *api.Options) { o.LSP.PathEnv = empty })
 	dir := modtest.Project(t, a, map[string]string{"a.php": src, "b.txt": "text", "other.php": "<?php\n// other\n"})
 	api.HookPHPVersion.On(a.Hooks(), 0, func(_ context.Context, q api.PHPVersionQuery) (api.PHPVersionQuery, error) {
 		return api.PHPVersionQuery{Version: "8.2.1", Short: "8.2", Source: "test"}, nil

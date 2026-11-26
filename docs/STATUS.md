@@ -76,3 +76,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-26: Markdown-Dateien öffnen geteilt (links Code, rechts Live-Vorschau), abschaltbar mit `markdown.openMode` (D542).
 - 2026-11-26: Phpactor-Installation lädt das PHAR nach `~/.local/bin` statt Composer global (scheiterte mit „requires php ^7“, D543); Escape geht im fokussierten Terminal an das Programm (D544).
 - 2026-11-26: Fix: Tiegel hing, wenn der Projektwechsler ein in einem anderen Fenster offenes Projekt nach vorn holte (D545).
+- 2026-11-26: Blockauswahl (mittlere Maustaste/Option+Ziehen), Caret klonen mit Option Option+↑/↓, Spaltenmodus (D546). Phpactor-PHAR startet mit lokalem PHP ≥ 8.2 statt `env php` (D548).

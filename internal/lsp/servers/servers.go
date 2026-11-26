@@ -40,6 +40,9 @@ type Definition struct {
 	// PHPVersionSetting is the dotted workspace/configuration path that sets
 	// the PHP version, if the server reads it from there.
 	PHPVersionSetting string `json:"phpVersionSetting,omitempty"`
+	// ScriptPHP is the minimum host PHP version that runs the server when
+	// the installation is a PHP script or PHAR ("8.2"; empty: "7.4").
+	ScriptPHP string `json:"scriptPhp,omitempty"`
 }
 
 // Server is a detected installation.
