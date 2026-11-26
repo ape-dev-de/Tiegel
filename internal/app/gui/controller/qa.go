@@ -99,6 +99,9 @@ func (c *Controller) handleQAEvent(topic string, payload json.RawMessage) {
 
 // setQADiagnostics replaces the findings of one tool for one file.
 func (c *Controller) setQADiagnostics(ev api.QADiagnosticsEvent) {
+	if c.Analysis.Replaces(ev.Source) {
+		return // folded into the analysis results plugin's findings
+	}
 	file := ev.File
 	if file == "" {
 		file = c.Abs(ev.Path)

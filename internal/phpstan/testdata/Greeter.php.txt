@@ -1,0 +1,30 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Acme;
+
+final class Greeter
+{
+    use Shouting;
+
+    public function greet(string $name): string
+    {
+        return 'Hello ' . $name . $this->missing();
+    }
+
+    public function count(): int
+    {
+        return strlen(42);
+    }
+
+    public function ignored(): int
+    {
+        return $this->alsoMissing();
+    }
+
+    public function items(): array
+    {
+        return [];
+    }
+}

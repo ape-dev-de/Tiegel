@@ -75,6 +75,9 @@ type EditorPalette struct {
 	// margin line. Both stay subtle.
 	Whitespace color.NRGBA
 	Ruler      color.NRGBA
+	// Analysis marks findings of static analysis read from reports
+	// (PHPStan, D556): a muted warning tone, quieter than diagnostics.
+	Analysis color.NRGBA
 	// Diff backgrounds and markers used by diff and merge views.
 	DiffAddedBg   color.NRGBA
 	DiffRemovedBg color.NRGBA

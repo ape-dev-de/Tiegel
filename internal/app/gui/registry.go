@@ -170,6 +170,8 @@ const (
 	// ContextToolWindow: right click on a stripe button or the options
 	// button of a tool window header.
 	ContextToolWindow ContextID = "toolWindow"
+	// ContextProblems: right click on an entry of the Problems window.
+	ContextProblems ContextID = "problems"
 )
 
 // ContextTarget describes what a context menu was opened on. Only the
@@ -188,6 +190,8 @@ type ContextTarget struct {
 	Group *controller.EditorGroup
 	// ToolID is the tool window (toolWindow context).
 	ToolID string
+	// Problem is the entry of the Problems window (problems context).
+	Problem *controller.Diagnostic
 	// Pos is the pointer position in window coordinates.
 	Pos image.Point
 }

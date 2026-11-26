@@ -13,6 +13,7 @@
 //	qa-pint, qa-php-cs-fixer, qa-phpcs, qa-phpstan, qa-psalm, qa-phpmd
 //	              quality tool plugins (contribute to the kernel's qa.*
 //	              service via hooks; AP17.1)
+//	phpstan       PHPStan results from reports and the result cache, Fix with AI (phpstan.*; D556)
 //	phpunit       test discovery, runs and results (test.*; D310)
 //	composer      composer.json scripts as run configurations (composer.*; AP17.2)
 //	live-templates
@@ -40,6 +41,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/modules/phpgenerate"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpindex"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpruntime"
+	"github.com/ape-dev-de/tiegel/internal/modules/phpstanresults"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpunit"
 	"github.com/ape-dev-de/tiegel/internal/modules/qa"
 	"github.com/ape-dev-de/tiegel/internal/modules/syntaxmod"
@@ -80,6 +82,7 @@ func All(opts Options) []module.Module {
 	for _, p := range qa.All() {
 		mods = append(mods, p)
 	}
+	mods = append(mods, phpstanresults.New())
 	mods = append(mods, livetemplates.New(), phpgenerate.New(), agent.New(opts.Agent))
 	return mods
 }

@@ -237,7 +237,7 @@ func (v *View) layoutEditor(gtx layout.Context, s *editorSession, active bool) l
 	}
 	if s.diagSeen != c.DiagVersion {
 		s.diagSeen = c.DiagVersion
-		s.ed.SetDiagnostics(toEditorDiags(c.Diagnostics(s.file), buf.Len()))
+		s.ed.SetDiagnostics(toEditorDiags(c.Diagnostics(s.file), buf.Len(), v.analysisHint()))
 	}
 	s.ed.TabWidth, s.ed.InsertSpaces = c.Prefs.TabWidth, c.Prefs.InsertSpaces
 	if s.tab != nil { // .editorconfig of the file wins over the preferences
@@ -315,9 +315,15 @@ func (v *View) layoutNoEditor(gtx layout.Context) layout.Dimensions {
 
 // toEditorDiags converts controller diagnostics; empty ranges cover one
 // byte so they stay visible.
-func toEditorDiags(ds []controller.Diagnostic, n int) []editorview.Diagnostic {
+// toEditorDiags converts diagnostics for the editor. hint is the line
+// added to the hover of subtle (PHPStan) findings; nil hides them (the
+// inline setting is off).
+func toEditorDiags(ds []controller.Diagnostic, n int, hint *string) []editorview.Diagnostic {
 	out := make([]editorview.Diagnostic, 0, len(ds))
 	for _, d := range ds {
+		if d.Subtle && hint == nil {
+			continue
+		}
 		start, end := min(max(d.Start, 0), n), min(max(d.End, 0), n)
 		if end <= start {
 			end = min(start+1, n)
@@ -325,9 +331,29 @@ func toEditorDiags(ds []controller.Diagnostic, n int) []editorview.Diagnostic {
 				start--
 			}
 		}
-		out = append(out, editorview.Diagnostic{Start: start, End: end, Severity: editorview.Severity(d.Severity), Message: d.Message, Source: d.Source})
+		ed := editorview.Diagnostic{Start: start, End: end, Severity: editorview.Severity(d.Severity), Message: d.Message, Source: d.Source, Subtle: d.Subtle}
+		if d.Subtle {
+			ed.Detail = analysisDetail(d, *hint)
+		}
+		out = append(out, ed)
 	}
 	return out
+}
+
+// analysisDetail are the hover lines of a PHPStan finding: tip, stale
+// note and the Fix with AI hint.
+func analysisDetail(d controller.Diagnostic, hint string) string {
+	var lines []string
+	if d.Tip != "" {
+		lines = append(lines, "Tip: "+d.Tip)
+	}
+	if d.Stale {
+		lines = append(lines, "The file changed after this was reported – it may be outdated.")
+	}
+	if hint != "" {
+		lines = append(lines, hint)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func caretText(b *buffer.Buffer, sel cursor.Selection) string {
@@ -622,6 +648,9 @@ func (v *View) hoverAfterLayout(gtx layout.Context, s *editorSession) {
 		m := d.Message
 		if d.Source != "" {
 			m += "  [" + d.Source + "]"
+		}
+		if d.Detail != "" {
+			m += "\n" + d.Detail
 		}
 		msgs = append(msgs, m)
 	}

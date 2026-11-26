@@ -44,6 +44,14 @@ type Diagnostic struct {
 	Severity   Severity
 	Message    string
 	Source     string
+	// Section groups diagnostics in Problems after the others ("" = by
+	// file only; SectionAnalysis). Subtle findings are drawn as a dotted
+	// line; Code, Tip and Stale describe a PHPStan finding.
+	Section string
+	Subtle  bool
+	Code    string
+	Tip     string
+	Stale   bool
 }
 
 type diagSource uint8
@@ -57,6 +65,8 @@ type fileDiags struct {
 	lsp, php []Diagnostic
 	// qa are the findings of the quality tool plugins by plugin ID.
 	qa map[string][]Diagnostic
+	// analysis are the findings of the analysis results plugin.
+	analysis []Diagnostic
 }
 
 func (c *Controller) setDiagnostics(ev diagEvent, src diagSource) {
@@ -99,6 +109,7 @@ func (c *Controller) Diagnostics(file string) []Diagnostic {
 		return nil
 	}
 	out := append(append(append([]Diagnostic(nil), fd.lsp...), fd.php...), fd.qaAll()...)
+	out = append(out, fd.analysis...)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Start < out[j].Start })
 	return out
 }
@@ -111,7 +122,7 @@ func (c *Controller) Problems() []Diagnostic {
 		files = append(files, f)
 	}
 	sort.Strings(files)
-	var out []Diagnostic
+	var out, sections []Diagnostic
 	for _, f := range files {
 		ds := c.Diagnostics(f)
 		sort.SliceStable(ds, func(i, j int) bool {
@@ -120,12 +131,30 @@ func (c *Controller) Problems() []Diagnostic {
 			}
 			return ds[i].Start < ds[j].Start
 		})
-		out = append(out, ds...)
+		for _, d := range ds {
+			if d.Section != "" {
+				sections = append(sections, d)
+			} else {
+				out = append(out, d)
+			}
+		}
 	}
-	return out
+	// Sections (PHPStan) follow the other problems, by file and line.
+	sort.SliceStable(sections, func(i, j int) bool {
+		a, b := sections[i], sections[j]
+		if a.Section != b.Section {
+			return a.Section < b.Section
+		}
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		return a.Line < b.Line
+	})
+	return append(out, sections...)
 }
 
-// ProblemCounts returns the number of errors and warnings.
+// ProblemCounts returns the number of errors and warnings (without the
+// subtle PHPStan findings, which have their own count).
 func (c *Controller) ProblemCounts() (errs, warns int) {
 	for _, fd := range c.diags {
 		for _, l := range [][]Diagnostic{fd.lsp, fd.php, fd.qaAll()} {

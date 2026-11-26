@@ -66,6 +66,9 @@ type navDock struct {
 	n     *controller.CodeNav
 	menus menuPresenter
 	root  string
+	// localActions are the window's own context actions of the pending
+	// Alt+Enter (Fix with AI of PHPStan findings); shown first.
+	localActions []MenuItem
 
 	seen struct {
 		choice, hierarchy, usages, actions, rename, structure, find, symbols uint64
@@ -175,6 +178,12 @@ func (d *navDock) actions() []Action {
 		}),
 		ed(ActContextActions, "Show Context Actions", "Alt+Enter", "Alt+Enter", "Code", "actions", func(s *editorSession) {
 			sel := s.ed.Cursor().Primary()
+			line, _ := s.caretLineSel()
+			d.localActions = d.v.analysisd.intentions(s.file, line)
+			if len(d.localActions) > 0 {
+				d.n.LoadCodeActionsWithLocal(s.file, sel.Start(), sel.End())
+				return
+			}
 			d.n.LoadCodeActions(s.file, sel.Start(), sel.End())
 		}),
 		glob(ActFindInPath, "Find in Files…", "Cmd+Shift+F", "Ctrl+Shift+F", "Edit/Find", "find", func() { d.find.openDialog(false) }),
