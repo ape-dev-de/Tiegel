@@ -229,6 +229,7 @@ func New(opts Options) (*App, error) {
 	a.registerIDEImport()
 	a.registerProjects()
 	a.registerMarkdown()
+	a.registerMermaid()
 	for _, ext := range opts.Extensions {
 		if err := ext(a); err != nil {
 			a.initErrs = append(a.initErrs, err)

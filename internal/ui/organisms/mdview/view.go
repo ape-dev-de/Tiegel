@@ -74,6 +74,8 @@ type View struct {
 	// Interaction targets of the last layout (queried by Update).
 	hotLinks []*link
 	hotCopy  []*node
+	// Diagram blocks with a Source/Diagram toggle.
+	hotMermaid []*node
 }
 
 // loadedImage is a cached image of LoadImage.
@@ -219,6 +221,11 @@ func (v *View) Update(gtx layout.Context) []Event {
 			out = append(out, CopyEvent{Text: n.b.Code})
 		}
 	}
+	for _, n := range v.hotMermaid {
+		for n.mm.toggle.Clicked(gtx) {
+			n.mm.showSource = !n.mm.showSource
+		}
+	}
 	return out
 }
 
@@ -226,7 +233,7 @@ func (v *View) Update(gtx layout.Context) []Event {
 // scrollable, with the content centered at a readable maximum width.
 func (v *View) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	v.Update(gtx)
-	v.hotLinks, v.hotCopy = v.hotLinks[:0], v.hotCopy[:0]
+	v.hotLinks, v.hotCopy, v.hotMermaid = v.hotLinks[:0], v.hotCopy[:0], v.hotMermaid[:0]
 	size := image.Pt(draw.Width(gtx, gtx.Dp(480)), gtx.Constraints.Max.Y)
 	if size.Y >= draw.Unbounded {
 		size.Y = max(gtx.Constraints.Min.Y, gtx.Dp(320))
@@ -309,7 +316,7 @@ func (v *View) gap(gtx layout.Context, th *tokens.Theme, n *node, tight bool) in
 // sameBlock reports whether a and b render identically (Line ignored).
 func sameBlock(a, b *markdown.Block) bool {
 	if a.Kind != b.Kind || a.Level != b.Level || a.Anchor != b.Anchor || a.Lang != b.Lang ||
-		a.Code != b.Code || a.Ordered != b.Ordered || a.Start != b.Start || a.Tight != b.Tight ||
+		a.Code != b.Code || !slices.Equal(a.Tokens, b.Tokens) || a.Ordered != b.Ordered || a.Start != b.Start || a.Tight != b.Tight ||
 		a.Task != b.Task || a.Checked != b.Checked || !slices.Equal(a.Spans, b.Spans) ||
 		!slices.Equal(a.Align, b.Align) || len(a.Rows) != len(b.Rows) || len(a.Children) != len(b.Children) {
 		return false

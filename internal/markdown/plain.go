@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"github.com/ape-dev-de/tiegel/internal/mermaid"
 	"strconv"
 	"strings"
 )
@@ -77,6 +78,16 @@ func (p plain) block(bl Block, first, rest string) {
 	case Paragraph:
 		p.lines(inlineText(bl.Spans), first, rest)
 	case CodeBlock, HTML:
+		if bl.Kind == CodeBlock && (strings.EqualFold(bl.Lang, "mermaid") || strings.EqualFold(bl.Lang, "mmd")) {
+			// Terminals cannot draw diagrams: a placeholder above the
+			// source (tiegel --headless mermaid renders SVG).
+			kind := mermaid.Kind(bl.Code)
+			if kind == "" {
+				kind = "unknown type"
+			}
+			p.b.WriteString(first + "[mermaid diagram: " + kind + "]\n")
+			first = rest
+		}
 		for i, l := range strings.Split(bl.Code, "\n") {
 			pre := rest
 			if i == 0 {

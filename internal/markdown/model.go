@@ -18,7 +18,8 @@ const (
 	// Heading: Level 1–6, Spans, Anchor.
 	Heading BlockKind = "heading"
 	// CodeBlock: Lang (info string's first word, may be empty), Code
-	// (without the trailing newline).
+	// (without the trailing newline), Tokens (syntax highlighting, filled
+	// by Doc.Highlight for known languages).
 	CodeBlock BlockKind = "code"
 	// Quote: Children.
 	Quote BlockKind = "quote"
@@ -92,6 +93,7 @@ type Block struct {
 	Anchor   string   `json:"anchor,omitempty"`
 	Lang     string   `json:"lang,omitempty"`
 	Code     string   `json:"code,omitempty"`
+	Tokens   []Token  `json:"tokens,omitempty"`
 	Ordered  bool     `json:"ordered,omitempty"`
 	Start    int      `json:"start,omitempty"`
 	Tight    bool     `json:"tight,omitempty"`
@@ -100,6 +102,15 @@ type Block struct {
 	Align    []Align  `json:"align,omitempty"`
 	Rows     [][]Cell `json:"rows,omitempty"`
 	Children []Block  `json:"children,omitempty"`
+}
+
+// Token is a highlighted byte range [Start, End) of a code block's Code.
+// Role is a syntax role name ("keyword", "string", "comment", …, see
+// syntax.Role); text outside tokens is plain.
+type Token struct {
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+	Role  string `json:"role"`
 }
 
 // Doc is a parsed document.

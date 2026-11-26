@@ -27,7 +27,7 @@ func buildPages() []*page {
 		treeRowPage(), toolbarPage(), tablePage(),
 		editorPage(),
 		debugToolbarPage(), callStackPage(), variablesPage(), watchesPage(), breakpointsListPage(), sessionListPage(),
-		interpreterPickerPage(), pathMappingPage(), hintsPage(), statusbarVersionPage(), backgroundTasksPage(),
+		interpreterPickerPage(), pathMappingPage(), hintsPage(), statusbarVersionPage(), mdviewPage(), backgroundTasksPage(),
 		debugPanelPage(), settingsPage(), keymapEditorPage(),
 	}, append(gitPages(), diffPages()...)...)
 	// Group by level so the sidebar shows each level once.

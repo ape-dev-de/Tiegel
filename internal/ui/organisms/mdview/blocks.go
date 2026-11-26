@@ -24,6 +24,7 @@ type node struct {
 	cells    [][]*richText // table
 	children []*node
 	copy     atoms.Button
+	mm       *mermaidState // mermaid diagram blocks
 }
 
 func buildNode(b *markdown.Block) *node {
@@ -34,8 +35,11 @@ func buildNode(b *markdown.Block) *node {
 	case markdown.Heading:
 		n.text = newRich(b.Spans, headingStyle(b.Level))
 	case markdown.CodeBlock:
-		n.text = newRich(codeSpans(b.Code), styleCode)
+		n.text = newCodeRich(b.Code, b.Tokens)
 		n.copy = atoms.Button{Kind: atoms.Ghost, Text: "Copy", Glyph: atoms.GlyphCopy}
+		if isMermaid(b.Lang) {
+			n.mm = newMermaidState()
+		}
 	case markdown.HTML:
 		n.text = newRich(codeSpans(b.Code), styleCode)
 	case markdown.Table:
@@ -90,6 +94,9 @@ func (v *View) layoutNode(gtx layout.Context, th *tokens.Theme, n *node, c ctx) 
 	case markdown.Heading:
 		return v.layoutHeading(gtx, th, n, c)
 	case markdown.CodeBlock, markdown.HTML:
+		if n.mm != nil {
+			return v.layoutMermaid(gtx, th, n, c)
+		}
 		return v.layoutCode(gtx, th, n, c)
 	case markdown.Quote:
 		return v.layoutQuote(gtx, th, n, c)
