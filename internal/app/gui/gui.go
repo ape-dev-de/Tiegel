@@ -131,28 +131,43 @@ func (m *windows) OpenWindow(path string) {
 
 // FocusProject implements WindowHost: the other window that has root
 // open is raised and switches to it.
+//
+// Window.Perform waits for the platform's main thread, which may itself
+// wait for the calling window's event loop (a frame delivering events):
+// it runs on its own goroutine, never from a frame and never under m.mu.
 func (m *windows) FocusProject(v *View, root string) bool {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	var target *window
+	var sess *Sessions
 	for win := range m.wins {
 		if win.view == v || root == "" || !slices.Contains(win.roots, root) {
 			continue
 		}
-		win.w.Perform(system.ActionRaise)
-		if sess := win.sess; sess != nil {
-			sess.Post(func() { sess.Switch(root) })
-		}
-		return true
+		target, sess = win, win.sess
+		break
 	}
-	return false
+	m.mu.Unlock()
+	if target == nil {
+		return false
+	}
+	go target.w.Perform(system.ActionRaise)
+	if sess != nil {
+		sess.Post(func() { sess.Switch(root) })
+	}
+	return true
 }
 
-// quit closes all windows (each saves its documents).
+// quit closes all windows (each saves its documents). Like FocusProject
+// it never calls Window.Perform from a frame or under m.mu.
 func (m *windows) quit() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	wins := make([]*window, 0, len(m.wins))
 	for win := range m.wins {
-		win.w.Perform(system.ActionClose)
+		wins = append(wins, win)
+	}
+	m.mu.Unlock()
+	for _, win := range wins {
+		go win.w.Perform(system.ActionClose)
 	}
 }
 
@@ -205,8 +220,9 @@ func (win *window) loop(a *api.App, projectPath string) error {
 		v.ctl.Invalidate = invalidate
 		v.Invalidate = invalidate
 		v.Raise = func() {
+			// Never block a frame on the main thread (see FocusProject).
 			if live.Load() {
-				w.Perform(system.ActionRaise)
+				go w.Perform(system.ActionRaise)
 			}
 		}
 		v.Host, v.Quit = m, m.quit
