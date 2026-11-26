@@ -68,6 +68,39 @@ func TestProjectsCommand(t *testing.T) {
 	}
 }
 
+// D547: open/switch hibernate the project left unless --keep; busy
+// --hibernate and terminals.
+func TestProjectsSwitchHibernatesCommand(t *testing.T) {
+	t.Parallel()
+	a := realDir(t, project(t, map[string]string{"a.php": "<?php\n"}))
+	b := realDir(t, project(t, map[string]string{"b.php": "<?php\n"}))
+	code, out, errs := run(t, "", "projects", "open", b, "--project", a)
+	if code != ExitOK || !strings.Contains(out, a+"\thibernated") {
+		t.Fatalf("open: %d %q %q", code, out, errs)
+	}
+	code, out, errs = run(t, "", "--json", "projects", "open", b, "--keep", "--project", a)
+	var sess api.ProjectSession
+	if code != ExitOK || json.Unmarshal([]byte(out), &sess) != nil || sess.Previous != "" {
+		t.Fatalf("open --keep: %d %q %q", code, out, errs)
+	}
+	for _, args := range [][]string{
+		{"projects", "busy", a, "--hibernate"},
+		{"projects", "terminals", a},
+	} {
+		if code, out, errs := run(t, "", append(args, "--project", a)...); code != ExitOK || out == "" {
+			t.Fatalf("%v: %d %q %q", args, code, out, errs)
+		}
+	}
+	for _, args := range [][]string{
+		{"projects", "close", a, "--keep"},
+		{"projects", "switch", a, "--hibernate"},
+	} {
+		if code, _, _ := run(t, "", args...); code != ExitUsage {
+			t.Fatalf("%v: %d", args, code)
+		}
+	}
+}
+
 func TestServeProjects(t *testing.T) {
 	t.Parallel()
 	a := realDir(t, project(t, map[string]string{"a.php": "<?php\n"}))

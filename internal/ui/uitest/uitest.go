@@ -14,6 +14,7 @@ import (
 	"gioui.org/gpu/headless"
 	"gioui.org/io/event"
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -201,10 +202,22 @@ func (h *Harness) Drag(from, to image.Point) {
 }
 
 func (h *Harness) queueClick(p image.Point) {
+	h.queueClickWith(p, pointer.ButtonPrimary, 0)
+}
+
+// ClickWith queues a press and release of buttons at p with modifiers
+// held (e.g. pointer.ButtonSecondary for a context click, key.ModShift
+// for Shift+click).
+func (h *Harness) ClickWith(p image.Point, buttons pointer.Buttons, mods key.Modifiers) {
+	h.clock += time.Second
+	h.queueClickWith(p, buttons, mods)
+}
+
+func (h *Harness) queueClickWith(p image.Point, buttons pointer.Buttons, mods key.Modifiers) {
 	pos := f32.Pt(float32(p.X), float32(p.Y))
 	h.Router.Queue(
-		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pos, Time: h.clock},
-		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos, Time: h.clock},
-		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos, Time: h.clock},
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pos, Time: h.clock, Modifiers: mods},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: buttons, Position: pos, Time: h.clock, Modifiers: mods},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos, Time: h.clock, Modifiers: mods},
 	)
 }

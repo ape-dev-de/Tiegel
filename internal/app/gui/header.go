@@ -206,6 +206,7 @@ func homeShort(p string) string {
 func (h *header) sync() {
 	b, c := h.bar, h.v.ctl
 	b.Projects, b.Current, b.Recent = h.toolbarProjects()
+	b.NewWindows, b.GOOS = h.v.Host != nil, h.v.goos
 	b.Branch = ""
 	git := c.Vcs != nil && c.Vcs.Available && c.Project.Git
 	if git != h.git {
@@ -289,7 +290,10 @@ func (h *header) handle(ev toolbar.Event) {
 			c.ReloadRecentProjects()
 		}
 	case toolbar.SwitchProject:
-		if e.ID != h.bar.Current {
+		switch {
+		case e.NewWindow:
+			v.requestProjectNewWindow(e.ID)
+		case e.ID != h.bar.Current:
 			h.Sessions.Switch(e.ID)
 		}
 	case toolbar.CloseProject:
@@ -303,9 +307,13 @@ func (h *header) handle(ev toolbar.Event) {
 	case toolbar.ResumeProject:
 		h.Sessions.Resume(e.ID)
 	case toolbar.OpenProject:
-		v.openProjectDialog()
+		v.openProjectDialogIn(e.NewWindow)
 	case toolbar.OpenRecentProject:
-		v.requestProject(expandHome(e.Path))
+		if e.NewWindow {
+			v.requestProjectNewWindow(expandHome(e.Path))
+		} else {
+			v.requestProject(expandHome(e.Path))
+		}
 	case toolbar.CheckoutBranch:
 		c.Vcs.Checkout(e.Name, e.Remote)
 	case toolbar.NewBranch:

@@ -71,6 +71,11 @@ type Bar struct {
 	Projects []Project
 	Current  string
 	Recent   []RecentProject
+	// NewWindows offers "Open in New Window" for the projects (context
+	// menu of a row, Shift+click, Shift+Enter): the host can open
+	// windows. GOOS enables Ctrl+click as context click on "darwin".
+	NewWindows bool
+	GOOS       string
 
 	// Branch is the checked out branch (or e.g. "HEAD (a1b2c3d)" when
 	// detached); empty hides the branch switcher (no repository).
@@ -271,6 +276,7 @@ func (b *Bar) Update(gtx layout.Context) []Event {
 
 func (b *Bar) update(gtx layout.Context) {
 	b.init()
+	b.projectPop.goos = b.GOOS
 	if b.projectBtn.Clicked(gtx) {
 		b.toggle(PopupProject)
 	}
@@ -384,6 +390,7 @@ func (b *Bar) dataKey(p Popup) uint64 {
 	switch p {
 	case PopupProject:
 		str(b.Current)
+		flag(b.NewWindows)
 		for _, pr := range b.Projects {
 			str(pr.ID)
 			str(pr.Name)
@@ -470,10 +477,18 @@ func (b *Bar) projectItems(ic Icons) []item {
 	}
 	for _, p := range b.Projects {
 		open[p.Path] = true
-		items = append(items, item{
+		it := item{
 			label: p.Name, detail: p.Path, avatar: p.Name, state: p.State, hasState: true,
 			bold: cur != nil && p.ID == cur.ID, ev: SwitchProject{ID: p.ID},
-		})
+		}
+		if b.NewWindows && (cur == nil || p.ID != cur.ID) {
+			it.alt = SwitchProject{ID: p.ID, NewWindow: true}
+			it.menu = []item{
+				{label: "Switch to " + p.Name, avatar: p.Name, ev: SwitchProject{ID: p.ID}},
+				{label: "Open in New Window", glyph: ic.Open, ev: it.alt},
+			}
+		}
+		items = append(items, it)
 	}
 	first := true
 	for _, r := range b.Recent {
@@ -484,12 +499,28 @@ func (b *Bar) projectItems(ic Icons) []item {
 			items = append(items, header("Recent Projects"))
 			first = false
 		}
-		items = append(items, item{label: r.Name, detail: r.Path, glyph: ic.Folder, ev: OpenRecentProject{Path: r.Path}})
+		it := item{label: r.Name, detail: r.Path, glyph: ic.Folder, ev: OpenRecentProject{Path: r.Path}}
+		if b.NewWindows {
+			it.alt = OpenRecentProject{Path: r.Path, NewWindow: true}
+			it.menu = []item{
+				{label: "Open in This Window", glyph: ic.Folder, ev: it.ev},
+				{label: "Open in New Window", glyph: ic.Open, ev: it.alt},
+			}
+		}
+		items = append(items, it)
 	}
 	if len(items) > 0 {
 		items = append(items, separator())
 	}
-	items = append(items, item{label: "Open…", glyph: ic.Open, ev: OpenProject{}})
+	openIt := item{label: "Open…", glyph: ic.Open, ev: OpenProject{}}
+	if b.NewWindows {
+		openIt.alt = OpenProject{NewWindow: true}
+		openIt.menu = []item{
+			{label: "Open in This Window…", glyph: ic.Open, ev: openIt.ev},
+			{label: "Open in New Window…", glyph: ic.Open, ev: openIt.alt},
+		}
+	}
+	items = append(items, openIt)
 	if cur != nil && cur.State != ProjectHibernated {
 		items = append(items, item{label: "Hibernate " + cur.Name, glyph: ic.Hibernate, ev: HibernateProject{ID: cur.ID}})
 	}

@@ -9,11 +9,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"gioui.org/text"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
+	"github.com/ape-dev-de/tiegel/internal/core/settings"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/organisms/toolbar"
 	"github.com/ape-dev-de/tiegel/internal/workspace"
@@ -67,6 +69,12 @@ type Sessions struct {
 	stored map[string]bool
 	// switching is set while a fallback switch (no active project) runs.
 	switching bool
+	// shownAt orders the open projects by the last time they were shown
+	// (also hibernated ones, which have no slot).
+	shownAt map[string]uint64
+	// flash is a notice for the project shown after the next sync (the
+	// project left on a switch keeps running, D547).
+	flash string
 }
 
 // sessionSlot is one project App of the window with its controller and
@@ -98,7 +106,7 @@ func newSessions(host *api.App, ws *api.Workspace, goos string, invalidate func(
 	s := &Sessions{
 		ws: ws, host: host, goos: goos, shaper: newShaper(), setup: setup, invalidate: invalidate,
 		ctx: ctx, cancel: cancel, slots: map[*api.App]*sessionSlot{},
-		restore: map[string]json.RawMessage{}, stored: map[string]bool{}, unsub: func() {},
+		restore: map[string]json.RawMessage{}, stored: map[string]bool{}, shownAt: map[string]uint64{}, unsub: func() {},
 	}
 	s.hostSlot = s.newSlot(host)
 	s.shown = s.hostSlot
@@ -201,6 +209,10 @@ func (s *Sessions) Current() *View {
 	if s.dirty.Swap(false) {
 		s.sync()
 	}
+	if s.flash != "" {
+		s.shown.ctl.Status.Notice = s.flash
+		s.flash = ""
+	}
 	for _, sl := range s.slots {
 		if sl != s.shown {
 			// Background projects keep running: their results and events
@@ -274,6 +286,9 @@ func (s *Sessions) sync() {
 	}
 	s.seq++
 	target.used = s.seq
+	if target.root != "" {
+		s.shownAt[target.root] = s.seq
+	}
 }
 
 // release ends the slot of a project that was hibernated or closed. A
@@ -384,12 +399,17 @@ func (s *Sessions) notice(err error) {
 }
 
 // remember keeps the client state a resume returned for the project's
-// next slot.
+// next slot, and tells when the project left on the switch keeps running
+// because work there needs it (D547).
 func (s *Sessions) remember(info api.ProjectSession) {
 	if len(info.ClientState) > 0 {
 		s.restore[info.Root] = info.ClientState
-		s.dirty.Store(true)
 	}
+	if info.Previous != "" && len(info.PreviousBusy) > 0 {
+		s.flash = fmt.Sprintf("%s keeps running in the background: %s", projectName(info.Previous), strings.Join(info.PreviousBusy, ", "))
+	}
+	// The switch is done: show its result in this frame.
+	s.dirty.Store(true)
 }
 
 // ---- lifecycle intents (header, actions, open dialogs) ---------------------
@@ -439,6 +459,26 @@ func (s *Sessions) Hibernate(id string) {
 	s.confirmBusy(id, "Hibernate", func(force bool) { s.hibernate(id, force) })
 }
 
+// MoveToNewWindow closes project id here (after asking when running work
+// blocks it) and opens it in a new window with open.
+func (s *Sessions) MoveToNewWindow(id string, open func(root string)) {
+	s.confirmBusy(id, "Move", func(bool) {
+		s.close(id)
+		s.afterOps(func() { open(id) })
+	})
+}
+
+// afterOps runs fn on the UI goroutine once the running lifecycle calls
+// are done.
+func (s *Sessions) afterOps(fn func()) {
+	go func() {
+		for s.ops.Load() > 0 && s.ctx.Err() == nil {
+			time.Sleep(10 * time.Millisecond)
+		}
+		s.Post(fn)
+	}()
+}
+
 // Close closes project id for good after asking when running work blocks
 // it. Unsaved changes that cannot be saved are kept as recovery points,
 // like File › Close Project.
@@ -450,7 +490,12 @@ func (s *Sessions) Close(id string) {
 // blocks, else after the user confirmed stopping the listed work.
 func (s *Sessions) confirmBusy(id, verb string, do func(force bool)) {
 	s.background(func(ctx context.Context) func() {
-		busy, err := s.ws.Busy(ctx, id)
+		busyOf := s.ws.Busy
+		if verb == "Hibernate" {
+			// Terminals keep running in a hibernated project (D547).
+			busyOf = s.ws.HibernateBusy
+		}
+		busy, err := busyOf(ctx, id)
 		return func() {
 			if err != nil {
 				s.notice(err)
@@ -482,7 +527,15 @@ func (s *Sessions) leave(root string) string {
 	if next := s.fallback(root); next != nil {
 		return next.root
 	}
-	return ""
+	// With projects.onSwitch = hibernate the others usually sleep: the
+	// most recently shown one is resumed.
+	best, at := "", uint64(0)
+	for _, p := range s.list.Projects {
+		if p.Root != root && (best == "" || s.shownAt[p.Root] > at) {
+			best, at = p.Root, s.shownAt[p.Root]
+		}
+	}
+	return best
 }
 
 // hibernate stores the view state with the hibernation; a shown project
@@ -497,7 +550,8 @@ func (s *Sessions) hibernate(root string, force bool) {
 	next := s.leave(root)
 	s.background(func(ctx context.Context) func() {
 		if next != "" {
-			if _, err := s.ws.Switch(ctx, next); err != nil {
+			// The project goes away anyway: no hibernation on the switch.
+			if _, err := s.ws.SwitchWith(ctx, next, settings.OnSwitchBackground); err != nil {
 				return func() { s.notice(err) }
 			}
 		}
@@ -532,7 +586,8 @@ func (s *Sessions) close(root string) {
 	next := s.leave(root)
 	s.background(func(ctx context.Context) func() {
 		if next != "" {
-			if _, err := s.ws.Switch(ctx, next); err != nil {
+			// The project goes away anyway: no hibernation on the switch.
+			if _, err := s.ws.SwitchWith(ctx, next, settings.OnSwitchBackground); err != nil {
 				return func() { s.notice(err) }
 			}
 		}
@@ -541,15 +596,13 @@ func (s *Sessions) close(root string) {
 	})
 }
 
-// Cycle switches to the next (delta 1) or previous (-1) running project
-// in the order they were opened.
+// Cycle switches to the next (delta 1) or previous (-1) open project in
+// the order they were opened (a hibernated one is resumed: with
+// projects.onSwitch = hibernate the others usually are, D547).
 func (s *Sessions) Cycle(delta int) {
 	var roots []string
 	cur := -1
 	for _, p := range s.list.Projects {
-		if p.State == workspace.StateHibernated {
-			continue
-		}
 		if p.Root == s.list.Active {
 			cur = len(roots)
 		}
@@ -593,6 +646,9 @@ func projectName(root string) string { return filepath.Base(root) }
 type viewState struct {
 	Tabs   []tabState `json:"tabs,omitempty"`
 	Active string     `json:"active,omitempty"`
+	// Terminal is the selected terminal session (sessions keep running
+	// and their IDs while the project is hibernated, D547).
+	Terminal string `json:"terminal,omitempty"`
 }
 
 type tabState struct {
@@ -624,6 +680,9 @@ func (v *View) clientState() json.RawMessage {
 	if t := v.ctl.ActiveTab(); t != nil && t.Virtual == "" {
 		st.Active = t.File
 	}
+	if tt := v.ctl.Terminals.Current(); tt != nil {
+		st.Terminal = tt.Info.ID
+	}
 	raw, err := json.Marshal(st)
 	if err != nil {
 		return nil
@@ -636,7 +695,13 @@ func (v *View) clientState() json.RawMessage {
 // background (file system access never runs on the UI goroutine, D513).
 func (v *View) restoreClientState(raw json.RawMessage) {
 	var st viewState
-	if json.Unmarshal(raw, &st) != nil || len(st.Tabs) == 0 {
+	if json.Unmarshal(raw, &st) != nil {
+		return
+	}
+	if st.Terminal != "" {
+		v.ctl.Terminals.RestoreSelection(st.Terminal)
+	}
+	if len(st.Tabs) == 0 {
 		return
 	}
 	v.ctl.Go(func(context.Context) func() {

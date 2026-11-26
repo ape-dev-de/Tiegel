@@ -43,6 +43,28 @@ func TestWelcome(t *testing.T) {
 			break
 		}
 	}
+	// D547: Shift+click opens in a new window, a right click asks for
+	// the menu.
+	evs = nil
+	h.ClickWith(image.Pt(500, rowY), pointer.ButtonPrimary, key.ModShift)
+	h.Frame(w)
+	if len(evs) == 0 || evs[0] != (OpenEvent{Path: "/home/me/shop", NewWindow: true}) {
+		t.Fatalf("shift click %v", evs)
+	}
+	evs = nil
+	h.ClickWith(image.Pt(500, rowY), pointer.ButtonSecondary, 0)
+	h.Frame(w)
+	if len(evs) != 1 || evs[0] != (ContextEvent{Path: "/home/me/shop"}) {
+		t.Fatalf("context click %v", evs)
+	}
+	v.GOOS = "darwin"
+	evs = nil
+	h.ClickWith(image.Pt(500, rowY), pointer.ButtonPrimary, key.ModCtrl)
+	h.Frame(w)
+	h.Frame(w)
+	if len(evs) != 1 || evs[0] != (ContextEvent{Path: "/home/me/shop"}) {
+		t.Fatalf("ctrl click %v", evs)
+	}
 	evs = nil
 	h.Router.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(805, float32(rowY))})
 	h.Frame(w)

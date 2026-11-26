@@ -26,14 +26,23 @@ func (p Popup) String() string {
 type PopupOpened struct{ Popup Popup }
 
 // SwitchProject: an open project was chosen in the project popup.
-type SwitchProject struct{ ID string }
+// NewWindow: "Open in New Window" (context menu, Shift+click) – the host
+// moves the project to a new window.
+type SwitchProject struct {
+	ID        string
+	NewWindow bool
+}
 
 // OpenProject: "Open…" in the project popup (the host shows a folder
-// chooser).
-type OpenProject struct{}
+// chooser); NewWindow on Shift+click opens the folder in a new window.
+type OpenProject struct{ NewWindow bool }
 
-// OpenRecentProject: a recent project was chosen.
-type OpenRecentProject struct{ Path string }
+// OpenRecentProject: a recent project was chosen; NewWindow: "Open in New
+// Window" (context menu, Shift+click).
+type OpenRecentProject struct {
+	Path      string
+	NewWindow bool
+}
 
 // HibernateProject: "Hibernate <project>" was chosen.
 type HibernateProject struct{ ID string }

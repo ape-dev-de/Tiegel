@@ -64,6 +64,9 @@ type Terminals struct {
 	project   string
 	// colors are the colors last sent with terminal.colors.
 	colors string
+	// wantSel is a session to select once its tab exists (restored
+	// client state of a resumed project).
+	wantSel string
 }
 
 func newTerminals(c *Controller) *Terminals {
@@ -97,6 +100,16 @@ func (t *Terminals) Select(id string) {
 		t.Selected = id
 		t.Version++
 	}
+}
+
+// RestoreSelection selects session id now or as soon as its tab appears
+// (the sessions of a resumed project are listed asynchronously).
+func (t *Terminals) RestoreSelection(id string) {
+	if t.Tab(id) != nil {
+		t.Select(id)
+		return
+	}
+	t.wantSel = id
 }
 
 // LoadSettings reads the terminal settings.
@@ -172,8 +185,11 @@ func (t *Terminals) add(info terminal.Info) *TermTab {
 	}
 	x := &TermTab{Info: info, follow: true, input: make(chan api.TerminalInputParams, 1024)}
 	t.Tabs = append(t.Tabs, x)
-	if t.Selected == "" {
+	if t.Selected == "" || info.ID == t.wantSel {
 		t.Selected = info.ID
+	}
+	if info.ID == t.wantSel {
+		t.wantSel = ""
 	}
 	go t.send(x.input)
 	t.Version++

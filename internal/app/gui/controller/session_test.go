@@ -26,7 +26,7 @@ func TestLocalInProcessStaysOnItsApp(t *testing.T) {
 	if _, err := w.Open(ctx, dirA); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.Open(ctx, dirB); err != nil {
+	if _, err := w.OpenWith(ctx, dirB, "background"); err != nil {
 		t.Fatal(err)
 	}
 	var info ProjectInfo

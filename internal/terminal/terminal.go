@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -130,7 +131,9 @@ type Manager struct {
 
 // Session is one running (or exited) program.
 type Session struct {
-	m          *Manager
+	// m is the owning Manager; nil while the session is detached
+	// (Manager.Detach): it keeps running without events.
+	m          atomic.Pointer[Manager]
 	proc       Process
 	stopRemote StopRemoteFunc
 
@@ -196,7 +199,7 @@ func (m *Manager) Open(o Options) (Info, error) {
 			name += " (" + strconv.Itoa(n+1) + ")"
 		}
 	}
-	s := &Session{m: m, proc: proc, stopRemote: o.StopRemote,
+	s := &Session{proc: proc, stopRemote: o.StopRemote,
 		info: Info{ID: id, Name: name, Kind: o.Kind, Target: o.Target, Command: append([]string{o.Program}, o.Args...),
 			Dir: o.Dir, Project: o.Project, Cols: o.Cols, Rows: o.Rows, PID: proc.Pid(), Running: true, Started: time.Now()},
 		term:     vt.New(o.Cols, o.Rows, o.Scrollback),
@@ -206,6 +209,7 @@ func (m *Manager) Open(o Options) (Info, error) {
 		done:     make(chan struct{}),
 		stop:     make(chan struct{}),
 	}
+	s.m.Store(m)
 	s.term.Reply = s.reply
 	s.term.OSC = s.osc
 	if m.colors != nil {
@@ -402,8 +406,8 @@ func (s *Session) pollForeground() {
 	changed := s.checkForeground(time.Now())
 	info := s.infoLocked()
 	s.mu.Unlock()
-	if changed && s.m.OnChange != nil {
-		s.m.OnChange(info)
+	if m := s.m.Load(); changed && m != nil && m.OnChange != nil {
+		m.OnChange(info)
 	}
 }
 
@@ -492,7 +496,10 @@ func (s *Session) write() {
 // publish sends batched output events.
 func (s *Session) publish() {
 	defer s.wg.Done()
-	interval := s.m.Interval
+	interval := time.Duration(0)
+	if m := s.m.Load(); m != nil {
+		interval = m.Interval
+	}
 	if interval <= 0 {
 		interval = 16 * time.Millisecond
 	}
@@ -569,16 +576,20 @@ func (s *Session) flush() {
 	clip := s.clip
 	s.clip = nil
 	s.mu.Unlock()
-	if s.m.OnClipboard != nil {
+	m := s.m.Load()
+	if m == nil {
+		return
+	}
+	if m.OnClipboard != nil {
 		for _, c := range clip {
-			s.m.OnClipboard(info.ID, c)
+			m.OnClipboard(info.ID, c)
 		}
 	}
-	if s.m.OnOutput != nil {
-		s.m.OnOutput(out)
+	if m.OnOutput != nil {
+		m.OnOutput(out)
 	}
-	if changed && s.m.OnChange != nil {
-		s.m.OnChange(info)
+	if changed && m.OnChange != nil {
+		m.OnChange(info)
 	}
 }
 
@@ -609,8 +620,8 @@ func (s *Session) wait() {
 	s.signal()
 	// OnExit runs before done closes, so a returned wait implies the exit
 	// was reported.
-	if s.m.OnExit != nil && !closing {
-		s.m.OnExit(info)
+	if m := s.m.Load(); m != nil && m.OnExit != nil && !closing {
+		m.OnExit(info)
 	}
 	close(s.done)
 }
@@ -770,8 +781,8 @@ func (s *Session) Rename(name string) Info {
 	s.info.Name, s.info.Renamed = name, true
 	info := s.infoLocked()
 	s.mu.Unlock()
-	if s.m.OnChange != nil {
-		s.m.OnChange(info)
+	if m := s.m.Load(); m != nil && m.OnChange != nil {
+		m.OnChange(info)
 	}
 	return info
 }

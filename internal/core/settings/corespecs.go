@@ -28,6 +28,7 @@ const (
 	KeyAutosaveIdle      = "autosave.idleSeconds"
 	KeyOpenProjectIn     = "projects.openIn"
 	KeyAutoHibernate     = "projects.autoHibernateMinutes"
+	KeyOnSwitch          = "projects.onSwitch"
 	KeyUpdateCheck       = "update.checkOnStart"
 	KeyFreezeThreshold   = "ui.freezeThresholdMs"
 	// KeyPHPRoot is the PHP project root (D515): project relative, ""
@@ -56,6 +57,13 @@ const (
 	OpenProjectAsk  = "ask"
 	OpenProjectNew  = "new"
 	OpenProjectThis = "this"
+)
+
+// Values of KeyOnSwitch (D547): what happens to the project left when
+// another one of the window is shown.
+const (
+	OnSwitchHibernate  = "hibernate"
+	OnSwitchBackground = "background"
 )
 
 // Values of KeySoftWrap (D285): wrap no file, the files matching
@@ -116,8 +124,10 @@ var kernelSpecs = []Spec{
 	{Key: KeyAutosaveIdle, Kind: KindInt, Default: 0, Min: IntPtr(0), Max: IntPtr(math.MaxInt32), Scope: ScopeGlobal,
 		Label: "Save after idle seconds", Help: "Also save modified files after this many seconds without typing (0 = only on focus loss, run, debug and commit).", Group: PageAutosave},
 
-	{Key: KeyOpenProjectIn, Kind: KindEnum, Default: OpenProjectAsk, Options: []string{OpenProjectAsk, OpenProjectNew, OpenProjectThis}, Scope: ScopeGlobal,
-		Label: "Open project in", Help: "Where to open another project while one is open: ask, a new window or this window.", Group: PageProjects},
+	{Key: KeyOpenProjectIn, Kind: KindEnum, Default: OpenProjectThis, Options: []string{OpenProjectThis, OpenProjectAsk, OpenProjectNew}, Scope: ScopeGlobal,
+		Label: "Open project in", Help: "Where to open another project while one is open: this window (switch, the project switcher's context menu or Shift+click opens a new window), ask, or a new window.", Group: PageProjects},
+	{Key: KeyOnSwitch, Kind: KindEnum, Default: OnSwitchHibernate, Options: []string{OnSwitchHibernate, OnSwitchBackground}, Scope: ScopeGlobal,
+		Label: "On switching away from a project", Help: "hibernate: stop its language server, indexer and watcher (terminals keep running; running configurations, tests and debug sessions keep it in the background); background: keep everything running.", Group: PageProjects},
 	{Key: KeyAutoHibernate, Kind: KindInt, Default: 0, Min: IntPtr(0), Max: IntPtr(7 * 24 * 60), Scope: ScopeGlobal,
 		Label: "Hibernate background projects after minutes", Help: "Stop language server, watcher and indexer of a project in the background after this many minutes (0 = never). Running processes and debug sessions prevent it.", Group: PageProjects},
 

@@ -52,6 +52,13 @@ type item struct {
 	lazy bool
 	// branch is the branch of a lazy branch row.
 	branch gitcli.Branch
+	// alt is reported instead of ev on Shift+click or Shift+Enter (e.g.
+	// open in a new window).
+	alt Event
+	// menu is shown as the row's submenu on a context click (right click,
+	// Ctrl+click on macOS); menuOpen marks sub as that menu.
+	menu     []item
+	menuOpen bool
 }
 
 func (it item) selectable() bool { return it.kind == kindAction && !it.disabled }
@@ -103,11 +110,15 @@ type popup struct {
 	built bool
 
 	rows, subRows []molecules.ListRow
-	list          molecules.ScrollList
-	keyTag        int
-	scrim         int
-	panel         int
-	subPanel      int
+	// ctx detect context clicks on the rows with a menu.
+	ctx []molecules.ContextArea
+	// goos enables Ctrl+click as context click on "darwin".
+	goos     string
+	list     molecules.ScrollList
+	keyTag   int
+	scrim    int
+	panel    int
+	subPanel int
 	// rect and subRect are the panels of the last frame relative to the
 	// anchor's top-left corner (empty when closed).
 	rect, subRect image.Rectangle
@@ -122,8 +133,41 @@ func (p *popup) show() {
 }
 
 func (p *popup) close() {
-	p.open, p.subOf = false, -1
+	p.closeSub()
+	p.open = false
 	p.rect, p.subRect = image.Rectangle{}, image.Rectangle{}
+}
+
+// closeSub closes the open submenu (a context menu row gets its plain
+// behaviour back).
+func (p *popup) closeSub() {
+	if p.subOf >= 0 && p.subOf < len(p.items) && p.items[p.subOf].menuOpen {
+		p.items[p.subOf].sub, p.items[p.subOf].menuOpen = nil, false
+	}
+	p.subOf = -1
+}
+
+// openMenu shows the context menu of row i as its submenu.
+func (p *popup) openMenu(i int) {
+	if i < 0 || i >= len(p.items) || len(p.items[i].menu) == 0 || !p.items[i].selectable() {
+		return
+	}
+	p.closeSub()
+	p.sel = i
+	p.items[i].sub, p.items[i].menuOpen = p.items[i].menu, true
+	p.subOf, p.subSel = i, -1
+	p.setItems(p.items)
+}
+
+// activateAlt chooses the alternative event of item i (its plain event
+// when it has none).
+func (p *popup) activateAlt(i int) []Event {
+	if i < 0 || i >= len(p.items) || !p.items[i].selectable() || p.items[i].alt == nil {
+		return p.activate(i)
+	}
+	ev := p.items[i].alt
+	p.close()
+	return []Event{ev}
 }
 
 func (p *popup) query() string {
@@ -138,6 +182,9 @@ func (p *popup) setItems(items []item) {
 	p.items = items
 	for len(p.rows) < len(items) {
 		p.rows = append(p.rows, molecules.ListRow{})
+	}
+	for len(p.ctx) < len(items) {
+		p.ctx = append(p.ctx, molecules.ContextArea{GOOS: p.goos})
 	}
 	if p.subOf >= 0 && p.subOf < len(items) && items[p.subOf].lazy && items[p.subOf].sub == nil && p.expand != nil {
 		items[p.subOf].sub = p.expand(items[p.subOf])
@@ -173,7 +220,8 @@ func (p *popup) activate(i int) []Event {
 	}
 	it := p.items[i]
 	p.sel = i
-	if it.hasSub() {
+	if it.hasSub() && !it.menuOpen {
+		p.closeSub()
 		p.subOf, p.subSel = i, -1
 		p.setItems(p.items)
 		return nil
@@ -248,6 +296,8 @@ func (p *popup) process(gtx layout.Context) []Event {
 		key.Filter{Focus: tag, Name: key.NameEscape},
 		key.Filter{Focus: tag, Name: key.NameUpArrow},
 		key.Filter{Focus: tag, Name: key.NameDownArrow},
+		key.Filter{Focus: tag, Name: key.NameReturn, Required: key.ModShift},
+		key.Filter{Focus: tag, Name: key.NameEnter, Required: key.ModShift},
 	}
 	if p.search == nil {
 		filters = append(filters,
@@ -271,7 +321,7 @@ func (p *popup) process(gtx layout.Context) []Event {
 		switch e.Name {
 		case key.NameEscape:
 			if p.subOf >= 0 {
-				p.subOf = -1
+				p.closeSub()
 			} else {
 				p.close()
 			}
@@ -284,8 +334,12 @@ func (p *popup) process(gtx layout.Context) []Event {
 				out = append(out, p.activate(p.sel)...)
 			}
 		case key.NameLeftArrow:
-			p.subOf = -1
+			p.closeSub()
 		case key.NameReturn, key.NameEnter, key.NameSpace:
+			if e.Modifiers.Contain(key.ModShift) && p.subOf < 0 {
+				out = append(out, p.activateAlt(p.sel)...)
+				break
+			}
 			out = append(out, p.enter()...)
 		}
 	}
@@ -293,7 +347,7 @@ func (p *popup) process(gtx layout.Context) []Event {
 		changed, submitted := p.search.Update(gtx)
 		if changed {
 			p.queryChanged = true
-			p.subOf = -1
+			p.closeSub()
 		}
 		if submitted {
 			out = append(out, p.enter()...)
@@ -306,8 +360,24 @@ func (p *popup) process(gtx layout.Context) []Event {
 		if !p.open || i >= len(p.rows) {
 			break
 		}
-		if c, _ := p.rows[i].Update(gtx); c {
-			out = append(out, p.activate(i)...)
+		if i < len(p.ctx) && len(p.items[i].menu) > 0 {
+			if _, ok := p.ctx[i].Update(gtx); ok {
+				// A Ctrl+click on macOS is a primary click as well.
+				p.rows[i].Update(gtx)
+				p.openMenu(i)
+				continue
+			}
+		}
+		if c, _, mods := p.rows[i].UpdateMods(gtx); c {
+			if p.goos == "darwin" && mods.Contain(key.ModCtrl) && len(p.items[i].menu) > 0 {
+				p.openMenu(i) // the click of a Ctrl+click context click
+				continue
+			}
+			if mods.Contain(key.ModShift) {
+				out = append(out, p.activateAlt(i)...)
+			} else {
+				out = append(out, p.activate(i)...)
+			}
 		}
 	}
 	if p.open && p.subOf >= 0 {
@@ -391,6 +461,11 @@ func (p *popup) layout(gtx layout.Context, th *tokens.Theme, anchor image.Point,
 		layout.Inset{Left: th.Space.M, Top: th.Space.XS}.Layout(lg, atoms.Muted("Nothing found").SingleLine().Fn(th))
 	} else {
 		p.list.Layout(lg, th, len(p.items), func(gtx layout.Context, i int) layout.Dimensions {
+			if len(p.items[i].menu) > 0 && i < len(p.ctx) {
+				return p.ctx[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return p.layoutItem(gtx, th, &p.rows[i], p.items[i], (i == p.sel && p.subOf < 0) || i == p.subOf)
+				})
+			}
 			return p.layoutItem(gtx, th, &p.rows[i], p.items[i], (i == p.sel && p.subOf < 0) || i == p.subOf)
 		})
 	}

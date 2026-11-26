@@ -54,7 +54,7 @@ type Prefs struct {
 	// InsertSpaces makes Tab insert spaces (.editorconfig overrides it
 	// per file).
 	InsertSpaces bool
-	// OpenProjectIn is ask, new or this (another project while one is
+	// OpenProjectIn is this (default), ask or new (another project while one is
 	// open).
 	OpenProjectIn string
 	// SoftWrap is off, files or all; SoftWrapFiles are the name patterns
@@ -418,7 +418,7 @@ func (c *Controller) loadPrefs(ctx context.Context) Prefs {
 	p.LineHeight = getSetting[float32](ctx, c.be, KeyLineHeight, "global", 0)
 	p.UIFontSize = getSetting[float32](ctx, c.be, KeyUIFontSize, "global", 0)
 	p.InsertSpaces = getSetting(ctx, c.be, KeyInsertSpaces, "global", true)
-	p.OpenProjectIn = getSetting(ctx, c.be, KeyOpenProjectIn, "global", "ask")
+	p.OpenProjectIn = getSetting(ctx, c.be, KeyOpenProjectIn, "global", "this")
 	p.SoftWrap = getEffective(ctx, c.be, KeySoftWrap, "files")
 	p.SoftWrapFiles = getEffective(ctx, c.be, KeySoftWrapFiles, []string{"*.md", "*.txt", "*.rst", "*.adoc"})
 	p.ShowWhitespace = getEffective(ctx, c.be, KeyShowWhitespace, "none")

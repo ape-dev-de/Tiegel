@@ -6,6 +6,7 @@ import (
 	"image"
 	"path/filepath"
 
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -19,8 +20,16 @@ import (
 // Event is reported by View.Update.
 type Event interface{ isWelcomeEvent() }
 
-// OpenEvent: open the project directory Path.
-type OpenEvent struct{ Path string }
+// OpenEvent: open the project directory Path; NewWindow on Shift+click
+// of a recent project (open it in a new window).
+type OpenEvent struct {
+	Path      string
+	NewWindow bool
+}
+
+// ContextEvent: a context click (right click, Ctrl+click on macOS) on the
+// recent project Path; the host shows its menu ("Open in New Window").
+type ContextEvent struct{ Path string }
 
 // BrowseEvent: "Open…" was clicked (the host shows a folder chooser).
 type BrowseEvent struct{}
@@ -32,10 +41,11 @@ type RemoveEvent struct{ Path string }
 // settings import wizard).
 type ImportEvent struct{}
 
-func (OpenEvent) isWelcomeEvent()   {}
-func (BrowseEvent) isWelcomeEvent() {}
-func (RemoveEvent) isWelcomeEvent() {}
-func (ImportEvent) isWelcomeEvent() {}
+func (OpenEvent) isWelcomeEvent()    {}
+func (ContextEvent) isWelcomeEvent() {}
+func (BrowseEvent) isWelcomeEvent()  {}
+func (RemoveEvent) isWelcomeEvent()  {}
+func (ImportEvent) isWelcomeEvent()  {}
 
 // View is the welcome organism.
 type View struct {
@@ -48,11 +58,14 @@ type View struct {
 	// Hints are shortcut hints shown below the recent projects
 	// ("Open…  Cmd+Shift+O").
 	Hints []string
+	// GOOS enables Ctrl+click as context click on "darwin".
+	GOOS string
 
 	path    atoms.TextField
 	open    atoms.Button
 	browse  atoms.Button
 	rows    []molecules.ListRow
+	ctx     []molecules.ContextArea
 	removes []atoms.IconButton
 	importS atoms.Button
 	list    molecules.ScrollList
@@ -79,6 +92,7 @@ func (v *View) Update(gtx layout.Context) []Event {
 	v.init()
 	for len(v.rows) < len(v.Recent) {
 		v.rows = append(v.rows, molecules.ListRow{})
+		v.ctx = append(v.ctx, molecules.ContextArea{})
 		v.removes = append(v.removes, atoms.IconButton{Glyph: atoms.GlyphClose, Description: "Remove from recent projects"})
 	}
 	var out []Event
@@ -105,8 +119,18 @@ func (v *View) Update(gtx layout.Context) []Event {
 			out = append(out, RemoveEvent{Path: p})
 			continue
 		}
-		if c, _ := v.rows[i].Update(gtx); c {
-			out = append(out, OpenEvent{Path: p})
+		v.ctx[i].GOOS = v.GOOS
+		if _, ok := v.ctx[i].Update(gtx); ok {
+			v.rows[i].Update(gtx) // a Ctrl+click is a primary click as well
+			out = append(out, ContextEvent{Path: p})
+			continue
+		}
+		if c, _, mods := v.rows[i].UpdateMods(gtx); c {
+			if v.GOOS == "darwin" && mods.Contain(key.ModCtrl) {
+				out = append(out, ContextEvent{Path: p})
+				continue
+			}
+			out = append(out, OpenEvent{Path: p, NewWindow: mods.Contain(key.ModShift)})
 		}
 	}
 	return out
@@ -160,30 +184,7 @@ func (v *View) column(th *tokens.Theme) layout.Widget {
 				gtx.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X, min(h, gtx.Constraints.Max.Y)))
 				return v.list.Layout(gtx, th, len(v.Recent), func(gtx layout.Context, i int) layout.Dimensions {
 					p := v.Recent[i]
-					return v.rows[i].Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(atoms.Icon{Glyph: atoms.GlyphFolder, Color: th.Color.Accent}.Fn(th)),
-							layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
-							layout.Rigid(atoms.Strong(filepath.Base(p)).Fn(th)),
-							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								gtx.Constraints.Min.X = 0
-								d := layout.Inset{Left: th.Space.M}.Layout(gtx, atoms.Small(p).SingleLine().Fn(th))
-								d.Size.X = gtx.Constraints.Max.X // the remove button sits at the right end
-								return d
-							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								b := &v.removes[i]
-								b.Size, b.IconSize = th.Size.RowH, th.Size.IconSmall
-								if !v.rows[i].Hovered() && !b.Hovered() {
-									m := op.Record(gtx.Ops)
-									d := b.Layout(gtx, th)
-									m.Stop()
-									return d
-								}
-								return b.Layout(gtx, th)
-							}),
-						)
-					})
+					return v.ctx[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions { return v.recentRow(gtx, th, i, p) })
 				})
 			}),
 			layout.Rigid(layout.Spacer{Height: th.Space.XL}.Layout),
@@ -212,6 +213,34 @@ func (v *View) column(th *tokens.Theme) layout.Widget {
 			}),
 		)
 	}
+}
+
+// recentRow draws recent project i (path p).
+func (v *View) recentRow(gtx layout.Context, th *tokens.Theme, i int, p string) layout.Dimensions {
+	return v.rows[i].Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(atoms.Icon{Glyph: atoms.GlyphFolder, Color: th.Color.Accent}.Fn(th)),
+			layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
+			layout.Rigid(atoms.Strong(filepath.Base(p)).Fn(th)),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.X = 0
+				d := layout.Inset{Left: th.Space.M}.Layout(gtx, atoms.Small(p).SingleLine().Fn(th))
+				d.Size.X = gtx.Constraints.Max.X // the remove button sits at the right end
+				return d
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				b := &v.removes[i]
+				b.Size, b.IconSize = th.Size.RowH, th.Size.IconSmall
+				if !v.rows[i].Hovered() && !b.Hovered() {
+					m := op.Record(gtx.Ops)
+					d := b.Layout(gtx, th)
+					m.Stop()
+					return d
+				}
+				return b.Layout(gtx, th)
+			}),
+		)
+	})
 }
 
 func withMin(gtx layout.Context, size image.Point) layout.Context {
