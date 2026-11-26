@@ -137,11 +137,11 @@ func (rn *Runner) Start(ctx context.Context, plan Plan) (string, error) {
 		return id, nil
 	}
 	tree.Attach()
-	go rn.wait(rctx, r, cmd, tree, outR, errR, outW, errW)
+	go rn.wait(rctx, r, plan.Target, cmd, tree, outR, errR, outW, errW)
 	return id, nil
 }
 
-func (rn *Runner) wait(ctx context.Context, r *run, cmd *exec.Cmd, tree *proctree.Tree, stdout, stderr io.Reader, outW, errW io.Closer) {
+func (rn *Runner) wait(ctx context.Context, r *run, target string, cmd *exec.Cmd, tree *proctree.Tree, stdout, stderr io.Reader, outW, errW io.Closer) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go rn.pump(r, "stdout", stdout, &wg)
@@ -159,7 +159,16 @@ func (rn *Runner) wait(ctx context.Context, r *run, cmd *exec.Cmd, tree *proctre
 	case ctx.Err() != nil:
 		rn.finish(r, StateCancelled, code, errors.New("cancelled"))
 	case err != nil:
+		if target != "" {
+			_ = os.Remove(target + ".download")
+		}
 		rn.finish(r, StateFailed, code, fmt.Errorf("install: %w", err))
+	case target != "":
+		if err := finishDownload(target); err != nil {
+			rn.finish(r, StateFailed, code, err)
+			return
+		}
+		rn.finish(r, StateSucceeded, 0, nil)
 	default:
 		rn.finish(r, StateSucceeded, 0, nil)
 	}

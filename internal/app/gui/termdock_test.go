@@ -74,7 +74,23 @@ func TestTerminalDock(t *testing.T) {
 	e.h.Router.Queue(key.Event{Name: "C", Modifiers: key.ModCtrl, State: key.Press})
 	e.frame()
 
-	// Escape returns to the editor (default setting).
+	// Escape goes to the program (default setting): the shell sees it,
+	// the terminal keeps the focus.
+	e.h.Router.Queue(key.EditEvent{Text: "echo esc-"})
+	e.frame()
+	e.h.Router.Queue(key.Event{Name: key.NameEscape, State: key.Press})
+	e.frame()
+	e.frame()
+	if !e.v.termd.focused() {
+		t.Fatal("Escape left the terminal")
+	}
+	e.h.Router.Queue(key.Event{Name: "C", Modifiers: key.ModCtrl, State: key.Press})
+	e.frame()
+	// With terminal.escape "editor" Escape returns to the editor.
+	if err := settings.Set(e.app.Settings(), terminal.KeyEscape, terminal.EscapeEditor); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("escape setting", func() bool { return e.ctl.Terminals.Settings.EscapeToEditor })
 	e.h.Router.Queue(key.Event{Name: key.NameEscape, State: key.Press})
 	e.frame()
 	e.frame()

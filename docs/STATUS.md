@@ -74,3 +74,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-25: Find in Files mit Live-Suche, Trefferliste und Code-Vorschau im Dialog (D537); Einfügen/Kopieren ins fokussierte Terminal geht nie mehr in den Editor, Klick ins Terminal-Fenster fokussiert es (D538).
 - 2026-11-25: Neues minimalistisches Logo: hellgrauer Tiegel mit Hitzestrichen auf dunkelgrüner Kachel, SVG in `packaging/macos/icon.svg` (D539).
 - 2026-11-26: Markdown-Dateien öffnen geteilt (links Code, rechts Live-Vorschau), abschaltbar mit `markdown.openMode` (D542).
+- 2026-11-26: Phpactor-Installation lädt das PHAR nach `~/.local/bin` statt Composer global (scheiterte mit „requires php ^7“, D543); Escape geht im fokussierten Terminal an das Programm (D544).

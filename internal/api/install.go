@@ -87,7 +87,7 @@ func (a *App) InstallEnv() install.Env {
 	opts := a.opts.LSP
 	opts.ProjectDir = ""
 	dirs := servers.SearchDirs(opts)
-	return install.Env{ProjectDir: a.PHPRoot(), PathEnv: strings.Join(dirs, string(os.PathListSeparator))}
+	return install.Env{ProjectDir: a.PHPRoot(), PathEnv: strings.Join(dirs, string(os.PathListSeparator)), HomeDir: a.opts.LSP.HomeDir}
 }
 
 func (a *App) makePlan(ctx context.Context, plugin, scope string) (install.Plan, error) {

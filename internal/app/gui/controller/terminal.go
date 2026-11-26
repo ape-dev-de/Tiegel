@@ -67,7 +67,7 @@ type Terminals struct {
 }
 
 func newTerminals(c *Controller) *Terminals {
-	return &Terminals{c: c, Settings: TermSettings{EscapeToEditor: true, OverrideKeys: true, CloseOnExit: true, ConfirmClose: true}}
+	return &Terminals{c: c, Settings: TermSettings{OverrideKeys: true, CloseOnExit: true, ConfirmClose: true}}
 }
 
 // Tab returns the tab of session id.
@@ -105,7 +105,7 @@ func (t *Terminals) LoadSettings() {
 		be := t.c.be
 		s := TermSettings{
 			OptionAsMeta:   getEffective(ctx, be, terminal.KeyOptionAsMeta, false),
-			EscapeToEditor: getEffective(ctx, be, terminal.KeyEscape, terminal.EscapeEditor) != terminal.EscapeTerminal,
+			EscapeToEditor: getEffective(ctx, be, terminal.KeyEscape, terminal.EscapeTerminal) == terminal.EscapeEditor,
 			OverrideKeys:   getEffective(ctx, be, terminal.KeyOverrideKeys, true),
 			CloseOnExit:    getEffective(ctx, be, terminal.KeyCloseOnExit, true),
 			FontSize:       getEffective(ctx, be, terminal.KeyFontSize, 0.0),

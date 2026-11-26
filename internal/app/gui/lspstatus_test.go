@@ -60,10 +60,10 @@ func TestLSPStatusMenuAndToolWindow(t *testing.T) {
 	if lines := d.lines(); len(lines) == 0 || lines[0].Text != "Searched locations" {
 		t.Fatalf("lines %+v", lines)
 	}
-	// Install… shows the plan (composer is missing in the test env: a hint).
+	// Install… shows the plan (curl is missing in the test env: a hint).
 	findItem(shown, "Install Phpactor").Run()
 	e.waitFor("install popup", func() bool { return e.v.popup != nil })
-	if p := e.v.popup; !strings.Contains(p.Title, "Install Phpactor") || !strings.Contains(p.Detail, "Composer was not found") || len(p.Buttons) != 1 {
+	if p := e.v.popup; !strings.Contains(p.Title, "Install Phpactor") || !strings.Contains(p.Detail, "phpactor.phar") || !strings.Contains(p.Detail, "curl was not found") || len(p.Buttons) != 1 {
 		t.Fatalf("popup %+v", p)
 	}
 	e.v.ClosePopup()

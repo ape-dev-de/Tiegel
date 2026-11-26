@@ -74,7 +74,7 @@ func TestPluginsContributeServersAndRecipes(t *testing.T) {
 	// Through the kernel service: plan only, nothing runs.
 	var plan install.Plan
 	modtest.Call(t, a, "install.plan", api.InstallPlanParams{Plugin: PhpactorID}, &plan)
-	if plan.Display != "composer global require phpactor/phpactor" || plan.Scope != install.ScopeGlobal {
+	if !strings.Contains(plan.Display, "phpactor.phar") || !strings.HasSuffix(plan.Target, "phpactor") || plan.Scope != install.ScopeGlobal {
 		t.Fatalf("plan %+v", plan)
 	}
 	modtest.Call(t, a, "install.plan", api.InstallPlanParams{Plugin: PHPantomID}, &plan)

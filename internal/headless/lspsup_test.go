@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ape-dev-de/tiegel/internal/install"
 	"github.com/ape-dev-de/tiegel/internal/modules/langphp"
 )
 
@@ -94,40 +95,49 @@ func TestLSPSupervisorCommands(t *testing.T) {
 
 func TestInstallCommand(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("shell script fake composer")
+		t.Skip("shell script fake curl")
 	}
 	t.Parallel()
 	dir := project(t, map[string]string{"a.php": "<?php\n"})
 	bin := t.TempDir()
 	logFile := filepath.Join(t.TempDir(), "calls")
-	script := "#!/bin/sh\necho \"$@\" >> " + logFile + "\necho \"Using version ^2 for $3\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "composer"), []byte(script), 0o755); err != nil {
+	// Fake curl: logs the URL and writes the --output file.
+	script := "#!/bin/sh\necho \"$8\" >> " + logFile + "\nmkdir -p \"$(dirname \"$7\")\"\nprintf '#!/usr/bin/env php\\n' > \"$7\"\necho downloaded\n"
+	if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	called := func() string { b, _ := os.ReadFile(logFile); return string(b) }
 
-	code, out, errs := runPath(t, bin, "install", "lsp-phpactor", "--dry-run", "--project", dir)
-	if code != ExitOK || !strings.Contains(out, "command: composer global require phpactor/phpactor") || called() != "" {
+	code, out, errs := runPath(t, bin, "install", "lsp-phpactor", "--dry-run", "--json", "--project", dir)
+	var dry installOutput
+	if code != ExitOK || json.Unmarshal([]byte(out), &dry) != nil || !strings.Contains(dry.Plan.Display, "curl --fail") ||
+		!strings.HasSuffix(dry.Plan.Target, filepath.Join(".local", "bin", "phpactor")) || called() != "" {
 		t.Fatalf("dry-run %d %q %q", code, out, errs)
 	}
-	code, out, errs = runPath(t, bin, "install", "lsp-phpactor", "--scope", "project", "--project", dir)
-	if code != ExitError || !strings.Contains(errs, "--yes") || !strings.Contains(out, "changes composer.json: true") || called() != "" {
+	code, out, errs = runPath(t, bin, "install", "lsp-phpactor", "--project", dir)
+	if code != ExitError || !strings.Contains(errs, "--yes") || called() != "" {
 		t.Fatalf("unconfirmed %d %q %q", code, out, errs)
 	}
-	code, out, errs = runPath(t, bin, "install", "lsp-phpactor", "--scope", "project", "--yes", "--project", dir)
-	if code != ExitOK || !strings.Contains(out, "Using version ^2 for phpactor/phpactor") || !strings.Contains(out, "phpactor: succeeded") ||
-		called() != "require --dev phpactor/phpactor\n" {
+	code, out, errs = runPath(t, bin, "install", "lsp-phpactor", "--yes", "--json", "--project", dir)
+	var done installOutput
+	if code != ExitOK || json.Unmarshal([]byte(out), &done) != nil || done.Result == nil || done.Result.State != install.StateSucceeded || !strings.Contains(called(), "phpactor.phar") {
 		t.Fatalf("install %d %q %q (calls %q)", code, out, errs, called())
 	}
-	// Hint-only recipe and missing composer: hint, exit 1, nothing runs.
+	if st, err := os.Stat(done.Plan.Target); err != nil || st.Mode()&0o111 == 0 {
+		t.Fatalf("installed file %v %v", st, err)
+	}
+	if _, err := os.Stat(done.Plan.Target + ".download"); err == nil {
+		t.Fatal("download file left behind")
+	}
+	// Hint-only recipe and missing curl: hint, exit 1, nothing runs.
 	code, out, _ = runPath(t, bin, "install", "lsp-phpantom", "--project", dir)
 	if code != ExitError || !strings.Contains(out, "hint: PHPantom is a native binary") {
 		t.Fatalf("phpantom %d %q", code, out)
 	}
 	code, out, _ = runPath(t, t.TempDir(), "install", "lsp-phpactor", "--yes", "--json", "--project", dir)
 	var res installOutput
-	if code != ExitError || json.Unmarshal([]byte(out), &res) != nil || res.Plan.Available || !strings.Contains(res.Plan.Hint, "Composer was not found") {
-		t.Fatalf("no composer %d %q", code, out)
+	if code != ExitError || json.Unmarshal([]byte(out), &res) != nil || res.Plan.Available || !strings.Contains(res.Plan.Hint, "curl was not found") {
+		t.Fatalf("no curl %d %q", code, out)
 	}
 	if code, _, _ := runPath(t, bin, "install", "lsp-nope", "--project", dir); code != ExitError {
 		t.Fatal("unknown plugin accepted")

@@ -34,6 +34,9 @@ const (
 	ManagerNone     Manager = ""
 	ManagerComposer Manager = "composer"
 	ManagerNPM      Manager = "npm"
+	// ManagerDownload downloads a single executable (e.g. a PHAR) from
+	// Recipe.URL with curl into ~/.local/bin/Recipe.File (global only).
+	ManagerDownload Manager = "download"
 )
 
 // Scope is where a package is installed.
@@ -73,6 +76,10 @@ type Recipe struct {
 	// "phpactor/phpactor"). ManagerNone makes the recipe a hint only.
 	Manager Manager `json:"manager,omitempty"`
 	Package string  `json:"package,omitempty"`
+	// URL and File describe a ManagerDownload recipe: the https URL of
+	// the executable and its file name in ~/.local/bin.
+	URL  string `json:"url,omitempty"`
+	File string `json:"file,omitempty"`
 	// Scopes are the allowed targets; the first is the default.
 	Scopes []Scope `json:"scopes,omitempty"`
 	// Interpreter tells where the manager runs (default native).
@@ -97,6 +104,19 @@ func (r Recipe) Validate() error {
 		}
 		return nil
 	case ManagerComposer, ManagerNPM:
+	case ManagerDownload:
+		if !strings.HasPrefix(r.URL, "https://") || r.File == "" || strings.ContainsAny(r.File, `/\`) {
+			return fmt.Errorf("install: download recipe of %s needs an https URL and a plain file name", r.Plugin)
+		}
+		for _, s := range r.Scopes {
+			if s != ScopeGlobal {
+				return fmt.Errorf("install: recipe of %s: downloads only support global installs", r.Plugin)
+			}
+		}
+		if len(r.Scopes) == 0 {
+			return fmt.Errorf("install: recipe of %s needs scopes", r.Plugin)
+		}
+		return nil
 	default:
 		return fmt.Errorf("install: recipe of %s: unknown manager %q", r.Plugin, r.Manager)
 	}
@@ -128,6 +148,9 @@ type Env struct {
 	// PathEnv is the PATH the command runs with (e.g. including the login
 	// shell PATH on macOS); empty keeps the process PATH.
 	PathEnv string
+	// HomeDir is the user's home (downloads go to HomeDir/.local/bin);
+	// empty uses os.UserHomeDir.
+	HomeDir string
 	// Wrap runs a command in the project interpreter (InterpreterProject);
 	// nil means not available yet.
 	Wrap func(argv []string, dir string) ([]string, error)
@@ -158,6 +181,10 @@ type Plan struct {
 	Effects []string `json:"effects,omitempty"`
 	Hint    string   `json:"hint,omitempty"`
 	Note    string   `json:"note,omitempty"`
+	// Target is the installed file of a download; the download goes to
+	// Target+".download" first and is moved there (executable) when it
+	// succeeded.
+	Target string `json:"target,omitempty"`
 	// ID identifies exactly what runs (Fingerprint); install.run refuses
 	// to execute a plan whose ID differs from the confirmed preview.
 	ID string `json:"id,omitempty"`
@@ -175,7 +202,8 @@ func (p Plan) Fingerprint() string {
 		Command   []string
 		Dir       string
 		Env       []string
-	}{p.Plugin, p.Scope, p.Available, p.Command, p.Dir, p.env})
+		Target    string
+	}{p.Plugin, p.Scope, p.Available, p.Command, p.Dir, p.env, p.Target})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:12])
 }
@@ -209,6 +237,9 @@ func MakePlan(r Recipe, scope Scope, env Env) (Plan, error) {
 	}
 	p.Scope = scope
 
+	if r.Manager == ManagerDownload {
+		return downloadPlan(r, p, env), nil
+	}
 	var argv []string
 	switch {
 	case r.Manager == ManagerComposer && scope == ScopeGlobal:
@@ -270,6 +301,55 @@ func MakePlan(r Recipe, scope Scope, env Env) (Plan, error) {
 		p.env = []string{"PATH=" + env.PathEnv}
 	}
 	return p, nil
+}
+
+// downloadPlan downloads r.URL with curl into ~/.local/bin/r.File (a
+// directory Tiegel's server lookup searches).
+func downloadPlan(r Recipe, p Plan, env Env) Plan {
+	if runtime.GOOS == "windows" {
+		p.Hint = joinHint("Downloading "+r.Tool+" is not offered on Windows.", r.Hint)
+		return p
+	}
+	home, err := env.HomeDir, error(nil)
+	if home == "" {
+		home, err = os.UserHomeDir()
+	}
+	if err != nil || home == "" {
+		p.Hint = joinHint("No home directory to install "+r.Tool+" into.", r.Hint)
+		return p
+	}
+	p.Package = r.URL
+	p.Dir = home
+	p.Target = filepath.Join(home, ".local", "bin", r.File)
+	argv := []string{"curl", "--fail", "--location", "--show-error", "--silent", "--create-dirs", "--output", p.Target + ".download", r.URL}
+	p.Effects = []string{"downloads " + r.URL, "installs it as " + p.Target + " (executable; replaces an existing file)"}
+	look := env.LookPath
+	if look == nil {
+		look = defaultLookPath(env.PathEnv)
+	}
+	p.Display = Quote(argv)
+	exe, err := look("curl")
+	if err != nil {
+		p.Command = argv
+		p.Hint = joinHint("curl was not found.", r.Hint)
+		return p
+	}
+	argv[0] = exe
+	p.Command, p.Available = argv, true
+	return p
+}
+
+// finishDownload moves a finished download to its target and makes it
+// executable.
+func finishDownload(target string) error {
+	tmp := target + ".download"
+	if err := os.Chmod(tmp, 0o755); err != nil {
+		return fmt.Errorf("install: %w", err)
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		return fmt.Errorf("install: %w", err)
+	}
+	return nil
 }
 
 func managerMissing(m Manager) string {

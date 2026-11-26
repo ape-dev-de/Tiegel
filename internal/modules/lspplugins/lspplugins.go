@@ -47,8 +47,10 @@ const (
 	IntelephenseID = "lsp-intelephense"
 )
 
-// Phpactor is the default server (MIT, decision D3); installed via
-// Composer, globally or into the project.
+// Phpactor is the default server (MIT, decision D3); installed as the
+// PHAR of its latest GitHub release (D543): "composer global require"
+// cannot resolve current versions (a dependency is only available as a
+// dev branch) and falls back to ancient ones that need PHP 7.
 func Phpactor() *Plugin {
 	return &Plugin{
 		def: servers.Definition{
@@ -58,9 +60,10 @@ func Phpactor() *Plugin {
 		},
 		order: 10, defaultOn: true, autoSelect: true,
 		recipe: install.Recipe{
-			Plugin: PhpactorID, Tool: "Phpactor", Manager: install.ManagerComposer, Package: "phpactor/phpactor",
-			Scopes: []install.Scope{install.ScopeGlobal, install.ScopeProject}, Interpreter: install.InterpreterNative,
-			Hint: "Alternatively install Phpactor with your package manager (e.g. Homebrew: brew install phpactor) and choose its path.",
+			Plugin: PhpactorID, Tool: "Phpactor", Manager: install.ManagerDownload,
+			URL: "https://github.com/phpactor/phpactor/releases/latest/download/phpactor.phar", File: "phpactor",
+			Scopes: []install.Scope{install.ScopeGlobal}, Interpreter: install.InterpreterNative,
+			Hint: "Alternatively install Phpactor with your package manager (e.g. Homebrew: brew install phpactor) and choose its path. It needs PHP 8.2 or newer.",
 		},
 	}
 }
