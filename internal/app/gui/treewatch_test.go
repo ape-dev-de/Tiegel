@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
+	"github.com/ape-dev-de/tiegel/internal/core/settings"
 )
 
 // TestTreeFollowsExternalChanges: files created, renamed and deleted by
@@ -103,4 +104,24 @@ func TestReloadFromDisk(t *testing.T) {
 	if !strings.Contains(e.ctl.Status.Notice, "Reloaded the project from disk") {
 		t.Fatalf("notice %q", e.ctl.Status.Notice)
 	}
+}
+
+// TestTreeShowsIgnored: .gitignore'd folders are listed and marked
+// (files.showIgnored, default on) and hidden when it is off.
+func TestTreeShowsIgnored(t *testing.T) {
+	e := newEnvWith(t, true, map[string]string{
+		".gitignore":              "/config/local/\n",
+		"config/local/secret.php": "<?php\n",
+		"config/app.php":          "<?php\n",
+	}, nil)
+	e.ctl.LoadDir("config")
+	e.waitFor("config loaded", func() bool { n := e.ctl.Tree.Node("config"); return n != nil && n.Loaded })
+	n := e.ctl.Tree.Node("config/local")
+	if n == nil || !n.Ignored {
+		t.Fatalf("ignored folder %+v", n)
+	}
+	if err := settings.Set(e.app.Settings(), settings.KeyShowIgnored, false); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("hidden", func() bool { return e.ctl.Tree.Node("config/local") == nil })
 }

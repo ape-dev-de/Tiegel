@@ -224,7 +224,7 @@ func (w *Workspace) reloadDir(rel string) {
 	tree := c.Tree
 	c.Go(func(ctx context.Context) func() {
 		var res filesListResult
-		err := c.call(ctx, "files.list", map[string]any{"path": rel, "depth": 1, "libraries": lib}, &res)
+		err := c.call(ctx, "files.list", treeListParams(ctx, c, rel, lib), &res)
 		return func() {
 			if c.Tree != tree {
 				return

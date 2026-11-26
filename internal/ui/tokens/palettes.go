@@ -79,7 +79,7 @@ func darkGit() GitPalette {
 		FileModified:  Hex(0x82AEE0),
 		FileDeleted:   Hex(0x8E959F),
 		FileUntracked: Hex(0xD9A06C),
-		FileIgnored:   Hex(0x6E7580),
+		FileIgnored:   Hex(0x9C9A4F), // olive: ignored by .gitignore
 		FileConflict:  Hex(0xE27D7D),
 	}
 }
@@ -157,7 +157,7 @@ func lightGit() GitPalette {
 		FileModified:  Hex(0x2C62A3),
 		FileDeleted:   Hex(0x7C828B),
 		FileUntracked: Hex(0x9C5418),
-		FileIgnored:   Hex(0x9AA0A8),
+		FileIgnored:   Hex(0x7E7B1E), // olive: ignored by .gitignore
 		FileConflict:  Hex(0xB33A30),
 	}
 }

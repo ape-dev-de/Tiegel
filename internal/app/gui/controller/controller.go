@@ -13,6 +13,7 @@ import (
 
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/fspath"
+	coresettings "github.com/ape-dev-de/tiegel/internal/core/settings"
 )
 
 // Status is the information shown in the status bar.
@@ -771,6 +772,10 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 	case "settings.changed":
 		if keymapSettingChanged(payload) {
 			c.LoadKeymap()
+		}
+		var ch settingsChange
+		if json.Unmarshal(payload, &ch) == nil && ch.Key == coresettings.KeyShowIgnored && c.Work != nil {
+			c.Work.Sync("")
 		}
 		c.RefreshQA()
 	case "modules.changed":

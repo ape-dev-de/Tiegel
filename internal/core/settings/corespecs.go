@@ -27,10 +27,13 @@ const (
 	KeyWatchExclude      = "watch.exclude"
 	KeyAutosaveIdle      = "autosave.idleSeconds"
 	KeyOpenProjectIn     = "projects.openIn"
-	KeyAutoHibernate     = "projects.autoHibernateMinutes"
-	KeyOnSwitch          = "projects.onSwitch"
-	KeyUpdateCheck       = "update.checkOnStart"
-	KeyFreezeThreshold   = "ui.freezeThresholdMs"
+	// KeyShowIgnored shows .gitignore'd entries in the project tree
+	// (marked in the ignored color).
+	KeyShowIgnored     = "files.showIgnored"
+	KeyAutoHibernate   = "projects.autoHibernateMinutes"
+	KeyOnSwitch        = "projects.onSwitch"
+	KeyUpdateCheck     = "update.checkOnStart"
+	KeyFreezeThreshold = "ui.freezeThresholdMs"
 	// KeyPHPRoot is the PHP project root (D515): project relative, ""
 	// detects it (internal/core/phproot).
 	KeyPHPRoot = "project.phpRoot"
@@ -114,6 +117,8 @@ var kernelSpecs = []Spec{
 
 	{Key: KeyEditorConfig, Kind: KindBool, Default: true, Scope: ScopeProject,
 		Label: "Use .editorconfig", Help: "Apply indent style and size, final newline and trailing whitespace rules from .editorconfig files.", Group: PageFiles},
+	{Key: KeyShowIgnored, Kind: KindBool, Default: true, Scope: ScopeGlobal,
+		Label: "Show ignored files in the project tree", Help: "Show entries matched by .gitignore (in the ignored color); quick open and search still skip them.", Group: PageFiles},
 	{Key: KeyFileAssociations, Kind: KindList, Default: []string{}, Scope: ScopeProject,
 		Label: "File type associations", Help: "Pattern=language pairs such as *.tpl=php or Jenkinsfile=plaintext; they win over the built-in detection.", Group: PageFiles},
 	{Key: KeyWatchExclude, Kind: KindList, Default: []string{"node_modules"}, Scope: ScopeProject,

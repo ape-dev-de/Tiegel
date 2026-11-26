@@ -5,6 +5,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/ape-dev-de/tiegel/internal/core/settings"
 )
 
 // Node is a node of the project tree. Directories are loaded lazily, one
@@ -107,7 +109,7 @@ func (c *Controller) LoadDir(rel string) {
 	lib := n.Library
 	c.Go(func(ctx context.Context) func() {
 		var res filesListResult
-		err := c.call(ctx, "files.list", map[string]any{"path": rel, "depth": 1, "libraries": lib}, &res)
+		err := c.call(ctx, "files.list", treeListParams(ctx, c, rel, lib), &res)
 		return func() {
 			if c.Tree == nil {
 				return
@@ -275,3 +277,10 @@ func FilterFuzzy(query string, candidates []string, limit int) []Match {
 
 // baseName returns the last element of a slash path.
 func baseName(p string) string { return path.Base(p) }
+
+// treeListParams are the files.list params of one tree level: ignored
+// entries are listed (and marked) unless files.showIgnored is off.
+func treeListParams(ctx context.Context, c *Controller, rel string, lib bool) map[string]any {
+	return map[string]any{"path": rel, "depth": 1, "libraries": lib,
+		"ignored": getEffective(ctx, c.be, settings.KeyShowIgnored, true)}
+}
