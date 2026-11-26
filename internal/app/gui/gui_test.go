@@ -52,6 +52,10 @@ type env struct {
 	h    *uitest.Harness
 }
 
+// envModules are the module options of newEnvWith (a test sets them,
+// e.g. to connect a fake agent).
+var envModules modules.Options
+
 // ideImportRoots are the configuration roots of the settings import in
 // newEnvWith (a test sets them to the fixture).
 var ideImportRoots []string
@@ -96,7 +100,7 @@ func newEnvWith(t *testing.T, withProject bool, extra map[string]string, prep fu
 		// Terminal sessions never ask the login shell.
 		TerminalPath: func(context.Context) string { return os.Getenv("PATH") },
 	}
-	opts.Extensions = append(opts.Extensions, modules.Install)
+	opts.Extensions = append(opts.Extensions, modules.Installer(envModules))
 	a, err := api.New(opts)
 	if err != nil {
 		t.Fatal(err)

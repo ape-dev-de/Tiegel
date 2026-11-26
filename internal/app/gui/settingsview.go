@@ -29,11 +29,12 @@ const (
 	sectionTests   = "Tests"
 	sectionQA      = "Quality Tools"
 	sectionVCS     = "Version Control"
+	sectionAI      = "AI"
 	sectionPlugins = "Plugins"
 )
 
 // sectionOrder is the order of the sections in the navigation.
-var sectionOrder = []string{sectionProject, sectionGeneral, sectionPHP, sectionDocker, sectionTests, sectionQA, sectionVCS, sectionPlugins}
+var sectionOrder = []string{sectionProject, sectionGeneral, sectionPHP, sectionDocker, sectionTests, sectionQA, sectionVCS, sectionAI, sectionPlugins}
 
 // projectKeys are shown on the "Project" page whatever page declares them.
 var projectKeys = map[string]bool{"project.phpRoot": true, "project.setupDismissed": true}

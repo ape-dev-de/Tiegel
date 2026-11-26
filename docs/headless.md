@@ -100,6 +100,15 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `test config [PFAD] [--suite S] [--class C] [--method M] [--data-set D]` | ungespeicherte Run-Konfiguration vom Typ `phpunit` als JSON (z.B. `… \| tiegel --headless run-configs save -`) | `test.configFor` |
 | `test goto DATEI` | Go to Test: die Tests einer Klasse bzw. die getestete Klasse eines Tests (PSR-4 aus `composer.json`, Konvention `Tests\…\<Name>Test`, auch unter `Unit\`/`Feature\`/`Integration\`/`Functional\`) | `test.goto` |
 | `test create DATEI [--file ZIEL] [--dry-run]` | Create Test: Testgerüst für die Klasse anlegen (Standard `tests/Unit/…Test.php`, wenn `tests/Unit` existiert; erbt von `Tests\TestCase`, falls vorhanden); eine vorhandene Datei bleibt unverändert | `test.create` |
+| `agent [status]` | KI-Agent (Plugin `agent`, D540): Befehl (`agent.command`, Standard `opencode acp`), gefundener Pfad (PATH, Login-Shell, `~/.opencode/bin`), Zustand, Sitzung, Modell, Berechtigungen in Worten (`Edits: allowed · Shell: ask · Commits: blocked …`), Login-Hinweis; fehlt opencode: `install agent --dry-run` (npm, nur auf Aufruf, D194) | `agent.status` |
+| `agent start` / `agent stop` / `agent new` | Agent-Prozess starten (nie automatisch) bzw. beenden; neue Sitzung (Verlauf geleert, geänderte Dateien bleiben gelistet) | `agent.start`, `agent.stop`, `agent.newSession` |
+| `agent prompt TEXT… [--yes] [--attach DATEI] [--thoughts]` | Nachricht an den Agenten (startet ihn bei Bedarf), Antwort wird gestreamt; beendete Werkzeugaufrufe als `• titel  pfad +n -m  [completed]`, Sperren als `! Blocked: git commit (disabled in settings) – Run: …`. Berechtigungen auf „ask“ werden headless **abgelehnt**, mit `--yes` erlaubt; gesperrte Kategorien (Commits, Push, …) bleiben gesperrt. `--attach` hängt eine Datei als Kontext an (offene Dokumente mit ungespeichertem Text). Exit 1 bei Fehler des Agenten, 130 nach Strg+C; `--json`: `{result, transcript, changes}` | `agent.prompt` (`wait`, `ask`), Events `agent.update` |
+| `agent transcript` | Verlauf der Sitzung dieses Prozesses (Nachrichten, Werkzeugaufrufe, Plan, Berechtigungen, Hinweise) | `agent.transcript` |
+| `agent changes` | vom Agenten geänderte Dateien (`modified`/`created`/`deleted`, +/- Zeilen, `(changed since)` bei späterer Änderung); bleiben über Prozessgrenzen erhalten (Projekt-Konfigurationsordner) | `agent.changes` |
+| `agent diff [PFAD…]` | Unified Diff vor der ersten Änderung des Agenten ↔ jetzt (ohne Pfad: alle Dateien) | `agent.diff` |
+| `agent revert PFAD` / `agent revert --all [--force]` | Änderungen zurücknehmen: Original zurückschreiben (offene Dokumente als Undo-Schritt, Local History), angelegte Dateien löschen, gelöschte wiederherstellen. Wurde eine Datei nach der letzten Änderung des Agenten geändert, Konflikt statt Überschreiben (Exit 1), `--force` überschreibt | `agent.revert` |
+| `agent accept` | alle Änderungen behalten, Liste leeren | `agent.acceptChanges` |
+| `agent model [MODELL]` / `agent option ID WERT` | Modelle anzeigen (`*` = aktiv) bzw. wählen (wird in `agent.model` gemerkt); andere Sitzungsoptionen des Agenten (z.B. `mode plan`, `effort high`) | `agent.setModel`, `agent.setOption` |
 | `terminal [--shell SH] [--arg A]... [--dir DIR] [--service S \| --kind K --target T] [--send TEXT]... [--idle 300ms] [--timeout 10s] [--cols N] [--rows N] [--scrollback] [--env K=V]...` | öffnet eine Terminal-Sitzung im Projekt (Shell aus `terminal.shell`, sonst `$SHELL`; bash/zsh/fish als Login-Shell, PATH der Login-Shell, `TERM=xterm-256color`) oder mit `--service` eine Shell im Compose-Dienst (`docker compose exec`, Plugin `docker`), schickt jede `--send`-Eingabe (Escapes `\n`, `\r`, `\t`, `\e`, `\xHH`, `\uHHHH`; Enter ist `\r`), wartet jeweils, bis die Ausgabe `--idle` lang ruht oder das Programm endet (höchstens `--timeout` insgesamt), gibt den Bildschirm als Text aus (`--scrollback`: mit Verlauf), schließt die Sitzung (Prozessbaum wird beendet). Ist das Programm beendet, steht `[exited with code N]` auf stderr. `--json`: `{terminal, screen, text}` | `terminal.open`, `terminal.input`, `terminal.screen`, `terminal.text`, `terminal.close`, Event `terminal.output` |
 | `terminal --kinds` | listet die Sitzungsarten der Plugins (Art, Ziel `service`/`container`, Bezeichnung; D372) | `terminal.kinds` |
 | `modules [enable ID \| disable ID]` | Module anzeigen/schalten | `modules.*` |
@@ -324,6 +333,7 @@ Von den Modulen veröffentlichte Topics:
 | docker | `docker.contextChanged` (`{context, scope, previous}`), `docker.servicesChanged` (Stand wie `docker.services` plus `refresh: events\|poll`; nur während einer Beobachtung per `docker.watchStart`), `docker.log` (`{id, lines: [{container, text, stream}], done?, error?}`; gebündelt alle 100 ms) |
 | Kern (qa) | `qa.diagnostics` (`{path, file, source, diagnostics}` – aktuelle Funde eines Plugins für eine Datei, leere Liste = gelöscht), `qa.started`/`qa.finished` (`{tool, kind: format\|inspect, paths, trigger: manual\|save, count, error?, messages?, millis}`) |
 | phpunit | `test.started` (Testlauf ohne Baum), `test.updated` (Testlauf mit leichtem Baum, gedrosselt auf 150 ms), `test.finished` (Testlauf mit leichtem Baum). Leichter Baum (`light: true`, D380): ohne `details`, `expected`, `actual`, `output`, `message` auf 1 KiB gekürzt – die Größe hängt nur von der Zahl der Tests ab; vollständig über `test.node` bzw. `test.results` |
+| agent | `agent.status` (wie `agent.status`), `agent.update` (`{entry: {index, kind: user\|agent\|thought\|tool\|plan\|permission\|notice, text?, level?, tool?, plan?, permission?, time}, delta?}` – gestreamter Text kommt als viele Updates desselben Eintrags; `index: -1` = neue Sitzung), `agent.permission` (`{requestId, category, summary, tool, options}` – wartet auf `agent.permission`), `agent.changes` (Liste wie `agent.changes`), `agent.turnEnded` (`{stopReason, error?, byUser?}`) |
 | debug-xdebug | `debug.listening`, `debug.stopped`, `debug.sessionStarted`, `debug.sessionEnded`, `debug.break` (gemappte Host-Datei/Zeile), `debug.breakpointHit`, `debug.breakpoints.changed`, `debug.status`, `debug.output`, `debug.notification`, `debug.breakpoint.resolved` |
 
 ## Module
@@ -343,6 +353,7 @@ Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`,
 | `debug-xdebug` | `php-runtime` | `debug.*` | ruft Guard `debug.before` (Kern: Autosave), nutzt `runtime.pathMappings`, stellt `debug.listener` (Filter, für `run.start` mit `debug`) bereit; nimmt `import.ide.component` (Einstellungsimport, D395) |
 | `composer` | – | `composer.*` | stellt `run.configTypes` (Typ `composer-script`) bereit; Einstellungen `composer.path`, `composer.interpreter` |
 | `phpunit` | – | `test.*` | stellt `run.configTypes` (Typ `phpunit`), `import.ide.component` (Einstellungen und PHPUnit-Run-Konfigurationen der Referenz-IDE) und `install.recipes` (`composer require --dev phpunit/phpunit` im Projekt-Interpreter) bereit; nutzt `runtime.pathMappings` und `nav.typeHierarchy` (falls php-index läuft) |
+| `agent` | – | `agent.*` | stellt `install.recipes` (opencode per `npm install -g opencode-ai`) bereit; startet den ACP-Agenten nur auf Nutzeraktion; Einstellungen `agent.command`, `agent.model`, `agent.allowEdits`, `agent.allowShell`, `agent.allowCommits`, `agent.allowPush`, `agent.allowWeb`, `agent.allowOther`, `agent.rules` |
 | `php-generate` | – | `generate.*` | – (ruft `lsp.codeActions` von lang-php über die API, falls es läuft) |
 | `live-templates` | – | `templates.*` | – (Kontext per Tree-sitter, Einstellungen `live-templates.user`/`.disabled`) |
 
@@ -615,6 +626,16 @@ Die `$File…$`-Makros brauchen eine aktuelle Datei; ohne sie scheitert der Star
 | `test.configFor` | wie `test.run` (Scope) | ungespeicherte Run-Konfiguration `{name, type: phpunit, values}` |
 | `test.goto` | `path` | `{direction: test\|subject, class, targets: [{file, class, exists}], create?: {file, class, content, exists}}` |
 | `test.create` | `path`, `file?`, `dryRun?` | `{file, class, content, exists}`; schreibt die Datei (Local History, `files.changed`), eine vorhandene bleibt unverändert |
+| `agent.status` | – | `{command, path?, available, install?, installHint?, state: stopped\|starting\|ready\|prompting\|failed, agent?, version?, sessionId?, options?: [{id, name, category?, value, choices}], model?, commands?, policy: {edit, shell, gitCommit, gitPush, web, other, summary, rules?}, pending?, changes?, authRequired?, authHint?, error?}` |
+| `agent.start` / `agent.stop` / `agent.newSession` / `agent.cancel` | – | Status |
+| `agent.prompt` | `text`, `files?`, `wait?` (bis Turn-Ende), `ask?` (`allow`\|`deny`: Antwort für „ask“-Berechtigungen ohne Client) | `{started}` bzw. mit `wait` `{stopReason, error?, byUser?}`; `-32004`, solange ein Turn läuft |
+| `agent.transcript` | – | Einträge wie in `agent.update` |
+| `agent.changes` | – | `[{path, file, kind: modified\|created\|deleted, added, removed, conflict?}]` |
+| `agent.diff` | `path` | Änderung plus `{original, current, unified}` |
+| `agent.revert` | `path` oder `all`, `force?` | `{reverted, conflicts?: [{path, reason}]}` |
+| `agent.acceptChanges` | – | leere Liste |
+| `agent.permission` | `requestId`, `optionId` oder `allow`/`deny` | Status |
+| `agent.setOption` / `agent.setModel` | `{id, value}` / `{model}` | Status |
 
 Läufe einer Run-Konfiguration vom Typ `phpunit` (z.B. mit Ctrl+R gestartet) erscheinen ebenso als Testlauf. Einstellungen: `phpunit.executable`, `phpunit.configuration`, `phpunit.interpreter` (Standard `project`), `phpunit.parallel` (ParaTest für Suites und Verzeichnisse), `phpunit.arguments`.
 

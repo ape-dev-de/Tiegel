@@ -178,6 +178,7 @@ type View struct {
 	rund  *runDock
 	termd *termDock
 	tstd  *testDock
+	agtd  *agentDock
 	cmpd  *composerDock
 	mdd   *markdownDock
 	extd  *toolsDock
@@ -260,6 +261,7 @@ func newView(ctl *controller.Controller, goos string, sh *text.Shaper) *View {
 	v.svcd = installServices(v)
 	v.rund = installRun(v)
 	v.tstd = installTests(v)
+	v.agtd = installAgent(v)
 	v.cmpd = installComposer(v)
 	v.mdd = installMarkdown(v)
 	v.extd = installExternalTools(v)
