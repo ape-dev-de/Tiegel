@@ -539,6 +539,8 @@ func (a *App) watchRefresh(ctx context.Context, _ struct{}) (WatchRefreshResult,
 	}
 	// Documents outside the watched tree (or without watcher) as well.
 	a.reconcileAll("refresh")
+	// Modules check what lies outside the project (e.g. PHPStan's cache).
+	a.bus.Publish(TopicWatchRefreshed, nil)
 	res := WatchRefreshResult{External: []DocState{}}
 	for _, d := range a.openDocs() {
 		d.mu.Lock()

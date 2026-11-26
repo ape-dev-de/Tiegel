@@ -540,10 +540,23 @@ func (e *Editor) paintDiagnostics(ops *op.Ops, th *tokens.Theme, vis []visLine, 
 		return
 	}
 	lo, hi := vis[0].start, vis[len(vis)-1].end
+	// Subtle findings first, below everything else.
+	for _, d := range e.diags {
+		if !d.Subtle || d.End < lo || d.Start > hi {
+			continue
+		}
+		end := max(d.End, d.Start+1)
+		e.rangeCols(vis, d.Start, end, func(v visLine, c0, c1 int) {
+			c1 = max(c1, c0+1)
+			x0, x1 := ox+e.met.colX(c0), ox+e.met.colX(c1)
+			y := v.y + e.met.base + max(2, e.geo.lineH/8)
+			dotted(ops, x0, x1, y, max(1, e.geo.lineH/14), th.Editor.Analysis)
+		})
+	}
 	// Paint less severe first so errors end up on top.
 	for sev := SeverityHint; ; sev-- {
 		for _, d := range e.diags {
-			if d.Severity != sev || d.End < lo || d.Start > hi {
+			if d.Subtle || d.Severity != sev || d.End < lo || d.Start > hi {
 				continue
 			}
 			end := d.End
@@ -565,6 +578,17 @@ func (e *Editor) paintDiagnostics(ops *op.Ops, th *tokens.Theme, vis []visLine, 
 		if sev == SeverityError {
 			break
 		}
+	}
+}
+
+// dotted draws a dotted line of dots of size w from x0 to x1 at y.
+func dotted(ops *op.Ops, x0, x1, y, w int, c color.NRGBA) {
+	step := 2 * w
+	if step < 3 {
+		step = 3
+	}
+	for x := x0; x+w <= x1; x += step {
+		draw.Rect(ops, image.Rect(x, y, x+w, y+w), c)
 	}
 }
 
@@ -662,6 +686,8 @@ func toneColor(th *tokens.Theme, t Tone) color.NRGBA {
 		return th.Color.Warning
 	case ToneDanger:
 		return th.Color.Danger
+	case ToneAnalysis:
+		return th.Editor.Analysis
 	}
 	return th.Color.TextMuted
 }
@@ -746,6 +772,10 @@ func (e *Editor) paintMarker(gtx layout.Context, th *tokens.Theme, m Marker, v v
 		if m.Glyph != nil {
 			e.paintIcon(gtx, th, m.Glyph, toneColor(th, m.Tone), v.y)
 		}
+	case MarkerDot:
+		// In the padding left of the icon column: never covers an icon.
+		r := max(1, min(gtx.Dp(2), (g.iconX-g.annotW)/2))
+		draw.Circle(ops, g.annotW+max(r, (g.iconX-g.annotW)/2), cy, r, toneColor(th, m.Tone))
 	}
 }
 
@@ -798,6 +828,11 @@ func (e *Editor) paintScrollbars(gtx layout.Context, th *tokens.Theme, s buffer.
 		}
 	}
 	for _, d := range e.diags {
+		if d.Subtle {
+			y := ypos(d.Start)
+			draw.Rect(ops, image.Rect(mx0+(mx1-mx0)/2, y, mx1, y+mh), tokens.WithAlpha(th.Editor.Analysis, 0xB0))
+			continue
+		}
 		if d.Severity > SeverityWarning {
 			continue
 		}

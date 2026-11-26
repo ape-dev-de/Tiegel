@@ -153,8 +153,24 @@ type CodeActions struct {
 // LoadCodeActions asks for the context actions of [start, end) in file
 // (Alt+Enter); preferred actions come first.
 func (n *CodeNav) LoadCodeActions(file string, start, end int) {
+	n.loadCodeActions(file, start, end, false)
+}
+
+// LoadCodeActionsWithLocal is LoadCodeActions when the window adds
+// actions of its own (e.g. Fix with AI for a PHPStan finding): Actions is
+// set even when the language server offers none or does not run.
+func (n *CodeNav) LoadCodeActionsWithLocal(file string, start, end int) {
+	n.loadCodeActions(file, start, end, true)
+}
+
+func (n *CodeNav) loadCodeActions(file string, start, end int, local bool) {
 	c := n.c
 	if !c.Status.LSPRunning {
+		if local {
+			n.Actions = &CodeActions{File: file}
+			n.ActionsVersion++
+			return
+		}
 		c.Status.Notice = "Context actions " + errNoServer
 		return
 	}
@@ -166,11 +182,11 @@ func (n *CodeNav) LoadCodeActions(file string, start, end int) {
 		}
 		err := c.call(ctx, "lsp.codeActions", p, &as)
 		return func() {
-			if err != nil {
+			if err != nil && !local {
 				c.notice(err)
 				return
 			}
-			if len(as) == 0 {
+			if len(as) == 0 && !local {
 				c.Status.Notice = "No context actions here"
 				return
 			}

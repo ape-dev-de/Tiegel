@@ -84,3 +84,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-26: Dockerfile (inkl. Containerfile, `Dockerfile.*`) wird erkannt und im Editor eingefärbt, dazu Shell, Makefile, INI, SQL und Ignore-Dateien über den eingebauten Lexer (D555).
 - 2026-11-26: Projektbaum zeigt per `.gitignore` ignorierte Einträge olivfarben markiert an (abschaltbar mit `files.showIgnored`, D558).
 - 2026-11-26: Ignorierte PHP-Dateien werden indiziert und von Quick Open/Shift+Shift gefunden; Cache-/Temp-Ordner bleiben ausgeschlossen (D559).
+- 2026-11-26: PHPStan-Ergebnisse ohne eigenen Lauf (Result-Cache 1.x–2.2, Report-Dateien json/checkstyle/junit, Container-Pfade, ignoreErrors/Baseline) dezent im Editor und im Problems-Fenster; „Fix with AI“ über den Agenten; headless `analysis` (D556, D557).

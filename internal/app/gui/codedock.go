@@ -23,7 +23,21 @@ import (
 
 // showCodeActions offers the context actions in a popup list.
 func (d *navDock) showCodeActions(as *controller.CodeActions) {
-	items := make([]palette.Item, 0, len(as.Items))
+	local := d.localActions
+	d.localActions = nil
+	if len(local) == 0 && len(as.Items) == 0 {
+		d.n.CloseCodeActions()
+		d.v.ctl.Status.Notice = "No context actions here"
+		return
+	}
+	items := make([]palette.Item, 0, len(local)+len(as.Items))
+	for _, m := range local {
+		g := atoms.GlyphNamed(m.Icon)
+		if g == nil {
+			g = atoms.GlyphWarning
+		}
+		items = append(items, palette.Item{Label: m.Title, Detail: d.v.ctl.Analysis.Tool(), Glyph: g})
+	}
 	for _, a := range as.Items {
 		g := atoms.GlyphInfo
 		switch {
@@ -65,7 +79,14 @@ func (d *navDock) showCodeActions(as *controller.CodeActions) {
 				d.n.CloseCodeActions()
 				return
 			}
-			d.n.ApplyCodeAction(idx[i])
+			if j := idx[i]; j < len(local) {
+				d.n.CloseCodeActions()
+				if run := local[j].Run; run != nil {
+					run()
+				}
+				return
+			}
+			d.n.ApplyCodeAction(idx[i] - len(local))
 		}})
 }
 

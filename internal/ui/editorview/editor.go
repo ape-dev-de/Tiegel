@@ -338,6 +338,11 @@ type Diagnostic struct {
 	Severity   Severity
 	Message    string
 	Source     string
+	// Subtle draws a thin dotted underline in Editor.Analysis instead of
+	// the squiggle, below every other diagnostic (findings read from
+	// reports, e.g. PHPStan; D556). Detail adds lines to the hover text.
+	Subtle bool
+	Detail string
 }
 
 // Event is an event reported by Update.
@@ -407,6 +412,9 @@ const (
 	MarkerGitDeleted
 	// MarkerIcon draws Glyph in the icon column, colored by Tone.
 	MarkerIcon
+	// MarkerDot draws a small dot at the left edge of the gutter, colored
+	// by Tone (ToneAnalysis: a static analysis finding on the line).
+	MarkerDot
 )
 
 // Tone selects a semantic color for icon markers.
@@ -420,6 +428,8 @@ const (
 	ToneSuccess
 	ToneWarning
 	ToneDanger
+	// ToneAnalysis is Editor.Analysis (static analysis findings).
+	ToneAnalysis
 )
 
 // Marker is one gutter marker of a line.

@@ -182,10 +182,12 @@ type View struct {
 	termd *termDock
 	tstd  *testDock
 	agtd  *agentDock
-	cmpd  *composerDock
-	mdd   *markdownDock
-	extd  *toolsDock
-	tasks *tasksDock
+	// analysisd marks PHPStan findings (analysisdock.go).
+	analysisd *analysisDock
+	cmpd      *composerDock
+	mdd       *markdownDock
+	extd      *toolsDock
+	tasks     *tasksDock
 	// termGlobal are the window shortcuts while the terminal has the
 	// focus (terminal.overrideIdeShortcuts).
 	termGlobal shortcuts
@@ -265,6 +267,7 @@ func newView(ctl *controller.Controller, goos string, sh *text.Shaper) *View {
 	v.rund = installRun(v)
 	v.tstd = installTests(v)
 	v.agtd = installAgent(v)
+	v.analysisd = installAnalysis(v)
 	v.cmpd = installComposer(v)
 	v.mdd = installMarkdown(v)
 	v.extd = installExternalTools(v)
@@ -552,14 +555,25 @@ func (v *View) handleProblems(gtx layout.Context) {
 		}
 		v.probs.Items = v.probs.Items[:0]
 		for _, d := range v.probData {
-			v.probs.Items = append(v.probs.Items, problems.Problem{Path: d.Path, Line: d.Line, Col: d.Col, Severity: problems.Severity(d.Severity), Message: d.Message, Source: d.Source})
+			v.probs.Items = append(v.probs.Items, problems.Problem{Path: d.Path, Line: d.Line, Col: d.Col, Severity: problems.Severity(d.Severity), Message: d.Message, Source: d.Source,
+				Section: d.Section, Subtle: d.Subtle, Stale: d.Stale})
 		}
+		v.probs.Sections = map[string]string{controller.SectionAnalysis: v.ctl.Analysis.Summary()}
 	}
+	v.probs.GOOS = v.goos
 	for _, e := range v.probs.Update(gtx) {
-		if o, ok := e.(problems.OpenEvent); ok && o.Index < len(v.probData) {
-			d := v.probData[o.Index]
-			v.ctl.GoTo(v.currentLocation(), controller.At(d.File, d.Start))
-			v.focusEditor = true
+		switch e := e.(type) {
+		case problems.OpenEvent:
+			if e.Index < len(v.probData) {
+				d := v.probData[e.Index]
+				v.ctl.GoTo(v.currentLocation(), controller.At(d.File, d.Start))
+				v.focusEditor = true
+			}
+		case problems.ContextEvent:
+			if e.Index < len(v.probData) {
+				d := v.probData[e.Index]
+				v.ShowContextMenu(ContextProblems, ContextTarget{File: d.File, Line: d.Line, Problem: &d}, nil)
+			}
 		}
 	}
 }
