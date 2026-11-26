@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"sort"
 	"unicode/utf8"
@@ -219,4 +220,18 @@ func PosAt(text []byte, off int) TextPos {
 	}
 	ls := bytes.LastIndexByte(text[:off], '\n') + 1
 	return TextPos{Offset: off, Line: bytes.Count(text[:ls], []byte{'\n'}) + 1, Col: utf8.RuneCount(text[ls:off]) + 1}
+}
+
+// RecordHistory stores content as a Local History revision of path with
+// label (e.g. for changes another program made, such as a coding agent
+// writing files directly). Without a project nothing is recorded.
+func (a *App) RecordHistory(path string, content []byte, label string) error {
+	abs, err := a.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	if _, _, err := (historySink{a}).Save(abs, content, label); err != nil {
+		return fmt.Errorf("local history: %w", err)
+	}
+	return nil
 }

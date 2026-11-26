@@ -110,6 +110,25 @@ func TestEveryBlockKindLaysOut(t *testing.T) {
 	}
 }
 
+func TestLayoutInline(t *testing.T) {
+	var v View
+	v.SetDoc(sampleDoc())
+	var inline layout.Dimensions
+	uitest.Smoke(t, "inline", image.Pt(300, 8000), func(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+		inline = v.LayoutInline(gtx, th)
+		return inline
+	})
+	if inline.Size.X != 300 || inline.Size.Y <= 0 || inline.Size.Y >= 8000 {
+		t.Fatalf("inline size %v", inline.Size)
+	}
+	var w View
+	w.SetDoc(&markdown.Doc{})
+	full, err := uitest.Layout(tokens.Dark(tokens.NewBundledShaper()), image.Pt(300, 100), w.LayoutInline)
+	if err != nil || full.Size.Y != 0 {
+		t.Fatal(full.Size)
+	}
+}
+
 func TestEmptyDocument(t *testing.T) {
 	var v View
 	uitest.Smoke(t, "zero", image.Pt(300, 200), v.Layout)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/ape-dev-de/tiegel/internal/ui/organisms/agentchat"
 	"slices"
 	"strings"
 
@@ -397,6 +398,33 @@ func statusbarVersionPage() *page {
 				{"Manual override", bar(override)},
 				{"Unknown", bar(unknown)},
 				{"Events", atoms.Muted(fmt.Sprintf("Override requested %d times", clicks)).Fn(th)},
+			}
+		},
+	}
+}
+
+func agentChatPage() *page {
+	full := &agentchat.Chat{}
+	agentchat.Sample(full)
+	missing := &agentchat.Chat{Policy: full.Policy, Notice: &agentchat.NoticeBox{Error: true, Title: "opencode is not installed",
+		Detail: "Install runs npm install -g opencode-ai – you see the command before it runs.", Action: "Install…"}}
+	var last string
+	return &page{
+		Level: "Organisms", Name: "AgentChat", Glyph: atoms.GlyphList,
+		Summary: "AI agent sidebar: transcript (Markdown answers, thoughts, tool calls, plan, blocked notices), permission cards, changed files with Revert, input (Enter sends, Escape cancels).",
+		Variants: func(th *tokens.Theme) []variant {
+			chat := func(c *agentchat.Chat) layout.Widget {
+				return fixedSize(380, 760, func(gtx layout.Context) layout.Dimensions {
+					for _, e := range c.Update(gtx) {
+						last = fmt.Sprintf("%T %+v", e, e)
+					}
+					return c.Layout(gtx, th)
+				})
+			}
+			return []variant{
+				{"Session", chat(full)},
+				{"Not installed", chat(missing)},
+				{"Last event", atoms.Muted(last).Fn(th)},
 			}
 		},
 	}

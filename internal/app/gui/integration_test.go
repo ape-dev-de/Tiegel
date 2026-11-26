@@ -118,8 +118,9 @@ func TestHeaderQuickActionsAndEvents(t *testing.T) {
 	e.v.Registry.AddAction(Action{ID: id, Title: "Agent", Icon: "agent", Run: func(*View) { ran++ }})
 	e.v.Registry.RegisterToolbarAction(id)
 	e.frame()
+	// The agent plugin's button comes first, then the test's group.
 	q := e.v.hdr.bar.Quick
-	if len(q) != 1 || q[0].ID != string(id) || q[0].Glyph == nil {
+	if len(q) != 3 || q[0].ID != string(ActAgentOpen) || !q[1].Separator || q[2].ID != string(id) || q[2].Glyph == nil {
 		t.Fatalf("quick actions %+v", q)
 	}
 	e.v.hdr.handle(toolbar.QuickActionClicked{ID: string(id)})
@@ -128,7 +129,7 @@ func TestHeaderQuickActionsAndEvents(t *testing.T) {
 	}
 	e.v.Registry.UnregisterToolbarAction(id)
 	e.frame()
-	if len(e.v.hdr.bar.Quick) != 0 {
+	if q := e.v.hdr.bar.Quick; len(q) != 1 || q[0].ID != string(ActAgentOpen) {
 		t.Fatal("quick action not removed")
 	}
 	// No repository: no branch switcher, no Branches… action.

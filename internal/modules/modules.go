@@ -18,6 +18,7 @@
 //	live-templates
 //	              live templates with tab stops (templates.*; AP17.3)
 //	php-generate  Generate: constructor, accessors, server code actions (generate.*; AP17.3)
+//	agent         AI coding agent over the Agent Client Protocol, e.g. opencode (agent.*; D540)
 //
 // The modules never import each other; they share data through the bus and
 // the hook points declared in internal/api/contract.go. None of them imports
@@ -27,6 +28,7 @@ package modules
 import (
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
+	"github.com/ape-dev-de/tiegel/internal/modules/agent"
 	"github.com/ape-dev-de/tiegel/internal/modules/composer"
 	"github.com/ape-dev-de/tiegel/internal/modules/debugxdebug"
 	"github.com/ape-dev-de/tiegel/internal/modules/docker"
@@ -53,6 +55,7 @@ type Options struct {
 	Index    phpindex.Options
 	Docker   docker.Options
 	PHPUnit  phpunit.Options
+	Agent    agent.Options
 }
 
 // All returns new instances of all compiled-in modules in dependency order.
@@ -77,7 +80,7 @@ func All(opts Options) []module.Module {
 	for _, p := range qa.All() {
 		mods = append(mods, p)
 	}
-	mods = append(mods, livetemplates.New(), phpgenerate.New())
+	mods = append(mods, livetemplates.New(), phpgenerate.New(), agent.New(opts.Agent))
 	return mods
 }
 
