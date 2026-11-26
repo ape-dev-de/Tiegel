@@ -216,6 +216,7 @@ func (c *Controller) OpenFile(file string, at *Location) {
 			if at != nil {
 				c.Reveal = at
 			}
+			c.Markdown.opened(abs)
 		}
 	})
 }

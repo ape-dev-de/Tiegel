@@ -186,3 +186,12 @@ func TestParseEdgeCases(t *testing.T) {
 		t.Fatalf("rule after ATX %+v", d.Blocks)
 	}
 }
+
+func TestSettingSpecs(t *testing.T) {
+	if registerErr != nil {
+		t.Fatal(registerErr)
+	}
+	if s := SettingSpecs(); len(s) != 1 || s[0].Key != KeyOpenMode || s[0].Default != OpenSplit {
+		t.Fatalf("%+v", s)
+	}
+}

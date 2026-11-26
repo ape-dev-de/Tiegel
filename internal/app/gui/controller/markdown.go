@@ -93,6 +93,41 @@ func (m *Markdown) Open(file string, side bool) *Tab {
 	return c.ActiveTab()
 }
 
+// opened shows the preview of a Markdown file the user just opened to
+// the right of its editor (markdown.openMode "split"); the editor keeps
+// the focus.
+func (m *Markdown) opened(file string) {
+	if !IsMarkdown(file) {
+		return
+	}
+	c := m.c
+	c.Go(func(ctx context.Context) func() {
+		mode := getEffective(ctx, c.be, markdown.KeyOpenMode, markdown.OpenSplit)
+		return func() {
+			if mode != markdown.OpenSplit || m.shown(file) {
+				return
+			}
+			t := c.ActiveTab()
+			if t == nil || t.File != file || t.Virtual != "" {
+				return // the user moved on
+			}
+			orig := c.activeGroup
+			m.Open(file, true)
+			c.FocusGroup(orig)
+		}
+	})
+}
+
+// shown reports whether a preview tab of file is open.
+func (m *Markdown) shown(file string) bool {
+	for _, t := range m.c.allTabs() {
+		if t.Virtual == TabMarkdown && t.Data == file {
+			return true
+		}
+	}
+	return false
+}
+
 // Close forgets the preview of file (its tab closed).
 func (m *Markdown) Close(file string) {
 	for _, t := range m.c.allTabs() {
