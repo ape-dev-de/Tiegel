@@ -432,6 +432,11 @@ func (d *workDock) treeMenu(rel string, dir bool) []MenuItem {
 		items = append(items, MenuItem{Title: "Open in Split", Run: func() { d.openInSplit(rel) }})
 	}
 	items = append(items, MenuItem{Title: actions.RevealLabel(v.goos), Run: func() { w.Reveal(rel) }})
+	syncIn := rel
+	if !dir {
+		syncIn = parentOf(rel)
+	}
+	items = append(items, MenuItem{Title: "Reload from Disk", Icon: "refresh", Run: func() { w.Sync(syncIn) }})
 	if !dir {
 		items = append(items, MenuItem{Separator: true}, MenuItem{Title: "Local History", Children: []MenuItem{
 			{Title: "Show History", Run: func() { w.OpenLocalHistory(rel, 0) }},
@@ -563,4 +568,13 @@ func (d *workDock) decorateTab(t *controller.Tab, it *tabs.Item) {
 		return
 	}
 	it.Tooltip = t.Path + " – changed on disk"
+}
+
+// parentOf returns the project-relative parent directory of rel ("" for
+// top-level entries).
+func parentOf(rel string) string {
+	if i := strings.LastIndexByte(rel, '/'); i >= 0 {
+		return rel[:i]
+	}
+	return ""
 }

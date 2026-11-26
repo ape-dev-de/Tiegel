@@ -45,6 +45,8 @@ func toolSide(s templates.Side) controller.ToolSide {
 // layout actions.
 func (v *View) installProjectTool() {
 	v.installLayoutActions()
+	v.Registry.AddAction(Action{ID: ActReloadFromDisk, Title: "Reload All from Disk", Mac: "Cmd+Alt+Y", PC: "Ctrl+Alt+Y",
+		Menu: "File", Section: "save", Run: func(v *View) { v.ctl.Work.Sync("") }})
 	v.Registry.AddToolWindow(ToolWindow{
 		ID: ToolProject, Title: "Project", Glyph: atoms.GlyphFolder, Side: Left, Order: 0,
 		Mac: "Cmd+1", PC: "Alt+1", ActionID: ActProjectView,
@@ -53,9 +55,38 @@ func (v *View) installProjectTool() {
 	})
 }
 
-// layoutProjectActions draws the project tree's header button "Select
-// Opened File" (the active editor's file in the tree).
+// ActReloadFromDisk rescans the project and reloads the tree and open
+// documents from disk (also in the project tree's header and context
+// menu).
+const ActReloadFromDisk keymap.Action = "file.reloadFromDisk"
+
+// layoutProjectActions draws the project tree's header buttons "Reload
+// All from Disk" and "Select Opened File" (the active editor's file in
+// the tree).
 func (v *View) layoutProjectActions(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(v.layoutSyncButton(th)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return v.layoutLocateButton(gtx, th) }),
+	)
+}
+
+func (v *View) layoutSyncButton(th *tokens.Theme) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		b := &v.syncBtn
+		b.Glyph, b.Size, b.IconSize = atoms.GlyphRefresh, th.Size.ControlH-th.Space.XS, th.Size.IconSmall
+		b.Description = "Reload All from Disk"
+		if c := v.Registry.ChordText(ActReloadFromDisk, v.goos); c != "" {
+			b.Description += " (" + c + ")"
+		}
+		if b.Clicked(gtx) {
+			v.runAction(ActReloadFromDisk)
+		}
+		v.syncTip.Text = b.Description
+		return v.syncTip.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions { return b.Layout(gtx, th) })
+	}
+}
+
+func (v *View) layoutLocateButton(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	b := &v.locateBtn
 	b.Glyph, b.Size, b.IconSize = atoms.GlyphLocate, th.Size.ControlH-th.Space.XS, th.Size.IconSmall
 	t := v.ctl.ActiveTab()

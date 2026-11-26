@@ -324,7 +324,7 @@ func TestTabMenuCloseVariants(t *testing.T) {
 	}
 	e.v.tree.Select("index.php")
 	bh := uitest.NewHarness(image.Pt(60, 40))
-	bw := func(gtx layout.Context, th *tokens.Theme) layout.Dimensions { return e.v.layoutProjectActions(gtx, th) }
+	bw := func(gtx layout.Context, th *tokens.Theme) layout.Dimensions { return e.v.layoutLocateButton(gtx, th) }
 	bh.Frame(bw)
 	bh.Click(image.Pt(10, 10))
 	bh.Frame(bw)

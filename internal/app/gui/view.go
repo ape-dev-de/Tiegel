@@ -82,8 +82,11 @@ type View struct {
 	tree  filetree.Tree
 	// locateBtn and locateTip are the project tree's "Select Opened
 	// File" header button.
-	locateBtn    atoms.IconButton
-	locateTip    atoms.Tooltip
+	locateBtn atoms.IconButton
+	locateTip atoms.Tooltip
+	// syncBtn and syncTip are its "Reload All from Disk" button.
+	syncBtn      atoms.IconButton
+	syncTip      atoms.Tooltip
 	treeSeen     [2]uint64 // tree and git versions applied to the organism
 	tabBars      map[*controller.EditorGroup]*groupView
 	splitViews   map[*controller.SplitNode]*molecules.Split

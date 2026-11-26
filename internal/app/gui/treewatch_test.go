@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
@@ -61,4 +62,45 @@ func TestTreeFollowsExternalChangesInSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.waitFor("beta sees other.php", func() bool { return e.cur().Tree.Node("other.php") != nil })
+}
+
+// TestReloadFromDisk: the manual sync (header button, File menu, context
+// menu) lists the loaded folders again even when the watcher missed a
+// change (no watcher runs here).
+func TestReloadFromDisk(t *testing.T) {
+	e := newEnv(t, true)
+	e.ctl.LoadDir("src")
+	e.waitFor("src loaded", func() bool { n := e.ctl.Tree.Node("src"); return n != nil && n.Loaded })
+	if err := os.WriteFile(filepath.Join(e.root, "src", "Missed.php"), []byte("<?php\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.root, "top.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.settle()
+	if e.ctl.Tree.Node("src/Missed.php") != nil {
+		t.Fatal("tree changed without watcher")
+	}
+	// Context menu of src: only that folder.
+	items := e.v.work.treeMenu("src", true)
+	var reload *MenuItem
+	for i := range items {
+		if items[i].Title == "Reload from Disk" {
+			reload = &items[i]
+		}
+	}
+	if reload == nil {
+		t.Fatalf("no Reload from Disk in %q", menuTitles(items))
+	}
+	reload.Run()
+	e.waitFor("src reloaded", func() bool { return e.ctl.Tree.Node("src/Missed.php") != nil })
+	if e.ctl.Tree.Node("top.txt") != nil {
+		t.Fatal("folder sync reloaded the root")
+	}
+	// The action reloads everything.
+	e.v.RunAction(ActReloadFromDisk)
+	e.waitFor("root reloaded", func() bool { return e.ctl.Tree.Node("top.txt") != nil })
+	if !strings.Contains(e.ctl.Status.Notice, "Reloaded the project from disk") {
+		t.Fatalf("notice %q", e.ctl.Status.Notice)
+	}
 }

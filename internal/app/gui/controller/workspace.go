@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -450,6 +451,58 @@ func (w *Workspace) Refresh() {
 			return func() { c.notice(err) }
 		}
 		return nil
+	})
+}
+
+// Sync reloads from disk by hand ("Reload from Disk"): the watcher
+// rescans the project and open documents are compared with the disk
+// (watch.refresh), then every loaded tree directory at or below rel ("" =
+// the whole project) is listed again, so nothing a missed notification
+// left behind stays in the tree.
+func (w *Workspace) Sync(rel string) {
+	c := w.c
+	if !c.Project.Open {
+		return
+	}
+	c.Status.Notice = "Reloading from disk…"
+	c.Go(func(ctx context.Context) func() {
+		err := c.call(ctx, "watch.refresh", nil, nil)
+		return func() {
+			if err != nil && api.ErrorCode(err) != api.CodeMethodNotFound {
+				c.notice(err)
+				return
+			}
+			n := 0
+			if c.Tree != nil {
+				var walk func(nd *Node)
+				walk = func(nd *Node) {
+					if !nd.Dir || !nd.Loaded {
+						return
+					}
+					if underAny(nd.Path, []string{rel}) || rel == "" {
+						w.reloadDir(nd.Path)
+						n++
+					}
+					for _, ch := range nd.Children {
+						walk(ch)
+					}
+				}
+				if root := c.Tree.Node(""); root != nil {
+					walk(root)
+				}
+			}
+			c.Files = nil // quick-open index
+			c.refreshGit()
+			where := "the project"
+			if rel != "" {
+				where = rel
+			}
+			folders := "1 folder"
+			if n != 1 {
+				folders = strconv.Itoa(n) + " folders"
+			}
+			c.Status.Notice = "Reloaded " + where + " from disk (" + folders + ")"
+		}
 	})
 }
 
