@@ -33,7 +33,10 @@ func TestDetect(t *testing.T) {
 		{"bin/tool", "#!/usr/local/bin/php8.3 -d memory_limit=-1\r\n", PHP},
 		{"bin/tool", "#! /usr/bin/env -S php -dxdebug.mode=off\n", PHP},
 		{"bin/tool", "#!/opt/homebrew/bin/php", PHP},
-		{"bin/tool", "#!/bin/sh\necho hi\n", PlainText},
+		{"bin/tool", "#!/bin/sh\necho hi\n", Shell},
+		{"bin/tool", "#!/usr/bin/env bash\n", Shell},
+		{"bin/tool", "#!/bin/zsh -f\n", Shell},
+		{"bin/tool", "#!/usr/bin/make -f\n", Makefile},
 		{"bin/tool", "#!/usr/bin/env phpunit\n", PlainText},
 		{"bin/tool", "#!/usr/bin/env python\n", PlainText},
 		{"legacy/functions.inc", "<?php function x() {}", PHP},
@@ -41,7 +44,33 @@ func TestDetect(t *testing.T) {
 		{"page", "<html><body><?PHP echo 1; ?></body></html>", PHP},
 		{"short", "  <?= $x ?>", PHP},
 		{"feed", "\xEF\xBB\xBF<?xml version=\"1.0\"?><rss/>", XML},
-		{"Makefile", "all:\n", PlainText},
+		{"Makefile", "all:\n", Makefile},
+		{"GNUmakefile", "", Makefile},
+		{"build/rules.mk", "", Makefile},
+		{"Dockerfile", "", Dockerfile},
+		{"docker/php/Dockerfile", "", Dockerfile},
+		{"Containerfile", "", Dockerfile},
+		{"Dockerfile.dev", "", Dockerfile},
+		{"dockerfile.prod", "", Dockerfile},
+		{"Containerfile.ci", "", Dockerfile},
+		{"php.dockerfile", "", Dockerfile},
+		{"app.Dockerfile", "", Dockerfile},
+		{"build/image", "# syntax=docker/dockerfile:1.7\nFROM alpine\n", Dockerfile},
+		{"build/image", "#syntax = docker.io/docker/dockerfile:1\n", Dockerfile},
+		{"notes", "# syntax is fine\n", PlainText},
+		{".dockerignore", "", Ignore},
+		{".gitignore", "", Ignore},
+		{"web/.npmignore", "", Ignore},
+		{"deploy.sh", "", Shell},
+		{"x.BASH", "", Shell},
+		{".zshrc", "", Shell},
+		{"docker/php.ini", "", INI},
+		{"php.ini-development", "", INI},
+		{"nginx/site.conf", "", INI},
+		{"my.cnf", "", INI},
+		{".editorconfig", "", INI},
+		{"schema.sql", "", SQL},
+		{"dump.sql.dist", "", SQL},
 		{"noext", "", PlainText},
 	}
 	for _, c := range cases {
@@ -68,7 +97,7 @@ func TestHelpersReportUnknown(t *testing.T) {
 	if _, ok := ByContent(nil); ok {
 		t.Fatal("ByContent")
 	}
-	if len(All) != 6 {
+	if len(All) != 12 {
 		t.Fatal("All")
 	}
 }

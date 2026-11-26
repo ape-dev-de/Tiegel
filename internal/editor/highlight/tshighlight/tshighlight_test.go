@@ -377,6 +377,34 @@ func TestEnvLanguage(t *testing.T) {
 	}
 }
 
+// TestDockerfileLanguage: lexed languages highlight in every build and
+// follow edits (a heredoc opened by an edit restyles the following lines).
+func TestDockerfileLanguage(t *testing.T) {
+	b := buffer.NewString("FROM alpine\nRUN echo\nCMD x\n")
+	h := New(b, Options{Path: "docker/Dockerfile.dev", Debounce: time.Millisecond})
+	defer h.Close()
+	if h.Language() != syntax.LangDockerfile {
+		t.Fatalf("language %q", h.Language())
+	}
+	wait(t, h)
+	if got := all(h, b); len(got) == 0 || got[0] != (highlight.Span{Start: 0, End: 4, Role: highlight.Keyword}) {
+		t.Fatalf("spans %v", got)
+	}
+	if _, err := b.Insert(len("FROM alpine\nRUN"), []byte(" <<X")); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, h)
+	if got, want := all(h, b), fresh(t, syntax.LangDockerfile, b.Bytes()); !slices.Equal(got, want) {
+		t.Fatalf("spans %v, want %v", got, want)
+	}
+	// An explicit language (the tab's, from files.associations) wins.
+	h2 := New(buffer.NewString("FROM x"), Options{Path: "image.txt", Language: syntax.LangDockerfile})
+	defer h2.Close()
+	if h2.Language() != syntax.LangDockerfile {
+		t.Fatalf("explicit language %q", h2.Language())
+	}
+}
+
 func TestCloseDuringParse(t *testing.T) {
 	b := buffer.NewString(strings.Repeat(samplePHP, 200))
 	h := New(b, Options{Path: "a.php"})

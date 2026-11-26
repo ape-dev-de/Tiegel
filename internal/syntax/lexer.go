@@ -22,7 +22,12 @@ type lexer struct {
 	capType   bool // capitalized identifiers are types
 	propColon bool // "name:" inside braces is a property (CSS)
 	hashLine  bool // "#" starts a comment only at line start or after a space (shell)
-	lineKw    bool // keywords only as the first word of a line (Dockerfile)
+	lineKw    bool // keywords only as the first word of a line
+	parenVar  bool // "$(name)" is a variable reference (make)
+	assign    bool // a first word before "=", ":=", "?=", "+=" is a property, before ":" a target (make)
+	// identExtra are characters that start or continue identifiers in
+	// addition to letters, digits and "_" (make targets: ".PHONY", "a/b.o").
+	identExtra string
 	// special handles a whole line itself (diff, INI); it returns false to
 	// fall back to the normal tokenizer.
 	special func(line string, base int, out *[]Span) bool
@@ -103,12 +108,13 @@ declare readonly unset shift break continue exit source alias set trap eval exec
 		constants: iniConstants,
 		special:   iniLine,
 	},
-	"docker": {
-		line: []string{"#"}, quotes: "\"'", fold: true, dollar: true, lineKw: true,
-		keywords: words(`from run cmd label maintainer expose env add copy entrypoint volume user workdir arg onbuild
-stopsignal healthcheck shell as`),
+	"make": {
+		line: []string{"#"}, quotes: "\"'", dollar: true, parenVar: true, assign: true, identExtra: "./%-",
+		keywords: words(`ifeq ifneq ifdef ifndef else endif include sinclude define endef export unexport override
+vpath undefine private`),
 	},
-	"diff": {special: diffLine},
+	"ignore": {special: ignoreLine},
+	"diff":   {special: diffLine},
 }
 
 // highlight tokenizes src and returns the non-plain spans.
@@ -203,12 +209,8 @@ func (lx *lexer) lineSpans(ln string, base int, st *lexState, out *[]Span) {
 			i = j
 		case lx.dollar && r == '$' && i+1 < len(ln):
 			j := i + 1
-			if ln[j] == '{' {
-				if k := strings.IndexByte(ln[j:], '}'); k >= 0 {
-					j += k + 1
-				} else {
-					j = len(ln)
-				}
+			if ln[j] == '{' || lx.parenVar && ln[j] == '(' {
+				j = closeParen(ln, j)
 			} else {
 				for j < len(ln) {
 					c, sz := utf8.DecodeRuneInString(ln[j:])
@@ -236,10 +238,14 @@ func (lx *lexer) lineSpans(ln string, base int, st *lexState, out *[]Span) {
 			}
 			add(out, base+i, base+j, RoleNumber)
 			i = j
-		case isIdentStart(r) || (lx.propColon && r == '-'):
+		case isIdentStart(r) || (lx.propColon && r == '-') || strings.ContainsRune(lx.identExtra, r):
 			j := i + size
 			for j < len(ln) {
 				c, sz := utf8.DecodeRuneInString(ln[j:])
+				if strings.ContainsRune(lx.identExtra, c) {
+					j += sz
+					continue
+				}
 				if !isIdent(c) && c != '-' || (c == '-' && !lx.propColon && !lx.dollar) {
 					break
 				}
@@ -303,6 +309,10 @@ func (lx *lexer) word(ln string, i, j, base int, st *lexState, first bool, out *
 	}
 	next := strings.TrimLeft(ln[j:], " \t")
 	switch {
+	case lx.assign && first && !lx.keywords[key] && isAssignment(next):
+		add(out, base+i, base+j, RoleProperty)
+	case lx.assign && first && !lx.keywords[key] && strings.HasPrefix(next, ":"):
+		add(out, base+i, base+j, RoleFunction)
 	case lx.keywords[key] && (!lx.lineKw || first):
 		add(out, base+i, base+j, RoleKeyword)
 	case lx.constants[key]:
@@ -316,6 +326,65 @@ func (lx *lexer) word(ln string, i, j, base int, st *lexState, first bool, out *
 	case lx.capType && unicode.IsUpper([]rune(w)[0]):
 		add(out, base+i, base+j, RoleType)
 	}
+}
+
+// closeParen returns the end of the bracketed reference starting with "{"
+// or "(" at j, honouring nesting ("$(shell $(CC) -v)"); unterminated
+// references end with the line.
+func closeParen(ln string, j int) int {
+	open, shut := ln[j], byte('}')
+	if open == '(' {
+		shut = ')'
+	}
+	depth := 0
+	for k := j; k < len(ln); k++ {
+		switch ln[k] {
+		case open:
+			depth++
+		case shut:
+			depth--
+			if depth == 0 {
+				return k + 1
+			}
+		}
+	}
+	return len(ln)
+}
+
+// isAssignment reports whether rest (after a name) starts a make variable
+// assignment: "=", ":=", "::=", "?=", "+=", "!=".
+func isAssignment(rest string) bool {
+	for _, op := range []string{"=", ":=", "::=", "?=", "+=", "!="} {
+		if strings.HasPrefix(rest, op) {
+			return true
+		}
+	}
+	return false
+}
+
+// ignoreLine highlights gitignore-style patterns (.dockerignore and
+// friends): comments, "!" negation and glob characters.
+func ignoreLine(ln string, base int, out *[]Span) bool {
+	t := strings.TrimLeft(ln, " \t")
+	lead := len(ln) - len(t)
+	if strings.HasPrefix(t, "#") {
+		add(out, base+lead, base+len(ln), RoleComment)
+		return true
+	}
+	for i := lead; i < len(ln); i++ {
+		switch c := ln[i]; {
+		case c == '!' && i == lead:
+			add(out, base+i, base+i+1, RoleOperator)
+		case c == '\\' && i+1 < len(ln):
+			add(out, base+i, base+i+2, RoleString)
+			i++
+		case c == '*' || c == '?':
+			add(out, base+i, base+i+1, RoleOperator)
+		case c == '[' || c == ']':
+			add(out, base+i, base+i+1, RolePunctuation)
+		}
+	}
+	return true
 }
 
 // iniLine highlights "[section]" headers and "key = value" lines.

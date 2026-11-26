@@ -10,6 +10,8 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+
+	"github.com/ape-dev-de/tiegel/internal/core/langdetect"
 )
 
 // ErrNoTreeSitter is returned for Tree-sitter languages (PHP, JSON, YAML,
@@ -105,15 +107,38 @@ func compress(paint []Role, base int) []Span {
 // Language identifies a supported source language.
 type Language string
 
-// Supported languages. LangPlain has no highlighting at all.
+// Supported languages. LangPlain has no highlighting at all. LangPHP,
+// LangJSON, LangYAML and LangXML are backed by Tree-sitter; LangEnv and the
+// lexed languages (LangDockerfile, LangShell, LangMake, LangINI, LangSQL,
+// LangIgnore; see Lexed) are tokenized line by line without a syntax tree
+// and work without cgo.
 const (
-	LangPlain Language = ""
-	LangPHP   Language = "php"
-	LangJSON  Language = "json"
-	LangYAML  Language = "yaml"
-	LangXML   Language = "xml"
-	LangEnv   Language = "env"
+	LangPlain      Language = ""
+	LangPHP        Language = "php"
+	LangJSON       Language = "json"
+	LangYAML       Language = "yaml"
+	LangXML        Language = "xml"
+	LangEnv        Language = "env"
+	LangDockerfile Language = "dockerfile"
+	LangShell      Language = "shell"
+	LangMake       Language = "makefile"
+	LangINI        Language = "ini"
+	LangSQL        Language = "sql"
+	LangIgnore     Language = "ignore"
 )
+
+// FromID maps a language ID of internal/core/langdetect ("dotenv",
+// "plaintext", "dockerfile", …) or a syntax language name ("env") to a
+// syntax Language. Unknown IDs yield LangPlain.
+func FromID(id string) Language {
+	switch l := Language(strings.ToLower(id)); l {
+	case LangPHP, LangJSON, LangYAML, LangXML, LangEnv, LangDockerfile, LangShell, LangMake, LangINI, LangSQL, LangIgnore:
+		return l
+	case "dotenv":
+		return LangEnv
+	}
+	return LangPlain
+}
 
 // DetectLanguage guesses the language from the file name and, if needed, the
 // first bytes of the content (shebang or "<?php").
@@ -151,7 +176,8 @@ func DetectLanguage(path string, head []byte) Language {
 	if bytes.HasPrefix(bytes.TrimSpace(head), []byte("<?xml")) {
 		return LangXML
 	}
-	return LangPlain
+	// Languages without a grammar: Dockerfile, shell scripts, makefiles, …
+	return FromID(string(langdetect.Detect(path, head)))
 }
 
 // Capture is one captured node of a query match.

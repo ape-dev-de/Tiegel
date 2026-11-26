@@ -10,7 +10,8 @@ import (
 // (or any common alias of a language) selects either a Tree-sitter grammar
 // (PHP, JSON, YAML, XML/HTML, dotenv) or the small built-in lexer for
 // languages Tiegel has no grammar for (JavaScript/TypeScript, Go, SQL,
-// shell, CSS, Python, C-family, INI/TOML, Dockerfile, diff).
+// shell, make, CSS, Python, C-family, INI/TOML, Dockerfile, ignore files,
+// diff).
 
 // fenceAliases maps lower-case fence names to a snippet language. Values
 // are either a Tree-sitter Language or a lexer name (see lexers).
@@ -25,7 +26,9 @@ var fenceAliases = map[string]string{
 	"go": "go", "golang": "go",
 	"sql": "sql", "mysql": "sql", "pgsql": "sql", "postgres": "sql", "postgresql": "sql", "sqlite": "sql", "plsql": "sql",
 	"sh": "sh", "bash": "sh", "shell": "sh", "zsh": "sh", "console": "sh", "shell-session": "sh",
-	"shellsession": "sh", "terminal": "sh", "make": "sh", "makefile": "sh", "fish": "sh",
+	"shellsession": "sh", "terminal": "sh", "fish": "sh",
+	"make": "make", "makefile": "make", "mk": "make",
+	"gitignore": "ignore", "dockerignore": "ignore", "ignore": "ignore",
 	"css": "css", "scss": "css", "sass": "css", "less": "css",
 	"python": "py", "py": "py", "python3": "py",
 	"c": "c", "h": "c", "cpp": "c", "c++": "c", "cc": "c", "hpp": "c", "java": "c", "kotlin": "c", "kt": "c",
@@ -56,6 +59,9 @@ func HighlightSnippet(ctx context.Context, lang string, src []byte) []Span {
 	switch Language(l) {
 	case LangPHP, LangJSON, LangYAML, LangXML, LangEnv:
 		return treeSnippet(ctx, Language(l), src)
+	}
+	if l == "docker" {
+		return dockerfileSpans(src)
 	}
 	lx := lexers[l]
 	if lx == nil {

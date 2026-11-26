@@ -527,6 +527,16 @@ func languageName(l string) string {
 		return strings.ToUpper(l)
 	case "dotenv", "env":
 		return ".env"
+	case "dockerfile":
+		return "Dockerfile"
+	case "shell":
+		return "Shell Script"
+	case "makefile":
+		return "Makefile"
+	case "ini", "sql":
+		return strings.ToUpper(l)
+	case "ignore":
+		return "Ignore List"
 	case "":
 		return "Text"
 	}

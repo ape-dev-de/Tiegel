@@ -69,6 +69,7 @@ type Document struct {
 	tree    *ts.Tree
 	src     []byte
 	pending []InputEdit // edits applied since the running Reparse started
+	lexed   []Span      // spans of a lexed language (see Language.Lexed)
 	edited  bool        // Edit was called since the last successful Reparse
 	closed  bool
 }
@@ -131,12 +132,13 @@ func (d *Document) Reparse(ctx context.Context, src []byte) error {
 		src = []byte{}
 	}
 	if d.g == nil {
+		spans := lex(d.lang, src) // outside the lock: Highlights stays responsive
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		if d.closed {
 			return ErrClosed
 		}
-		d.src = src
+		d.src, d.lexed = src, spans
 		return nil
 	}
 
@@ -300,6 +302,9 @@ func (d *Document) Highlights(start, end int) []Span {
 	}
 	if d.lang == LangEnv {
 		return envHighlights(d.src, start, end)
+	}
+	if d.lang.Lexed() {
+		return tile(d.lexed, start, end)
 	}
 	if d.tree == nil {
 		return []Span{{Start: start, End: end, Role: RolePlain}}
