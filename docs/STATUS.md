@@ -81,3 +81,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-26: Markdown-Vorschau: Mermaid-Diagramme nativ (Flowchart, Sequenz, State, Class, ER, Pie), Syntax-Highlighting in Codeblöcken, headless `mermaid` (D551, D552).
 - 2026-11-26: Projektwechsel standardmäßig im selben Fenster; das verlassene Projekt geht in den Ruhezustand (Terminals laufen weiter), „Open in New Window“ per Rechtsklick/Shift (D547).
 - 2026-11-26: Projektbaum: entfernte Einträge verlassen den Index (D553); „Reload All from Disk“ (⌥⌘Y, Knopf im Baumkopf) und „Reload from Disk“ im Kontextmenü (D554).
+- 2026-11-26: Dockerfile (inkl. Containerfile, `Dockerfile.*`) wird erkannt und im Editor eingefärbt, dazu Shell, Makefile, INI, SQL und Ignore-Dateien über den eingebauten Lexer (D555).
