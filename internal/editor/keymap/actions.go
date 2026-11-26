@@ -31,6 +31,10 @@ const (
 	AddCursorAbove    Action = "cursor.addAbove"
 	AddCursorBelow    Action = "cursor.addBelow"
 	CollapseSelection Action = "cursor.collapse"
+	// ColumnSelectionMode toggles column (block) selection: while it is on,
+	// the Select{Left,Right,Up,Down} actions and mouse drags select a
+	// rectangle (one selection per line).
+	ColumnSelectionMode Action = "cursor.columnSelectionMode"
 
 	// Selection.
 	SelectAll            Action = "selection.all"

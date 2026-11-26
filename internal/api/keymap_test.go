@@ -2,6 +2,7 @@ package api
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -155,4 +156,20 @@ func TestEditJoinLinesToggleCase(t *testing.T) {
 	}
 	wantCode(t, a, "edit.toggleCase", EditRangeParams{Path: "a.php", Start: Pos{Line: 99}}, CodeInvalidParams)
 	wantCode(t, a, "edit.toggleCase", EditRangeParams{Path: "a.php", Start: Pos{Line: 1}, End: &Pos{Offset: -1}}, CodeInvalidParams)
+
+	// Column selection from line 5 column 2 up to line 2 column 6: the tab
+	// line is cut inside the tab, the empty line gets a caret.
+	call(t, a, "doc.replace", DocReplaceParams{Path: "a.php", Text: "<?php\n$x = foo();\n\tab\n\necho 'hi';\n"}, nil)
+	var cs ColumnSelectionResult
+	call(t, a, "edit.columnSelection", ColumnSelectionParams{Path: "a.php", From: Pos{Line: 5, Col: 2}, To: Pos{Line: 2, Col: 6}}, &cs)
+	var texts []string
+	for _, s := range cs.Selections {
+		texts = append(texts, s.Text)
+	}
+	if !reflect.DeepEqual(texts, []string{"x = ", "\ta", "", "cho "}) || cs.Primary != 0 || cs.Selections[0].Line != 2 {
+		t.Fatalf("column selection %+v", cs)
+	}
+	wantCode(t, a, "edit.columnSelection", ColumnSelectionParams{Path: "a.php", From: Pos{Line: 1}, To: Pos{Line: 99}}, CodeInvalidParams)
+	wantCode(t, a, "edit.columnSelection", ColumnSelectionParams{Path: "a.php", From: Pos{Offset: 3}, To: Pos{Line: 1}}, CodeInvalidParams)
+	wantCode(t, a, "edit.columnSelection", ColumnSelectionParams{Path: "nope.php", From: Pos{Line: 1}, To: Pos{Line: 1}}, CodeNotFound)
 }

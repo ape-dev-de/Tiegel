@@ -167,13 +167,17 @@ func (m *Model) vertical(s buffer.Snapshot, sel Selection, delta int) Selection 
 }
 
 // AddCursorVertical clones the primary caret delta lines above (negative)
-// or below (positive), keeping the goal column. The new caret becomes
+// or below (positive), keeping the goal column (also across lines
+// shorter than it). The new caret becomes
 // primary, so repeated calls keep extending in the same direction.
 func (m *Model) AddCursorVertical(delta int) {
 	s := m.buf.Snapshot()
 	p := m.Primary()
 	start := Caret(p.Head)
 	start.RowEnd = p.RowEnd
+	// Keep the goal column so cloning past a short line returns to the
+	// column of the first caret.
+	start.Goal, start.HasGoal = p.Goal, p.HasGoal
 	moved := m.vertical(s, start, delta)
 	if m.Rows != nil {
 		r0, _ := m.Rows.CaretRow(s, p.Head, p.RowEnd)

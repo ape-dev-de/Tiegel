@@ -193,12 +193,24 @@ func TestClickDragAndMultiClick(t *testing.T) {
 	if got := r.e.Cursor().SelectedText()[0]; got != "first" {
 		t.Fatalf("shift click: %q", got)
 	}
-	// Alt+click adds cursors.
+	// Alt+click only places the caret (a drag would select a block).
 	r.click(r.pointAt(0), 0)
-	r.click(r.pointAt(strings.Index(src, "third")), key.ModAlt)
-	if n := len(r.e.Cursor().Selections()); n != 2 {
-		t.Fatalf("alt click: %d cursors", n)
+	r.click(r.pointAt(3), key.ModAlt)
+	if sels := r.e.Cursor().Selections(); len(sels) != 1 || sels[0] != cursor.Caret(3) {
+		t.Fatalf("alt click: %v", sels)
 	}
+	// Alt+Shift+click adds a caret and removes it again.
+	r.click(r.pointAt(0), 0)
+	third := r.pointAt(strings.Index(src, "third"))
+	r.click(third, key.ModAlt|key.ModShift)
+	if n := len(r.e.Cursor().Selections()); n != 2 {
+		t.Fatalf("alt+shift click: %d cursors", n)
+	}
+	r.click(third, key.ModAlt|key.ModShift)
+	if n := len(r.e.Cursor().Selections()); n != 1 {
+		t.Fatalf("alt+shift click again: %d cursors", n)
+	}
+	r.click(third, key.ModAlt|key.ModShift)
 	r.typ("#")
 	r.expectText("#first line\nsecond word here\n#third")
 }

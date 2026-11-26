@@ -122,3 +122,24 @@ func TestJoinLinesToggleCaseCommands(t *testing.T) {
 		t.Error("missing file")
 	}
 }
+
+func TestColumnSelectCommand(t *testing.T) {
+	t.Parallel()
+	dir := project(t, map[string]string{"a.php": "<?php\n$first = 1;\n$x = 2;\n\n"})
+	code, out, _ := run(t, "", "column-select", "a.php", "--from", "2:2", "--to", "4:5", "--project", dir)
+	want := "2\t7-10\t\"fir\"\n3\t19-22\t\"x =\"\n4\t26-26\t\"\"\tprimary\n"
+	if code != ExitOK || out != want {
+		t.Fatalf("column-select %d %q, want %q", code, out, want)
+	}
+	for _, bad := range [][]string{{"column-select", "a.php", "--from", "1:1"}, {"column-select", "a.php", "--from", "x", "--to", "1"}, {"column-select", "a.php", "--from", "1", "--to", "y"}} {
+		if code, _, _ := run(t, "", append(bad, "--project", dir)...); code != ExitUsage {
+			t.Errorf("%v: code %d", bad, code)
+		}
+	}
+	if code, _, _ := run(t, "", "column-select", "missing.php", "--from", "1", "--to", "1", "--project", dir); code != ExitError {
+		t.Error("missing file")
+	}
+	if code, _, _ := run(t, "", "column-select", "a.php", "--from", "1", "--to", "99", "--project", dir); code == ExitOK {
+		t.Error("line out of range")
+	}
+}

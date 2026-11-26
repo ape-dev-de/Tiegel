@@ -206,6 +206,8 @@ func TestFormatChord(t *testing.T) {
 		{"PageUp", "linux", "PgUp"},
 		{"PageDown", "darwin", "PgDn"},
 		{"F6", "darwin", "F6"},
+		{"Alt+Alt+Up", "darwin", "Alt+Alt+↑"},
+		{"Ctrl+Ctrl+Down", "linux", "Ctrl+Ctrl+↓"},
 	} {
 		if got := FormatChord(keymap.MustParse(tc.chord), tc.goos); got != tc.want {
 			t.Errorf("%s/%s = %q, want %q", tc.chord, tc.goos, got, tc.want)
@@ -217,7 +219,7 @@ func TestFormatChord(t *testing.T) {
 		{"Cmd+Backspace", "⌘⌫"},
 		{"Enter", "↩"}, {"Escape", "⎋"}, {"Tab", "⇥"}, {"Space", "Space"}, {"Right", "→"},
 		{"Up", "↑"}, {"Down", "↓"}, {"Delete", "⌦"}, {"PageUp", "⇞"}, {"PageDown", "⇟"},
-		{"Home", "↖"}, {"End", "↘"}, {"F6", "F6"},
+		{"Home", "↖"}, {"End", "↘"}, {"F6", "F6"}, {"Alt+Alt+Up", "⌥⌥↑"},
 	} {
 		if got := FormatChordSymbols(keymap.MustParse(tc.chord)); got != tc.want {
 			t.Errorf("symbols %s = %q, want %q", tc.chord, got, tc.want)

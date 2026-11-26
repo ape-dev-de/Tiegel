@@ -24,6 +24,9 @@ Move line up	Alt+Shift+Up	edit.moveLinesUp
 Move line down	Alt+Shift+Down	edit.moveLinesDown
 Move statement up	Cmd+Shift+Up	edit.moveLinesUp
 Move statement down	Cmd+Shift+Down	edit.moveLinesDown
+Clone caret above	Alt+Alt+Up	cursor.addAbove
+Clone caret below	Alt+Alt+Down	cursor.addBelow
+Column selection mode	Cmd+Shift+8	cursor.columnSelectionMode
 Delete line	Cmd+Backspace	edit.deleteLine
 Duplicate line or selection	Cmd+D	edit.duplicateLines
 Comment with line comment	Cmd+/	edit.toggleComment

@@ -277,7 +277,9 @@ func TestRuntimeCommands(t *testing.T) {
 	if code, _, _ := run(t, "", "interpreters", "version", "--project", dir); code != ExitUsage {
 		t.Fatal("version without selection")
 	}
-	if _, out, _ = run(t, "", "lsp-servers", "--project", dir); !strings.Contains(out, "no PHP language server") {
+	// An empty PATH: servers installed on the developer's machine must
+	// not show up.
+	if _, out, _ = runPath(t, t.TempDir(), "lsp-servers", "--project", dir); !strings.Contains(out, "no PHP language server") {
 		t.Fatalf("lsp %q", out)
 	}
 	if _, out, _ = run(t, "", "modules"); !regexp.MustCompile(`debug-xdebug +running +php-runtime`).MatchString(out) || !regexp.MustCompile(`lsp-intelephense +off`).MatchString(out) {

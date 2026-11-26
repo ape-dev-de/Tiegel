@@ -20,6 +20,8 @@ func init() {
 			summary: "join the selected lines (or the line with the next); prints the result, --write saves", minArgs: 1, maxArgs: 1, cwdProject: true, run: runJoinLines},
 		&command{name: "toggle-case", usage: "toggle-case FILE --from LINE[:COL] [--to LINE[:COL]] [--write]",
 			summary: "toggle the case of a range (or the word at --from); prints the result, --write saves", minArgs: 1, maxArgs: 1, cwdProject: true, run: runToggleCase},
+		&command{name: "column-select", usage: "column-select FILE --from LINE:COL --to LINE:COL",
+			summary: "column (block) selection between two corners (visual columns): one line per selection", minArgs: 1, maxArgs: 1, cwdProject: true, run: runColumnSelect},
 	)
 }
 
@@ -197,5 +199,38 @@ func (c *cli) selectionEdit(method string) error {
 			return
 		}
 		fmt.Fprint(w, text.Text)
+	})
+}
+
+// runColumnSelect prints the selections of a column selection: line,
+// byte offsets anchor-head and the selected text.
+func runColumnSelect(c *cli) error {
+	if c.p.value("from") == "" || c.p.value("to") == "" {
+		return usagef("--from LINE:COL and --to LINE:COL are required")
+	}
+	from, err := parseLineCol(c.p.value("from"))
+	if err != nil {
+		return err
+	}
+	to, err := parseLineCol(c.p.value("to"))
+	if err != nil {
+		return err
+	}
+	p := api.ColumnSelectionParams{Path: c.p.args[0], From: from, To: to}
+	if err := c.call("doc.open", api.DocOpenParams{Path: p.Path}, nil); err != nil {
+		return err
+	}
+	var res api.ColumnSelectionResult
+	if err := c.call("edit.columnSelection", p, &res); err != nil {
+		return err
+	}
+	return c.emit(res, func(w io.Writer) {
+		for i, s := range res.Selections {
+			mark := ""
+			if i == res.Primary {
+				mark = "\tprimary"
+			}
+			fmt.Fprintf(w, "%d\t%d-%d\t%q%s\n", s.Line, s.Anchor, s.Head, s.Text, mark)
+		}
 	})
 }

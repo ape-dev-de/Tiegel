@@ -33,7 +33,7 @@ func TestLSPCheckCommand(t *testing.T) {
 	if code, _, _ := run(t, "", "lsp-check", "ok.php", "--timeout", "nope", "--project", dir); code != ExitUsage {
 		t.Fatal("bad timeout accepted")
 	}
-	if code, _, errs := run(t, "", "lsp-check", "ok.php", "--project", dir); code != ExitError || !strings.Contains(errs, "no PHP language server") {
+	if code, _, errs := runPath(t, t.TempDir(), "lsp-check", "ok.php", "--project", dir); code != ExitError || !strings.Contains(errs, "no PHP language server") {
 		t.Fatalf("no server: %d %q", code, errs)
 	}
 	// A server that never publishes diagnostics: timeout.

@@ -372,3 +372,25 @@ func TestEditorButtons(t *testing.T) {
 		t.Fatal("clear key filter")
 	}
 }
+
+// Option pressed twice and held records a double-modifier chord.
+func TestRecorderDoubleModifier(t *testing.T) {
+	h := uitest.NewHarness(image.Pt(500, 80))
+	rh := &recorderHost{}
+	rh.r.Start()
+	h.Frame(rh.widget)
+	for _, st := range []key.State{key.Press, key.Release, key.Press} {
+		h.Router.Queue(key.Event{Name: key.NameAlt, State: st})
+	}
+	press(h, key.NameUpArrow, key.ModAlt)
+	h.Frame(rh.widget)
+	if rh.r.Chord() != "Alt+Alt+Up" {
+		t.Fatalf("double alt %q", rh.r.Chord())
+	}
+	h.Router.Queue(key.Event{Name: key.NameAlt, State: key.Release})
+	press(h, key.NameUpArrow, key.ModAlt)
+	h.Frame(rh.widget)
+	if rh.r.Chord() != "Alt+Up" {
+		t.Fatalf("after release %q", rh.r.Chord())
+	}
+}

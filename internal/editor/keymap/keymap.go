@@ -14,6 +14,10 @@
 // trackpad swipes SwipeBack and SwipeForward, and DoubleShift (Shift
 // pressed twice). They take no modifiers.
 //
+// A double-modifier chord such as "Alt+Alt+Up" (Option pressed twice and
+// held, then Up) names one modifier twice; see Chord.Double and
+// ModTracker.
+//
 // The catalog (Defs) declares every bindable action of the IDE with its
 // default chords per preset; a Scheme resolves the catalog with user
 // overrides into one lookup table for the editor and the window, which is
@@ -70,15 +74,33 @@ var modAliases = map[string]Mods{
 type Chord struct {
 	Mods Mods
 	Key  string
+	// Double is the modifier (one of Ctrl, Alt, Cmd; also set in Mods)
+	// that was pressed twice in quick succession and is still held when
+	// Key is pressed, as in "Alt+Alt+Up". Zero for ordinary chords.
+	Double Mods
 }
 
-// String formats the chord as "Mods+Key", e.g. "Cmd+Shift+Z".
+// String formats the chord as "Mods+Key", e.g. "Cmd+Shift+Z"; a doubled
+// modifier is written twice ("Alt+Alt+Up").
 func (c Chord) String() string {
 	if c.Mods == 0 {
 		return c.Key
 	}
-	return c.Mods.String() + "+" + c.Key
+	var parts []string
+	for _, n := range modNames {
+		if c.Mods&n.mod != 0 {
+			parts = append(parts, n.name)
+			if c.Double&n.mod != 0 {
+				parts = append(parts, n.name)
+			}
+		}
+	}
+	return strings.Join(append(parts, c.Key), "+")
 }
+
+// doubleMods are the modifiers that can be doubled in a chord. Shift is
+// left out: Shift pressed twice is the DoubleShift gesture.
+const doubleMods = Ctrl | Alt | Cmd
 
 // Named keys.
 const (
@@ -156,6 +178,12 @@ func ParseChord(s string) (Chord, error) {
 		m, ok := modAliases[strings.ToLower(rest[:i])]
 		if !ok {
 			break
+		}
+		if c.Mods&m != 0 {
+			if c.Double != 0 || m&doubleMods == 0 {
+				return Chord{}, fmt.Errorf("%w: %q: only one of Ctrl, Alt, Cmd can be doubled", ErrBadChord, s)
+			}
+			c.Double = m
 		}
 		c.Mods |= m
 		rest = rest[i+1:]

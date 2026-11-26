@@ -498,6 +498,9 @@ func FormatChord(c keymap.Chord, goos string) string {
 	for _, m := range order {
 		if c.Mods&m.mod != 0 {
 			parts = append(parts, m.name)
+			if c.Double&m.mod != 0 {
+				parts = append(parts, m.name) // "Alt+Alt+↑"
+			}
 		}
 	}
 	return strings.Join(append(parts, textKey(c.Key)), "+")
@@ -526,6 +529,9 @@ func FormatChordSymbols(c keymap.Chord) string {
 	for _, m := range symOrder {
 		if c.Mods&m.mod != 0 {
 			b.WriteString(m.name)
+			if c.Double&m.mod != 0 {
+				b.WriteString(m.name) // "⌥⌥↑"
+			}
 		}
 	}
 	b.WriteString(macKey(c.Key))

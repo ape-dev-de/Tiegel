@@ -4,6 +4,7 @@ import (
 	"image"
 	"io"
 	"math"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -28,7 +29,7 @@ const (
 	dragChars
 	dragWords
 	dragLines
-	dragBlockPending // Alt+press; becomes dragBlock once the pointer moves
+	dragBlockPending // Alt or middle press; becomes dragBlock once the pointer moves
 	dragBlock
 	dragVBar
 	dragHBar
@@ -44,6 +45,7 @@ type pointerState struct {
 	anchor     cursor.Selection // word/line or char anchor of the drag
 	blockLine  int              // block selection anchor
 	blockCol   int
+	blockAdd   bool // the block is added to the selections in before
 	pressPos   f32.Point
 	grabOffset int // scrollbar thumb grab offset
 	before     cursor.State
@@ -150,7 +152,9 @@ func (e *Editor) keyFilters() []event.Filter {
 	e.filtersFor, e.filtersVersion = e.Keymap, e.Keymap.Version()
 	f := e.filters[:0]
 	f = append(f, key.FocusFilter{Target: e}, transfer.TargetFilter{Target: e, Type: "application/text"})
+	double := false
 	for _, b := range e.Keymap.Bindings() {
+		double = double || b.Chord.Double != 0
 		mods := gioMods(b.Chord.Mods)
 		names := keymapToGio[b.Chord.Key]
 		if names == nil {
@@ -163,8 +167,42 @@ func (e *Editor) keyFilters() []event.Filter {
 			f = append(f, key.Filter{Focus: e, Name: n, Required: mods})
 		}
 	}
+	if double {
+		// Modifier presses and releases for the double-modifier chords.
+		for n := range modifierKeys {
+			f = append(f, key.Filter{Focus: e, Name: n, Optional: allMods})
+		}
+	}
 	e.filters = f
 	return f
+}
+
+// modifierKeys maps the Gio modifier key names to the modifiers a
+// keymap.ModTracker tracks.
+var modifierKeys = map[key.Name]keymap.Mods{
+	key.NameCtrl: keymap.Ctrl, key.NameAlt: keymap.Alt,
+	key.NameCommand: keymap.Cmd, key.NameSuper: keymap.Cmd,
+}
+
+const allMods = key.ModShift | key.ModCtrl | key.ModAlt | key.ModCommand | key.ModSuper
+
+// keyPress runs the action bound to a key press. While a modifier that
+// was pressed twice is held, the double chord ("Alt+Alt+Up") wins over
+// the plain one.
+func (e *Editor) keyPress(gtx layout.Context, ev key.Event) {
+	c := ChordOf(ev)
+	if d := e.mods.Resolve(c); d.Double != 0 {
+		if a, ok := e.Keymap.Lookup(d); ok {
+			e.blinkStart = gtx.Now
+			e.Do(gtx, a)
+			return
+		}
+	}
+	e.mods.Key()
+	if a, ok := e.Keymap.Lookup(c); ok {
+		e.blinkStart = gtx.Now
+		e.Do(gtx, a)
+	}
 }
 
 func (e *Editor) processKeys(gtx layout.Context) {
@@ -180,20 +218,22 @@ func (e *Editor) processKeys(gtx layout.Context) {
 			if ev.Focus && !e.ReadOnly {
 				gtx.Execute(key.SoftKeyboardCmd{Show: true})
 			}
+			e.mods.Reset()
 			if ev.Focus != e.focused {
 				e.focused = ev.Focus
 				e.emit(FocusEvent{Focused: ev.Focus})
 			}
 			e.blinkStart = gtx.Now
 		case key.Event:
-			if ev.State != key.Press {
+			if m, ok := modifierKeys[ev.Name]; ok {
+				e.mods.Modifier(m, ev.State == key.Press, gtx.Now)
 				break
 			}
-			if a, ok := e.Keymap.Lookup(ChordOf(ev)); ok {
-				e.blinkStart = gtx.Now
-				e.Do(gtx, a)
+			if ev.State == key.Press {
+				e.keyPress(gtx, ev)
 			}
 		case key.EditEvent:
+			e.mods.Key()
 			e.blinkStart = gtx.Now
 			e.handleEdit(ev)
 		case key.SelectionEvent:
@@ -253,6 +293,8 @@ func (e *Editor) processPointer(gtx layout.Context) {
 				e.press(gtx, pe)
 			} else if pe.Buttons.Contain(pointer.ButtonSecondary) {
 				e.secondaryPress(pe)
+			} else if pe.Buttons.Contain(pointer.ButtonTertiary) {
+				e.middlePress(gtx, pe)
 			}
 		case pointer.Drag:
 			e.drag(gtx, pe)
@@ -319,13 +361,18 @@ func (e *Editor) press(gtx layout.Context, pe pointer.Event) {
 	m := pe.Modifiers
 	e.expand = e.expand[:0]
 	switch {
-	case m.Contain(key.ModAlt) && !m.Contain(key.ModShift):
+	case m.Contain(key.ModAlt) && m.Contain(key.ModShift):
+		// Add or remove a caret; a drag adds a block to the carets.
 		e.ptr.before = e.cur.State()
-		e.ptr.blockLine, e.ptr.blockCol = e.lineColAt(pt)
-		if e.ptr.clicks == 1 {
-			e.cur.AddSelection(caret)
+		if !e.toggleCaret(caret) {
+			e.ptr.before = e.cur.State()
 		}
-		e.ptr.mode = dragBlockPending
+		e.startBlock(pt, true)
+	case m.Contain(key.ModAlt) || (e.colMode && !m.Contain(key.ModShift) && e.ptr.clicks == 1):
+		// Column selection: a click places the caret, a drag selects a
+		// block.
+		e.cur.SetSelections([]cursor.Selection{caret}, 0)
+		e.startBlock(pt, false)
 	case m.Contain(key.ModShift):
 		sels := e.cur.Selections()
 		pi := e.cur.PrimaryIndex()
@@ -349,6 +396,60 @@ func (e *Editor) press(gtx layout.Context, pe pointer.Event) {
 		e.ptr.mode = dragChars
 	}
 	e.revealCarets()
+}
+
+// middlePress starts a column selection with the middle mouse button: a
+// click places the caret, a drag selects a block. (Nothing is pasted.)
+func (e *Editor) middlePress(gtx layout.Context, pe pointer.Event) {
+	g := &e.geo
+	pt := image.Pt(int(pe.Position.X), int(pe.Position.Y))
+	if pt.X < g.gutterW || pt.In(g.vbar) || pt.In(g.hbar) {
+		return
+	}
+	gtx.Execute(key.FocusCmd{Tag: e})
+	e.ptr.pressPos, e.blinkStart = pe.Position, gtx.Now
+	e.expand = e.expand[:0]
+	off, rowEnd := e.caretAt(pt)
+	caret := cursor.Caret(off)
+	caret.RowEnd = rowEnd
+	e.cur.SetSelections([]cursor.Selection{caret}, 0)
+	e.startBlock(pt, pe.Modifiers.Contain(key.ModAlt|key.ModShift))
+	e.revealCarets()
+}
+
+// startBlock anchors a pending block selection at pt; add keeps the
+// selections of ptr.before.
+func (e *Editor) startBlock(pt image.Point, add bool) {
+	e.ptr.blockLine, e.ptr.blockCol = e.lineColAt(pt)
+	e.ptr.blockAdd = add
+	if !add {
+		e.ptr.before = cursor.State{}
+	}
+	e.ptr.mode = dragBlockPending
+}
+
+// toggleCaret removes the selection containing caret (if there are
+// others) or adds caret as a new caret. It reports whether it added.
+func (e *Editor) toggleCaret(caret cursor.Selection) bool {
+	sels := e.cur.Selections()
+	if len(sels) > 1 {
+		for i, sel := range sels {
+			if sel.Start() <= caret.Head && caret.Head <= sel.End() {
+				pi := e.cur.PrimaryIndex()
+				sels = append(sels[:i], sels[i+1:]...)
+				switch {
+				case pi == i:
+					pi = len(sels) - 1
+				case pi > i:
+					pi--
+				}
+				e.cur.SetSelections(sels, pi)
+				return false
+			}
+		}
+	}
+	e.cur.AddSelection(caret)
+	return true
 }
 
 func (e *Editor) gutterPress(pe pointer.Event, pt image.Point) {
@@ -453,7 +554,8 @@ func (e *Editor) drag(gtx layout.Context, pe pointer.Event) {
 		fallthrough
 	case dragBlock:
 		line, col := e.lineColAt(pt)
-		e.blockSelect(s, e.ptr.blockLine, e.ptr.blockCol, line, col)
+		e.setBlock(cursor.Block{AnchorLine: e.ptr.blockLine, AnchorCol: e.ptr.blockCol, HeadLine: line, HeadCol: col},
+			e.ptr.before.Sels)
 	}
 	e.blinkStart = gtx.Now
 }
@@ -467,26 +569,17 @@ func extendUnit(a cursor.Selection, start, end, off int) cursor.Selection {
 	return cursor.Range(a.Start(), max(end, a.End()))
 }
 
-// blockSelect selects the rectangle between two (line, visual column)
-// corners: one selection per visible line.
-func (e *Editor) blockSelect(s buffer.Snapshot, l0, c0, l1, c1 int) {
-	if l0 > l1 {
-		l0, l1 = l1, l0
+// setBlock selects block b (one selection per visible line, see
+// cursor.Block) in addition to the selections keep, and remembers it for
+// extending it by keyboard in column selection mode.
+func (e *Editor) setBlock(b cursor.Block, keep []cursor.Selection) {
+	sels, primary := b.Selections(e.buf.Snapshot(), e.tabWidth(), e.folds.IsHidden)
+	if len(sels) == 0 {
+		return
 	}
-	tw := e.tabWidth()
-	var sels []cursor.Selection
-	const maxLines = 10000
-	for l := l0; l <= l1 && len(sels) < maxLines; l++ {
-		if e.folds.IsHidden(l) {
-			continue
-		}
-		line := s.Line(l)
-		ls := s.LineStart(l)
-		a := ls + buffer.ByteColFromVisual(line, c0, tw)
-		h := ls + buffer.ByteColFromVisual(line, c1, tw)
-		sels = append(sels, cursor.Range(a, h))
-	}
-	e.cur.SetSelections(sels, len(sels)-1)
+	all := append(slices.Clone(keep), sels...)
+	e.cur.SetSelections(all, len(keep)+primary)
+	e.colBlock, e.colSels = b, e.cur.Selections()
 }
 
 func (e *Editor) dragVBarTo(y int) {
