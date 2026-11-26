@@ -35,6 +35,11 @@ import (
 // client": they close the client's project and open the new one in its
 // place.
 
+// KeyOnSwitch is the core setting deciding whether the project left on a
+// switch is hibernated ("hibernate", default) or keeps running
+// ("background").
+const KeyOnSwitch = settings.KeyOnSwitch
+
 // KeyAutoHibernate is the core setting with the minutes after which a
 // background project is hibernated (0: never).
 const KeyAutoHibernate = settings.KeyAutoHibernate
@@ -55,6 +60,26 @@ type ProjectsListResult struct {
 // directory name.
 type ProjectsNameParams struct {
 	Name string `json:"name"`
+}
+
+// ProjectsSwitchParams are the params of "projects.switch" and (with
+// Path) "projects.open".
+type ProjectsSwitchParams struct {
+	Name string `json:"name,omitempty"`
+	Path string `json:"path,omitempty"`
+	// Previous decides what happens to the project shown before:
+	// "hibernate" (unless running configurations, tests or debug sessions
+	// need it; terminals keep running), "background", or "" for the
+	// setting projects.onSwitch (D547).
+	Previous string `json:"previous,omitempty"`
+}
+
+// ProjectsBusyParams are the params of "projects.busy".
+type ProjectsBusyParams struct {
+	Name string `json:"name"`
+	// Hibernate asks what blocks hibernating (terminals do not), else
+	// what blocks closing.
+	Hibernate bool `json:"hibernate,omitempty"`
 }
 
 // ProjectsHibernateParams are the params of "projects.hibernate".
@@ -240,19 +265,56 @@ func (w *Workspace) List() ProjectsListResult {
 
 // Open opens the project directory path (or switches to it, if open) and
 // makes it active.
+// The previously shown project is hibernated or kept running as the
+// setting projects.onSwitch says.
 func (w *Workspace) Open(ctx context.Context, path string) (ProjectSession, error) {
+	return w.OpenWith(ctx, path, "")
+}
+
+// OpenWith is Open; previous is "hibernate", "background" or "" (the
+// setting) for the project shown before.
+func (w *Workspace) OpenWith(ctx context.Context, path, previous string) (ProjectSession, error) {
 	root, err := resolveProjectDir(path)
 	if err != nil {
 		return ProjectSession{}, err
 	}
-	info, err := w.mgr.Open(ctx, root)
+	opts, err := w.switchOptions(previous)
+	if err != nil {
+		return ProjectSession{}, err
+	}
+	info, err := w.mgr.OpenWith(ctx, root, opts)
 	return info, apiError(err)
 }
 
-// Switch activates a project (resuming it if hibernated).
+// Switch activates a project (resuming it if hibernated); the project
+// shown before is hibernated or kept running as projects.onSwitch says.
 func (w *Workspace) Switch(ctx context.Context, name string) (ProjectSession, error) {
-	info, err := w.mgr.Switch(ctx, name)
+	return w.SwitchWith(ctx, name, "")
+}
+
+// SwitchWith is Switch; previous is "hibernate", "background" or "" (the
+// setting) for the project shown before.
+func (w *Workspace) SwitchWith(ctx context.Context, name, previous string) (ProjectSession, error) {
+	opts, err := w.switchOptions(previous)
+	if err != nil {
+		return ProjectSession{}, err
+	}
+	info, err := w.mgr.SwitchWith(ctx, name, opts)
 	return info, apiError(err)
+}
+
+// switchOptions resolves previous ("" reads projects.onSwitch).
+func (w *Workspace) switchOptions(previous string) (workspace.SwitchOptions, error) {
+	if previous == "" {
+		previous = Setting(w.host, KeyOnSwitch, settings.OnSwitchHibernate)
+	}
+	switch previous {
+	case settings.OnSwitchHibernate:
+		return workspace.SwitchOptions{HibernatePrevious: true}, nil
+	case settings.OnSwitchBackground:
+		return workspace.SwitchOptions{}, nil
+	}
+	return workspace.SwitchOptions{}, Errorf(CodeInvalidParams, "previous must be %q or %q, got %q", settings.OnSwitchHibernate, settings.OnSwitchBackground, previous)
 }
 
 // Hibernate releases the resources of a project.
@@ -281,9 +343,17 @@ func (w *Workspace) Close(ctx context.Context, name string, force bool) error {
 	return apiError(w.mgr.Close(ctx, name, force))
 }
 
-// Busy reports what blocks hibernating or closing a project.
+// Busy reports what blocks closing a project.
 func (w *Workspace) Busy(ctx context.Context, name string) ([]string, error) {
 	b, err := w.mgr.Busy(ctx, name)
+	return b, apiError(err)
+}
+
+// HibernateBusy reports what blocks hibernating a project: running
+// configurations, tests and debug sessions (terminals keep running in a
+// hibernated project, D547).
+func (w *Workspace) HibernateBusy(ctx context.Context, name string) ([]string, error) {
+	b, err := w.mgr.HibernateBusy(ctx, name)
 	return b, apiError(err)
 }
 
@@ -496,6 +566,9 @@ type appProject struct {
 
 	mu  sync.Mutex
 	app *App // nil while hibernated
+	// parked are the terminal sessions of the hibernated project: they
+	// keep running (D547) and move to the App of the resume.
+	parked []*terminal.Session
 }
 
 // current returns the project's App (nil while hibernated).
@@ -572,9 +645,21 @@ func terminalBlockers(infos []terminal.Info, root string) []string {
 	return out
 }
 
-// Busy implements workspace.Project: running processes, terminals with
-// work in the foreground and debug sessions.
+// Busy implements workspace.Project (what blocks closing): running
+// processes, terminals with work in the foreground and debug sessions.
 func (p *appProject) Busy(ctx context.Context) []string {
+	app := p.current()
+	if app == nil {
+		return nil
+	}
+	out := p.HibernateBusy(ctx)
+	return append(out, terminalBlockers(app.terms.List(), p.root)...)
+}
+
+// HibernateBusy implements workspace.HibernateBlocker: running processes
+// (run configurations, tests) and debug sessions. Terminals do not block
+// a hibernation, they keep running (D547).
+func (p *appProject) HibernateBusy(ctx context.Context) []string {
 	app := p.current()
 	if app == nil {
 		return nil
@@ -585,7 +670,6 @@ func (p *appProject) Busy(ctx context.Context) []string {
 			out = append(out, "run: "+i.Name)
 		}
 	}
-	out = append(out, terminalBlockers(app.terms.List(), p.root)...)
 	var sessions []struct {
 		ID string `json:"id"`
 	}
@@ -611,6 +695,12 @@ func (p *appProject) Hibernate(ctx context.Context, force bool) ([]string, error
 		docs = append(docs, d.Path())
 	}
 	sort.Strings(docs)
+	// The terminals keep running without the App (D547): released
+	// before the App closes them.
+	parked := app.terms.Detach(func(i terminal.Info) bool { return i.Project == p.root })
+	p.mu.Lock()
+	p.parked = append(p.parked, parked...)
+	p.mu.Unlock()
 	p.drop(app)
 	return docs, nil
 }
@@ -664,7 +754,10 @@ func (p *appProject) Resume(ctx context.Context, docs []string) error {
 	}
 	p.mu.Lock()
 	p.app = app
+	parked := p.parked
+	p.parked = nil
 	p.mu.Unlock()
+	app.terms.Adopt(parked)
 	return nil
 }
 
@@ -672,6 +765,7 @@ func (p *appProject) Resume(ctx context.Context, docs []string) error {
 func (p *appProject) Close(ctx context.Context, force bool) error {
 	app := p.current()
 	if app == nil {
+		p.closeParked()
 		return nil
 	}
 	if err := p.stop(ctx, app, force); err != nil {
@@ -679,6 +773,45 @@ func (p *appProject) Close(ctx context.Context, force bool) error {
 	}
 	p.drop(app)
 	return nil
+}
+
+// closeParked ends the terminals of a hibernated project (closed for
+// good), in parallel.
+func (p *appProject) closeParked() {
+	p.mu.Lock()
+	parked := p.parked
+	p.parked = nil
+	p.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, s := range parked {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = s.Shutdown()
+		}()
+	}
+	wg.Wait()
+}
+
+// terminals returns the sessions of the project: those of its App, or
+// the parked ones while it is hibernated (they keep running, D547).
+func (p *appProject) terminals() []terminal.Info {
+	out := []terminal.Info{}
+	if app := p.current(); app != nil {
+		for _, i := range app.terms.List() {
+			if i.Project == p.root {
+				out = append(out, i)
+			}
+		}
+		return out
+	}
+	p.mu.Lock()
+	parked := append([]*terminal.Session(nil), p.parked...)
+	p.mu.Unlock()
+	for _, s := range parked {
+		out = append(out, s.Info())
+	}
+	return out
 }
 
 // ---- API methods ---------------------------------------------------------------
@@ -691,19 +824,30 @@ func (a *App) registerProjects() {
 		}
 		return w.List(), nil
 	})
-	mustHandle(a, "projects.open", "Open a project directory next to the others and make it active (switches if open)", func(ctx context.Context, p PathParams) (ProjectSession, error) {
+	mustHandle(a, "projects.open", "Open a project directory next to the others and make it active (switches if open); previous = hibernate or background for the project shown before (default: setting projects.onSwitch)", func(ctx context.Context, p ProjectsSwitchParams) (ProjectSession, error) {
 		w, err := a.workspace()
 		if err != nil {
 			return ProjectSession{}, err
 		}
-		return w.Open(ctx, p.Path)
+		return w.OpenWith(ctx, p.Path, p.Previous)
 	})
-	mustHandle(a, "projects.switch", "Make a project active (root or name; resumes a hibernated one, returns its clientState)", func(ctx context.Context, p ProjectsNameParams) (ProjectSession, error) {
+	mustHandle(a, "projects.switch", "Make a project active (root or name; resumes a hibernated one, returns its clientState); previous = hibernate or background for the project shown before (default: setting projects.onSwitch)", func(ctx context.Context, p ProjectsSwitchParams) (ProjectSession, error) {
 		w, err := a.workspace()
 		if err != nil {
 			return ProjectSession{}, err
 		}
-		return w.Switch(ctx, p.Name)
+		return w.SwitchWith(ctx, p.Name, p.Previous)
+	})
+	mustHandle(a, "projects.terminals", "Terminal sessions of a project; those of a hibernated project keep running", func(_ context.Context, p ProjectsNameParams) ([]terminal.Info, error) {
+		w, err := a.workspace()
+		if err != nil {
+			return nil, err
+		}
+		pr, err := w.project(p.Name)
+		if err != nil {
+			return nil, err
+		}
+		return pr.terminals(), nil
 	})
 	mustHandle(a, "projects.hibernate", "Save and release a project (language server, watcher, index, documents); running work needs force", func(ctx context.Context, p ProjectsHibernateParams) (ProjectSession, error) {
 		w, err := a.workspace()
@@ -737,12 +881,16 @@ func (a *App) registerProjects() {
 		}
 		return w.List(), nil
 	})
-	mustHandle(a, "projects.busy", "What blocks hibernating or closing a project (runs, debug sessions)", func(ctx context.Context, p ProjectsNameParams) (ProjectsBusyResult, error) {
+	mustHandle(a, "projects.busy", "What blocks closing a project (runs, debug sessions, terminals with a foreground job); with hibernate what blocks hibernating (terminals keep running)", func(ctx context.Context, p ProjectsBusyParams) (ProjectsBusyResult, error) {
 		w, err := a.workspace()
 		if err != nil {
 			return ProjectsBusyResult{}, err
 		}
-		b, err := w.Busy(ctx, p.Name)
+		busy := w.Busy
+		if p.Hibernate {
+			busy = w.HibernateBusy
+		}
+		b, err := busy(ctx, p.Name)
 		if b == nil {
 			b = []string{}
 		}

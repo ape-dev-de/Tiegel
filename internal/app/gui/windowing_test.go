@@ -252,13 +252,14 @@ func TestOpenProjectFlow(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(other, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	e.v.browseFolder(filepath.Dir(e.root))
+	e.v.browseFolder(filepath.Dir(e.root), e.v.requestProject)
 	e.frame()
 	e.chooseLabel(filepath.Base(e.root)) // descend
 	e.chooseLabel("Open " + filepath.Base(e.root))
 	e.waitFor("project", func() bool { return e.ctl.Project.Open })
 	host := &fakeHost{}
 	e.v.Host = host
+	e.ctl.Prefs.OpenProjectIn = "ask"
 	e.v.requestProject(other)
 	e.frame()
 	if e.v.popup == nil || len(e.v.popup.Buttons) != 3 {

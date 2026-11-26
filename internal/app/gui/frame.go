@@ -88,6 +88,7 @@ func (v *View) Frame(gtx layout.Context) layout.Dimensions {
 func (v *View) frameWelcome(gtx layout.Context) layout.Dimensions {
 	th := v.th
 	v.welcome.Recent = v.ctl.RecentProjects
+	v.welcome.GOOS = v.goos
 	v.welcome.Error = v.ctl.Status.Notice
 	v.welcome.Hints = []string{
 		fmt.Sprintf("Find Action    %s", v.Registry.ChordText(ActFindAction, v.goos)),
@@ -97,7 +98,13 @@ func (v *View) frameWelcome(gtx layout.Context) layout.Dimensions {
 		switch e := e.(type) {
 		case welcome.OpenEvent:
 			v.ctl.Status.Notice = ""
-			v.requestProject(e.Path)
+			if e.NewWindow && v.Host != nil {
+				v.requestProjectNewWindow(e.Path)
+			} else {
+				v.requestProject(e.Path)
+			}
+		case welcome.ContextEvent:
+			v.recentProjectMenu(e.Path)
 		case welcome.BrowseEvent:
 			v.openProjectDialog()
 		case welcome.RemoveEvent:

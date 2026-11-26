@@ -58,6 +58,22 @@ type Project interface {
 	Close(ctx context.Context, force bool) error
 }
 
+// HibernateBlocker is implemented by projects for which less work blocks
+// hibernating than closing (e.g. terminals survive a hibernation, D547,
+// but not a close). The Manager then asks HibernateBusy instead of Busy
+// before hibernating.
+type HibernateBlocker interface {
+	HibernateBusy(ctx context.Context) []string
+}
+
+// hibernateBusy reports what blocks hibernating p.
+func hibernateBusy(ctx context.Context, p Project) []string {
+	if hb, ok := p.(HibernateBlocker); ok {
+		return hb.HibernateBusy(ctx)
+	}
+	return p.Busy(ctx)
+}
+
 // Opener creates the Project for an absolute project root.
 type Opener func(ctx context.Context, root string) (Project, error)
 
@@ -105,6 +121,22 @@ type Info struct {
 	// (open tabs, cursors, layout); it is returned by the call that
 	// resumes the session and then dropped.
 	ClientState json.RawMessage `json:"clientState,omitempty"`
+	// Previous is the project that was active before a switch or open
+	// with SwitchOptions.HibernatePrevious (results of those calls only),
+	// PreviousState its state afterwards and PreviousBusy why it stayed
+	// in the background instead of hibernating.
+	Previous      string   `json:"previous,omitempty"`
+	PreviousState State    `json:"previousState,omitempty"`
+	PreviousBusy  []string `json:"previousBusy,omitempty"`
+}
+
+// SwitchOptions are the options of SwitchWith and OpenWith.
+type SwitchOptions struct {
+	// HibernatePrevious hibernates the project that was active before,
+	// unless work that hibernation would interrupt runs there (it then
+	// stays in the background, see Info.PreviousBusy). The hibernation
+	// event has the reason "switch".
+	HibernatePrevious bool
 }
 
 // Event is the payload of the lifecycle topics.
@@ -114,8 +146,9 @@ type Event struct {
 	State State  `json:"state"`
 	// Previous is the state before the change (empty for opened).
 	Previous State `json:"previous,omitempty"`
-	// Reason is "auto" for an automatic hibernation, "forced" when
-	// running work was stopped.
+	// Reason is "auto" for an automatic hibernation, "switch" for one on
+	// switching away (SwitchOptions), "forced" when running work was
+	// stopped.
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -274,6 +307,18 @@ func (m *Manager) Busy(ctx context.Context, name string) ([]string, error) {
 	return p.Busy(ctx), nil
 }
 
+// HibernateBusy reports what blocks hibernating the session (less than
+// Busy for projects implementing HibernateBlocker).
+func (m *Manager) HibernateBusy(ctx context.Context, name string) ([]string, error) {
+	p, err := m.Project(name)
+	if err != nil {
+		return nil, err
+	}
+	m.op.Lock()
+	defer m.op.Unlock()
+	return hibernateBusy(ctx, p), nil
+}
+
 func (m *Manager) infoLocked(s *session) Info {
 	i := Info{Name: NameOf(s.root), Root: s.root, State: s.state, Since: s.since}
 	if s.state == StateHibernated {
@@ -383,7 +428,12 @@ func (m *Manager) checkOpen() error {
 // Open opens the project at root (absolute) and activates it. An already
 // open project is activated instead (and resumed if hibernated).
 func (m *Manager) Open(ctx context.Context, root string) (Info, error) {
-	return m.open(ctx, root, nil, true)
+	return m.open(ctx, root, nil, true, SwitchOptions{})
+}
+
+// OpenWith is Open with options for the previously active project.
+func (m *Manager) OpenWith(ctx context.Context, root string, opts SwitchOptions) (Info, error) {
+	return m.open(ctx, root, nil, true, opts)
 }
 
 // Add registers an already opened project (e.g. one the host opened
@@ -393,10 +443,10 @@ func (m *Manager) Add(ctx context.Context, root string, p Project, activate bool
 	if p == nil {
 		return Info{}, errors.New("workspace: nil project")
 	}
-	return m.open(ctx, root, p, activate)
+	return m.open(ctx, root, p, activate, SwitchOptions{})
 }
 
-func (m *Manager) open(ctx context.Context, root string, p Project, activate bool) (Info, error) {
+func (m *Manager) open(ctx context.Context, root string, p Project, activate bool, opts SwitchOptions) (Info, error) {
 	if root == "" || !filepath.IsAbs(root) {
 		return Info{}, fmt.Errorf("workspace: project root must be absolute: %q", root)
 	}
@@ -413,7 +463,7 @@ func (m *Manager) open(ctx context.Context, root string, p Project, activate boo
 		if !activate {
 			return m.Get(root)
 		}
-		return m.switchLocked(ctx, root)
+		return m.switchLocked(ctx, root, opts)
 	}
 	if p == nil {
 		var err error
@@ -427,13 +477,46 @@ func (m *Manager) open(ctx context.Context, root string, p Project, activate boo
 	m.order = append(m.order, root)
 	evs := []Event{m.changeLocked(s, StateBackground, "")}
 	evs[0].Previous = ""
+	var prev *session
 	if activate {
+		prev = m.previousLocked(s)
 		evs = append(evs, m.activateLocked(s)...)
 	}
 	info := m.infoLocked(s)
 	m.mu.Unlock()
 	m.publish(evs...)
+	m.leavePrevious(ctx, prev, opts, &info)
 	return info, nil
+}
+
+// previousLocked returns the active session other than s (nil: none).
+func (m *Manager) previousLocked(s *session) *session {
+	if prev := m.sessions[m.active]; prev != nil && prev != s && prev.state == StateActive {
+		return prev
+	}
+	return nil
+}
+
+// leavePrevious hibernates prev, the project active before a switch,
+// when opts ask for it and nothing blocks it, and records the outcome in
+// info (op held).
+func (m *Manager) leavePrevious(ctx context.Context, prev *session, opts SwitchOptions, info *Info) {
+	if prev == nil || !opts.HibernatePrevious {
+		return
+	}
+	info.Previous, info.PreviousState = prev.root, StateBackground
+	_, err := m.hibernateOp(ctx, prev, HibernateOptions{}, "switch")
+	var be *BusyError
+	switch {
+	case err == nil:
+		info.PreviousState = StateHibernated
+	case errors.As(err, &be):
+		info.PreviousBusy = be.Reasons
+	case errors.Is(err, ErrUnsaved):
+		info.PreviousBusy = []string{"unsaved changes"}
+	default:
+		info.PreviousBusy = []string{err.Error()}
+	}
 }
 
 // activateLocked makes s the active session; the previous one goes to
@@ -453,15 +536,20 @@ func (m *Manager) activateLocked(s *session) []Event {
 // Switch activates the session matching name, resuming it if hibernated.
 // The resume result carries the stored ClientState.
 func (m *Manager) Switch(ctx context.Context, name string) (Info, error) {
+	return m.SwitchWith(ctx, name, SwitchOptions{})
+}
+
+// SwitchWith is Switch with options for the previously active project.
+func (m *Manager) SwitchWith(ctx context.Context, name string, opts SwitchOptions) (Info, error) {
 	m.op.Lock()
 	defer m.op.Unlock()
 	if err := m.checkOpen(); err != nil {
 		return Info{}, err
 	}
-	return m.switchLocked(ctx, name)
+	return m.switchLocked(ctx, name, opts)
 }
 
-func (m *Manager) switchLocked(ctx context.Context, name string) (Info, error) {
+func (m *Manager) switchLocked(ctx context.Context, name string, opts SwitchOptions) (Info, error) {
 	m.mu.Lock()
 	s, err := m.findLocked(name)
 	m.mu.Unlock()
@@ -478,11 +566,13 @@ func (m *Manager) switchLocked(ctx context.Context, name string) (Info, error) {
 		evs, client = append(evs, ev), c
 	}
 	m.mu.Lock()
+	prev := m.previousLocked(s)
 	evs = append(evs, m.activateLocked(s)...)
 	info := m.infoLocked(s)
 	m.mu.Unlock()
 	info.ClientState = client
 	m.publish(evs...)
+	m.leavePrevious(ctx, prev, opts, &info)
 	return info, nil
 }
 
@@ -588,7 +678,7 @@ func (m *Manager) hibernateOp(ctx context.Context, s *session, opts HibernateOpt
 		}
 		return m.Get(s.root)
 	}
-	if busy := s.proj.Busy(ctx); len(busy) > 0 {
+	if busy := hibernateBusy(ctx, s.proj); len(busy) > 0 {
 		if !opts.Force {
 			return Info{}, &BusyError{Name: NameOf(s.root), Reasons: busy}
 		}

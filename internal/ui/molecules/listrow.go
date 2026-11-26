@@ -3,6 +3,7 @@ package molecules
 import (
 	"image"
 
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -37,17 +38,25 @@ type ListRow struct {
 // Update reports clicks since the last frame: clicked for any click and
 // double for a double click (clicked is true as well).
 func (r *ListRow) Update(gtx layout.Context) (clicked, double bool) {
+	clicked, double, _ = r.UpdateMods(gtx)
+	return clicked, double
+}
+
+// UpdateMods is Update that also returns the modifiers held at the last
+// click (e.g. Shift+click for an alternative action).
+func (r *ListRow) UpdateMods(gtx layout.Context) (clicked, double bool, mods key.Modifiers) {
 	for {
 		c, ok := r.click.Update(gtx)
 		if !ok {
 			break
 		}
 		clicked = true
+		mods = c.Modifiers
 		if c.NumClicks >= 2 {
 			double = true
 		}
 	}
-	return clicked, double
+	return clicked, double, mods
 }
 
 // Hovered reports whether the pointer is over the row.

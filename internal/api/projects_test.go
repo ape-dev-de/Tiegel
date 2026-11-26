@@ -57,6 +57,7 @@ func (l *projEvents) has(t *testing.T, topic, contains string) bool {
 
 func TestProjectsLifecycle(t *testing.T) {
 	a := newTestApp(t)
+	keepBackground(t, a)
 	ctx := context.Background()
 	w, err := a.EnableWorkspace(WorkspaceOptions{})
 	if err != nil {
@@ -205,6 +206,7 @@ func TestProjectsLifecycle(t *testing.T) {
 
 func TestProjectsBusyAndUnsaved(t *testing.T) {
 	a := newTestApp(t)
+	keepBackground(t, a)
 	self := selfExe(t)
 	dirA, dirB := projectDir(t, "alpha"), projectDir(t, "beta")
 	// A project open before the workspace is adopted.
@@ -307,6 +309,7 @@ func (c *testClock) armed() int {
 
 func TestProjectsAutoHibernateSetting(t *testing.T) {
 	a := newTestApp(t)
+	keepBackground(t, a)
 	clock := &testClock{now: time.Now()}
 	var created []*App
 	w, err := a.EnableWorkspace(WorkspaceOptions{Clock: clock, NewApp: func() (*App, error) {
@@ -482,7 +485,12 @@ func TestProjectsBusyTerminal(t *testing.T) {
 	if len(busy.Busy) != 1 || busy.Busy[0] != "terminal: compose up" {
 		t.Fatalf("%+v", busy)
 	}
-	wantCode(t, a, "projects.hibernate", ProjectsHibernateParams{Name: "alpha"}, CodeConflict)
+	// Terminals block closing, not hibernating (they keep running, D547).
+	wantCode(t, a, "projects.close", ProjectsCloseParams{Name: "alpha"}, CodeConflict)
+	call(t, a, "projects.busy", ProjectsBusyParams{Name: "alpha", Hibernate: true}, &busy)
+	if len(busy.Busy) != 0 {
+		t.Fatalf("hibernate busy %+v", busy)
+	}
 	call(t, a, "terminal.close", TerminalIDParams{ID: info.ID}, nil)
 	call(t, a, "projects.busy", ProjectsNameParams{Name: "alpha"}, &busy)
 	if len(busy.Busy) != 0 {
@@ -516,6 +524,7 @@ func TestProjectsNestedCallsStayLocal(t *testing.T) {
 		})
 	}
 	a := newTestApp(t, ext)
+	keepBackground(t, a)
 	dirA, dirB := projectDir(t, "alpha"), projectDir(t, "beta")
 	call(t, a, "projects.open", PathParams{Path: dirA}, nil)
 	call(t, a, "projects.open", PathParams{Path: dirB}, nil)

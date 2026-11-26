@@ -13,12 +13,15 @@ import (
 )
 
 // Projects: File → Open… (native folder dialog on macOS, D110, else a
-// folder browser built from the chooser), Recent Projects, Close Project
-// and the question "this window or a new window" when a project is
-// already open. A window holds several projects (Sessions, D477): "this
-// window" opens the project next to the others, which keep running in
-// the background. A project that is open in another window is brought to
-// the front instead (WindowHost).
+// folder browser built from the chooser), Recent Projects, Close Project.
+// A window holds several projects (Sessions, D477): by default
+// (projects.openIn = this, D547) another project opens in this window and
+// the one shown before is hibernated (projects.onSwitch; terminals keep
+// running) or keeps running in the background. "Open in New Window" is in
+// the context menus of the project switcher and the recent projects and
+// on Shift+click; projects.openIn = ask asks every time. A project that
+// is open in another window is brought to the front instead
+// (WindowHost).
 
 // WindowHost lets a View open projects in other windows. The window
 // manager of Run implements it; tests and single-window hosts leave it
@@ -53,18 +56,53 @@ func (v *View) openHere(dir string) {
 	v.ctl.OpenProject(dir)
 }
 
-// requestProject opens the project dir: in this window when none is open,
-// otherwise after asking "this window or a new window".
-func (v *View) requestProject(dir string) {
+// projectDir normalises a project path (home, absolute, symlinks).
+func projectDir(dir string) string {
 	dir = expandHome(dir)
 	if dir == "" {
-		return
+		return ""
 	}
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs
 	}
 	if r, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = r
+	}
+	return dir
+}
+
+// requestProjectNewWindow opens the project dir in a new window ("Open in
+// New Window"): one open in another window is brought to the front, one
+// open in this window moves (closed here, after asking when running work
+// blocks it).
+func (v *View) requestProjectNewWindow(dir string) {
+	dir = projectDir(dir)
+	if dir == "" {
+		return
+	}
+	if v.Host == nil {
+		v.requestProject(dir)
+		return
+	}
+	if v.Host.FocusProject(v, dir) {
+		return
+	}
+	if v.sessions != nil && v.sessions.Has(dir) {
+		v.sessions.MoveToNewWindow(dir, v.openWindow)
+		return
+	}
+	if v.sessions == nil && v.ctl.Project.Open && v.ctl.Project.Root == dir {
+		return
+	}
+	v.openWindow(dir)
+}
+
+// requestProject opens the project dir: in this window (projects.openIn
+// = this, the default), in a new window (new) or after asking (ask).
+func (v *View) requestProject(dir string) {
+	dir = projectDir(dir)
+	if dir == "" {
+		return
 	}
 	if v.ctl.Project.Open && v.ctl.Project.Root == dir {
 		return
@@ -82,31 +120,40 @@ func (v *View) requestProject(dir string) {
 		return
 	}
 	switch v.ctl.Prefs.OpenProjectIn { // setting projects.openIn
-	case "this":
-		v.openHere(dir)
-		return
 	case "new":
 		v.openWindow(dir)
+		return
+	case "ask":
+	default: // "this" and before the preferences are loaded
+		v.openHere(dir)
 		return
 	}
 	detail := "Open " + filepath.Base(dir) + " in this window (closing " + v.ctl.Project.Name + ") or in a new window?"
 	if v.sessions != nil {
-		detail = "Open " + filepath.Base(dir) + " in this window (" + v.ctl.Project.Name + " keeps running in the background, switch with the project switcher) or in a new window?"
+		detail = "Open " + filepath.Base(dir) + " in this window (" + v.ctl.Project.Name + " is hibernated or keeps running in the background, switch back with the project switcher) or in a new window?"
 	}
 	v.OpenPopup(&Popup{
 		Title:    "Open Project",
 		Detail:   detail,
 		Centered: true,
 		Buttons: []*PopupButton{
-			{Text: "This Window", Kind: atoms.Secondary, OnClick: func() { v.openHere(dir) }},
-			{Text: "New Window", Kind: atoms.Primary, OnClick: func() { v.openWindow(dir) }},
+			{Text: "This Window", Kind: atoms.Primary, OnClick: func() { v.openHere(dir) }},
+			{Text: "New Window", Kind: atoms.Secondary, OnClick: func() { v.openWindow(dir) }},
 			{Text: "Cancel", Kind: atoms.Ghost},
 		},
 	})
 }
 
 // openProjectDialog shows the folder chooser (File → Open…).
-func (v *View) openProjectDialog() {
+func (v *View) openProjectDialog() { v.openProjectDialogIn(false) }
+
+// openProjectDialogIn shows the folder chooser; newWindow opens the
+// chosen folder in a new window (Shift+click on "Open…").
+func (v *View) openProjectDialogIn(newWindow bool) {
+	request := v.requestProject
+	if newWindow {
+		request = v.requestProjectNewWindow
+	}
 	start := v.ctl.Project.Root
 	if start != "" {
 		start = filepath.Dir(start)
@@ -122,19 +169,19 @@ func (v *View) openProjectDialog() {
 				case err != nil:
 					v.ctl.Status.Notice = "Open: " + err.Error()
 				case ok:
-					v.requestProject(dir)
+					request(dir)
 				}
 			})
 		}()
 		return
 	}
-	v.browseFolder(start)
+	v.browseFolder(start, request)
 }
 
 // browseFolder is the folder dialog built from the chooser: the query is
 // a path, the list shows its subdirectories; choosing one descends into
 // it, the first entry opens the folder.
-func (v *View) browseFolder(dir string) {
+func (v *View) browseFolder(dir string, request func(string)) {
 	var cur string
 	var names []string
 	load := func(q string) []palette.Item {
@@ -171,11 +218,11 @@ func (v *View) browseFolder(dir string) {
 		OnChoose: func(i int, q string) {
 			switch {
 			case i == 0:
-				v.requestProject(cur)
+				request(cur)
 			case i > 0 && i-1 < len(names):
-				v.browseFolder(filepath.Join(cur, names[i-1]))
+				v.browseFolder(filepath.Join(cur, names[i-1]), request)
 			case i < 0 && q != "":
-				v.requestProject(q)
+				request(q)
 			}
 		},
 	})
@@ -186,14 +233,30 @@ func (v *View) browseFolder(dir string) {
 func (v *View) openRecentProjects() {
 	v.ctl.ReloadRecentProjects()
 	list := append([]string(nil), v.ctl.RecentProjects...)
-	items := make([]MenuItem, 0, len(list))
+	items := make([]MenuItem, 0, len(list)+2)
+	var newWin []MenuItem
 	for _, p := range list {
-		items = append(items, MenuItem{Title: filepath.Base(p) + "  —  " + p, Run: func() { v.requestProject(p) }})
+		title := filepath.Base(p) + "  —  " + p
+		items = append(items, MenuItem{Title: title, Run: func() { v.requestProject(p) }})
+		newWin = append(newWin, MenuItem{Title: title, Run: func() { v.requestProjectNewWindow(p) }})
 	}
 	if len(items) == 0 {
 		items = append(items, MenuItem{Title: "No recent projects", Disabled: true})
+	} else if v.Host != nil {
+		items = append(items, MenuItem{Separator: true}, MenuItem{Title: "Open in New Window", Children: newWin})
 	}
 	v.ShowMenu("Recent Projects", items)
+}
+
+// recentProjectMenu is the context menu of a recent project (welcome
+// screen): open it here or in a new window.
+func (v *View) recentProjectMenu(path string) {
+	items := []MenuItem{{Title: "Open in This Window", Run: func() { v.requestProject(path) }}}
+	if v.Host != nil {
+		items = append(items, MenuItem{Title: "Open in New Window", Run: func() { v.requestProjectNewWindow(path) }})
+	}
+	items = append(items, MenuItem{Separator: true}, MenuItem{Title: "Remove from Recent Projects", Run: func() { v.ctl.RemoveRecentProject(path) }})
+	v.ShowMenu(filepath.Base(path), items)
 }
 
 // closeProject closes the project and shows the next open project of

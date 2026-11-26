@@ -2,6 +2,7 @@ package gui
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,7 +54,14 @@ func wsProject(t *testing.T, name string, files map[string]string) string {
 	return r
 }
 
+// newWsEnv keeps the project left on a switch running in the background
+// (projects.onSwitch = background); newWsEnvOnSwitch sets the value.
 func newWsEnv(t *testing.T) *wsEnv {
+	t.Helper()
+	return newWsEnvOnSwitch(t, "background")
+}
+
+func newWsEnvOnSwitch(t *testing.T, onSwitch string) *wsEnv {
 	t.Helper()
 	home := t.TempDir()
 	opts := api.Options{
@@ -77,6 +85,9 @@ func newWsEnv(t *testing.T) *wsEnv {
 	}
 	ws, err := host.EnableWorkspace(api.WorkspaceOptions{NewApp: newApp})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.Call(t.Context(), "settings.set", json.RawMessage(`{"key":"projects.onSwitch","scope":"global","value":"`+onSwitch+`"}`)); err != nil {
 		t.Fatal(err)
 	}
 	e := &wsEnv{t: t, host: host, ws: ws, h: uitest.NewHarness(windowSize),
@@ -207,6 +218,7 @@ func TestSessionsSwitchKeepsViewState(t *testing.T) {
 	// Window" stays available.
 	host := &fakeHost{}
 	alpha.Host = host
+	alpha.ctl.Prefs.OpenProjectIn = "ask"
 	gamma := wsProject(t, "gamma", map[string]string{"g.php": "<?php\n"})
 	alpha.requestProject(gamma)
 	e.frame()
