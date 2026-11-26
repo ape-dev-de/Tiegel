@@ -190,7 +190,9 @@ func (c *Controller) LoadFileIndex() {
 	}
 	c.Go(func(ctx context.Context) func() {
 		var res filesListResult
-		if err := c.call(ctx, "files.list", map[string]any{}, &res); err != nil || res.Tree == nil {
+		// Ignored files are found like in the tree (files.showIgnored).
+		params := map[string]any{"ignored": getEffective(ctx, c.be, settings.KeyShowIgnored, true)}
+		if err := c.call(ctx, "files.list", params, &res); err != nil || res.Tree == nil {
 			return nil
 		}
 		var files []string

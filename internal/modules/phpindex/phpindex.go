@@ -72,15 +72,20 @@ var legacyKeys = map[string]string{
 	"index.exclude":        SettingExclude,
 }
 
+// DefaultExclude are the folders the index skips by default: caches and
+// temp folders of common frameworks contain generated PHP (compiled
+// containers, proxies, views) that would duplicate real classes.
+var DefaultExclude = []string{"tmp", "cache", "var/cache"}
+
 // SettingSpecs implements module.SettingsProvider.
 func (m *Module) SettingSpecs() []settings.Spec {
 	return []settings.Spec{
 		{Key: SettingLibraries, Kind: settings.KindBool, Default: true, Scope: settings.ScopeProject,
 			Label: "Index libraries (vendor/)", Help: "Include Composer dependencies so navigation and completion know their classes."},
-		{Key: SettingIncludeIgnored, Kind: settings.KindBool, Default: false, Scope: settings.ScopeProject,
-			Label: "Index ignored files", Help: "Also index files matched by .gitignore."},
-		{Key: SettingExclude, Kind: settings.KindList, Default: []string{}, Scope: settings.ScopeProject,
-			Label: "Excluded patterns", Help: "Relative paths or base-name patterns (path.Match) the index skips."},
+		{Key: SettingIncludeIgnored, Kind: settings.KindBool, Default: true, Scope: settings.ScopeProject,
+			Label: "Index ignored files", Help: "Also index files matched by .gitignore (local configuration, generated code); cache folders are left out by the excluded patterns."},
+		{Key: SettingExclude, Kind: settings.KindList, Default: DefaultExclude, Scope: settings.ScopeProject,
+			Label: "Excluded patterns", Help: "Relative paths or base-name patterns (path.Match) the index skips. The defaults skip cache and temp folders (var/cache, app/tmp, storage/framework/cache …) whose generated PHP would duplicate classes."},
 	}
 }
 
@@ -530,8 +535,8 @@ func (m *Module) config(_ context.Context, p ConfigParams) (Config, error) {
 func (m *Module) effectiveConfig(app *api.App) Config {
 	return Config{
 		Libraries:      api.Setting(app, SettingLibraries, true),
-		IncludeIgnored: api.Setting(app, SettingIncludeIgnored, false),
-		Exclude:        append([]string{}, api.Setting[[]string](app, SettingExclude, nil)...),
+		IncludeIgnored: api.Setting(app, SettingIncludeIgnored, true),
+		Exclude:        append([]string{}, api.Setting(app, SettingExclude, DefaultExclude)...),
 	}
 }
 

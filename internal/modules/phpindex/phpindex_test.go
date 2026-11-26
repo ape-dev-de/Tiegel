@@ -14,6 +14,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/bus"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	"github.com/ape-dev-de/tiegel/internal/core/tasks"
+	"github.com/ape-dev-de/tiegel/internal/index"
 	"github.com/ape-dev-de/tiegel/internal/modules/modtest"
 )
 
@@ -245,7 +246,8 @@ func TestCacheAndLifecycle(t *testing.T) {
 	// the settings switch vendor off (a new option set ignores the cache)
 	var cfg Config
 	modtest.Call(t, a2, "index.config", nil, &cfg)
-	if !cfg.Libraries || cfg.IncludeIgnored || len(cfg.Exclude) != 0 {
+	// Defaults: vendor and ignored files indexed, cache/temp folders not.
+	if !cfg.Libraries || !cfg.IncludeIgnored || strings.Join(cfg.Exclude, ",") != strings.Join(DefaultExclude, ",") {
 		t.Fatalf("config %+v", cfg)
 	}
 	no, yes := false, true
@@ -301,4 +303,28 @@ func TestSyncIsTask(t *testing.T) {
 		return false
 	})
 	modtest.Eventually(t, "task ended", func() bool { return len(a.Tasks().List()) == 0 })
+}
+
+// TestIgnoredFilesIndexed: .gitignore'd PHP files (local configuration)
+// are indexed by default; cache and temp folders are not.
+func TestIgnoredFilesIndexed(t *testing.T) {
+	if !index.TreeSitter {
+		t.Skip("PHP index needs Tree-sitter (cgo)")
+	}
+	a, _ := newApp(t, Options{}, nil)
+	modtest.Project(t, a, map[string]string{
+		".gitignore":                            "/config/local/\n/app/tmp/\n",
+		"config/local/LocalConf.php":            "<?php\nclass LocalConf {}\n",
+		"app/tmp/cache/LocalConfCached.php":     "<?php\nclass LocalConfCached {}\n",
+		"var/cache/prod/LocalConfContainer.php": "<?php\nclass LocalConfContainer {}\n",
+	})
+	var sy SymbolsResult
+	modtest.Call(t, a, "nav.symbols", SymbolsParams{Query: "LocalConf", Kinds: []string{"type"}, Wait: true}, &sy)
+	var got []string
+	for _, s := range sy.Symbols {
+		got = append(got, s.FQN)
+	}
+	if strings.Join(got, ",") != "LocalConf" {
+		t.Fatalf("symbols %v", got)
+	}
 }

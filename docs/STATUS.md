@@ -83,3 +83,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-26: Projektbaum: entfernte Einträge verlassen den Index (D553); „Reload All from Disk“ (⌥⌘Y, Knopf im Baumkopf) und „Reload from Disk“ im Kontextmenü (D554).
 - 2026-11-26: Dockerfile (inkl. Containerfile, `Dockerfile.*`) wird erkannt und im Editor eingefärbt, dazu Shell, Makefile, INI, SQL und Ignore-Dateien über den eingebauten Lexer (D555).
 - 2026-11-26: Projektbaum zeigt per `.gitignore` ignorierte Einträge olivfarben markiert an (abschaltbar mit `files.showIgnored`, D558).
+- 2026-11-26: Ignorierte PHP-Dateien werden indiziert und von Quick Open/Shift+Shift gefunden; Cache-/Temp-Ordner bleiben ausgeschlossen (D559).
