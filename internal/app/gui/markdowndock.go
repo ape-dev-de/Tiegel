@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gioui.org/layout"
@@ -172,21 +173,42 @@ func (d *markdownDock) follow(file string, pv *mdPreviewView, dest string) {
 		return
 	}
 	if controller.IsMarkdown(target) {
-		d.v.ctl.Markdown.Open(target, false)
-		if anchor != "" {
-			npv := d.views[target]
-			if npv == nil {
-				npv = &mdPreviewView{}
-				npv.view.LoadImage = func(src string) (image.Image, bool) { return d.image(target, src) }
-				d.views[target] = npv
-			}
-			if !npv.view.ScrollToAnchor(anchor) {
-				npv.anchor = anchor
-			}
-		}
+		d.openAt(target, anchor)
 		return
 	}
-	d.v.ctl.OpenFile(target, nil)
+	d.v.ctl.OpenFile(target, lineAnchor(target, anchor))
+}
+
+// openAt opens the preview of a Markdown file (also outside the
+// project, read-only) scrolled to the heading anchor ("" = top).
+func (d *markdownDock) openAt(file, anchor string) {
+	d.v.ctl.Markdown.Open(file, false)
+	if anchor == "" {
+		return
+	}
+	pv := d.views[file]
+	if pv == nil {
+		pv = &mdPreviewView{}
+		pv.view.LoadImage = func(src string) (image.Image, bool) { return d.image(file, src) }
+		d.views[file] = pv
+	}
+	if !pv.view.ScrollToAnchor(anchor) {
+		pv.anchor = anchor
+	}
+}
+
+// lineAnchor turns a "#L12" link anchor into the location of line 12
+// (nil for other anchors).
+func lineAnchor(file, anchor string) *controller.Location {
+	if len(anchor) < 2 || anchor[0] != 'L' {
+		return nil
+	}
+	n, err := strconv.Atoi(anchor[1:])
+	if err != nil || n < 1 {
+		return nil
+	}
+	loc := controller.AtLine(file, n)
+	return &loc
 }
 
 // localTarget resolves a relative (or file:) link of the Markdown file

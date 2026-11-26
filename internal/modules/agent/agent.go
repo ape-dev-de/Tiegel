@@ -607,7 +607,7 @@ func (m *Module) openSession(ctx context.Context, proc *acp.Process) error {
 	}
 	sctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	res, err := proc.NewSession(sctx, root)
+	res, err := proc.NewSessionWith(sctx, root, m.mcpServers(sctx))
 	if err != nil {
 		if acp.ErrorCode(err) == acp.CodeAuthRequired {
 			m.mu.Lock()
@@ -636,6 +636,30 @@ func (m *Module) openSession(ctx context.Context, proc *acp.Process) error {
 		}
 	}
 	return nil
+}
+
+// mcpServers collects the MCP servers other modules offer to the
+// session (HookAgentMCPServers, e.g. the project knowledge, D563).
+func (m *Module) mcpServers(ctx context.Context) []acp.MCPServerStdio {
+	app := m.application()
+	if app == nil {
+		return nil
+	}
+	list, err := api.HookAgentMCPServers.Apply(ctx, app.Hooks(), nil)
+	if err != nil {
+		app.Logger().Warn("agent mcp servers", "err", err)
+	}
+	var out []acp.MCPServerStdio
+	for _, s := range list {
+		srv := acp.MCPServerStdio{Name: s.Name, Command: s.Command, Args: s.Args}
+		for _, kv := range s.Env {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				srv.Env = append(srv.Env, acp.EnvVariable{Name: k, Value: v})
+			}
+		}
+		out = append(out, srv)
+	}
+	return out
 }
 
 // modelOption returns the model option of the session.

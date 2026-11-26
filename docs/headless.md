@@ -113,6 +113,16 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `analysis sources` | Quellen: `*` = verwendet; Herkunft `import`/`setting`/`config` (tmpDir/resultCachePath der Konfiguration)/`default` (Systemtemp)/`found` (Report an üblicher Stelle, wird nie still benutzt), Format, PHPStan-Version des Caches, Änderungszeit oder Grund (z.B. Cache im Container); Konfiguration, Zahl der Funde, Hinweise (Baseline-Zähler), ob Fix with AI verfügbar ist | `analysis.status` |
 | `analysis import DATEI` / `analysis reload [--reset]` | Report (json, checkstyle, junit) oder Result-Cache jetzt lesen und als Quelle behalten / Quelle neu lesen (`--reset`: importierte Datei vergessen) | `analysis.import`, `analysis.reload` |
 | `analysis fix PFAD:ZEILE [--dry-run] [--yes]` | Fix with AI: Fund(e) der Zeile mit Identifier, Tip und Codeausschnitt an den KI-Agenten (wie `agent prompt`, Antwort gestreamt, „ask“-Berechtigungen abgelehnt außer mit `--yes`); `--dry-run` zeigt nur den Prompt. Ohne laufendes Agent-Plugin oder installierten Agenten: Exit 1 mit Grund | `analysis.fix` (`dryRun`), `agent.prompt` |
+| `knowledge [status]` | Projektwissen (Plugin `knowledge`, D560): Wissensordner (außerhalb des Projekts, `<Konfig>/projects/<hash>/knowledge`), gebaute/zu bauende/gescheiterte Einheiten, letzter Lauf, Agent und Modell, Embedding-Anbieter (lokal oder „contents are sent to this server“), Speicher (Abschnitte, eingebettet, Größe), Zugriff des Agenten | `knowledge.status` |
+| `knowledge plan [--scope DIR]… [--all]` | Einheiten, die ein Build bauen würde (neu/geändert/gescheitert/fehlend), mit Schätzung: Agentenaufrufe, ~Tokens, Agent und Modell („billed by your agent's provider“) | `knowledge.plan` |
+| `knowledge build [EINHEIT…] [--scope DIR]… [--all] [--no-embed] [--yes]` | **ohne `--yes` nur der Plan** (nichts läuft). Mit `--yes`: describe → validate → write je Einheit mit dem Agenten (nur lesend), Fortschritt auf stderr (`[1/3] src-billing: write done (confidence 0.85)`), danach Einbetten; Exit 1 bei gescheiterten Einheiten, 130 bei Abbruch | `knowledge.build` (`wait`), Events `knowledge.progress` |
+| `knowledge list` / `knowledge show [EINHEIT]` / `knowledge read PFAD` | Einheiten mit Konfidenz und Zustand; Dokument einer Einheit (ID, Titel oder Ordner; ohne: `index.md`); Datei des Wissensordners | `knowledge.list`, `knowledge.show`, `knowledge.read` |
+| `knowledge search ANFRAGE… [-k N] [--keyword]` | Hybride Suche (Embeddings + BM25), Treffer mit Score, Überschriftenpfad, Dokument#Anker und Ausschnitt; ohne erreichbaren Embedding-Server Stichwortsuche mit Hinweis | `knowledge.search` |
+| `knowledge embed [--model M]` | Dokumente in Abschnitte teilen und geänderte (bei Modellwechsel alle) einbetten; Exit 1, wenn das Einbetten scheitert (die Stichwortsuche funktioniert trotzdem) | `knowledge.embed` |
+| `knowledge pull [--yes]` | Zustand des Embedding-Modells am Ollama-Server und der Befehl (`ollama pull embeddinggemma-2:270m`); erst `--yes` lädt (D194-Muster) | `knowledge.modelStatus`, `knowledge.pullModel` |
+| `knowledge mcp-config` | Konfiguration für MCP-Clients (opencode, Claude Code) | `knowledge.mcpConfig` |
+| `knowledge cancel` | laufenden Build abbrechen (im selben Prozess, z.B. `serve`) | `knowledge.cancel` |
+| `mcp knowledge [--project DIR]` | MCP-Server über stdio (D562) mit `knowledge_search(query, k)`, `knowledge_read(path)`, `knowledge_list()`; stdout trägt nur MCP-Nachrichten | – |
 | `terminal [--shell SH] [--arg A]... [--dir DIR] [--service S \| --kind K --target T] [--send TEXT]... [--idle 300ms] [--timeout 10s] [--cols N] [--rows N] [--scrollback] [--env K=V]...` | öffnet eine Terminal-Sitzung im Projekt (Shell aus `terminal.shell`, sonst `$SHELL`; bash/zsh/fish als Login-Shell, PATH der Login-Shell, `TERM=xterm-256color`) oder mit `--service` eine Shell im Compose-Dienst (`docker compose exec`, Plugin `docker`), schickt jede `--send`-Eingabe (Escapes `\n`, `\r`, `\t`, `\e`, `\xHH`, `\uHHHH`; Enter ist `\r`), wartet jeweils, bis die Ausgabe `--idle` lang ruht oder das Programm endet (höchstens `--timeout` insgesamt), gibt den Bildschirm als Text aus (`--scrollback`: mit Verlauf), schließt die Sitzung (Prozessbaum wird beendet). Ist das Programm beendet, steht `[exited with code N]` auf stderr. `--json`: `{terminal, screen, text}` | `terminal.open`, `terminal.input`, `terminal.screen`, `terminal.text`, `terminal.close`, Event `terminal.output` |
 | `terminal --kinds` | listet die Sitzungsarten der Plugins (Art, Ziel `service`/`container`, Bezeichnung; D372) | `terminal.kinds` |
 | `modules [enable ID \| disable ID]` | Module anzeigen/schalten | `modules.*` |
@@ -236,6 +246,37 @@ tiegel --headless debug-listen --json --map "$PWD=/var/www/html" | jq -c 'select
 
 Einzelbefehle laufen jeweils in einem frischen Prozess: offene Dokumente leben nur innerhalb eines Prozesses. Für zusammenhängende Bearbeitungen (`doc.open` → `doc.insert` → `doc.save`) `serve` verwenden. Persistentes (Einstellungen, Interpreter-Wahl, Local History, Modulzustände) liegt im Konfigurationsverzeichnis und gilt prozessübergreifend.
 
+## Projektwissen über MCP (D562, D563)
+
+Der Agent im Agent-Fenster bekommt das Wissen automatisch (Einstellung „Give the agent the project knowledge“, sobald `index.md` existiert). Für andere MCP-Clients gibt `tiegel --headless knowledge mcp-config --project DIR` die passenden Schnipsel aus, z. B. für opencode (`opencode.json`):
+
+```json
+{
+  "mcp": {
+    "tiegel-knowledge": {
+      "type": "local",
+      "command": ["/Applications/Tiegel.app/Contents/MacOS/tiegel", "--headless", "mcp", "knowledge", "--project", "/pfad/zum/projekt"],
+      "enabled": true
+    }
+  }
+}
+```
+
+und für Claude Code (`.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "tiegel-knowledge": {
+      "command": "/Applications/Tiegel.app/Contents/MacOS/tiegel",
+      "args": ["--headless", "mcp", "knowledge", "--project", "/pfad/zum/projekt"]
+    }
+  }
+}
+```
+
+Werkzeuge: `knowledge_search(query, k)` (Abschnitte mit Seite, Anker, Score), `knowledge_read(path)` (`index.md`, `units/<id>.md` oder eine Einheit), `knowledge_list()`. Die Suche bettet die Anfrage über den konfigurierten Embedding-Server ein (Standard: lokales Ollama); ohne Server antwortet sie per Stichwortsuche.
+
 ## JSON-RPC-Protokoll (`serve`)
 
 `tiegel --headless serve` spricht **JSON-RPC 2.0** über stdin/stdout.
@@ -345,6 +386,7 @@ Von den Modulen veröffentlichte Topics:
 | agent | `agent.status` (wie `agent.status`), `agent.update` (`{entry: {index, kind: user\|agent\|thought\|tool\|plan\|permission\|notice, text?, level?, tool?, plan?, permission?, time}, delta?}` – gestreamter Text kommt als viele Updates desselben Eintrags; `index: -1` = neue Sitzung), `agent.permission` (`{requestId, category, summary, tool, options}` – wartet auf `agent.permission`), `agent.changes` (Liste wie `agent.changes`), `agent.turnEnded` (`{stopReason, error?, byUser?}`) |
 | phpstan | `analysis.changed` (Status wie `analysis.status`, nach jedem Laden und jeder Neubewertung; Funde mit `analysis.findings` holen, sobald `version` wechselt) |
 | Kern (watch) | `watch.refreshed` (ohne Nutzlast; nach `watch.refresh`, z.B. bei Fensterfokus – Module prüfen dann Dateien außerhalb des Projekts) |
+| knowledge | `knowledge.status` (wie `knowledge.status`), `knowledge.progress` (`{unit, title, index, total, step: describe\|validate\|write, state: queued\|running\|done\|failed, error?, confidence?, attempt?}`) |
 | debug-xdebug | `debug.listening`, `debug.stopped`, `debug.sessionStarted`, `debug.sessionEnded`, `debug.break` (gemappte Host-Datei/Zeile), `debug.breakpointHit`, `debug.breakpoints.changed`, `debug.status`, `debug.output`, `debug.notification`, `debug.breakpoint.resolved` |
 
 ## Module
@@ -366,6 +408,7 @@ Die Funktionen außerhalb des Kerns stellen Module bereit (`internal/modules/*`,
 | `phpunit` | – | `test.*` | stellt `run.configTypes` (Typ `phpunit`), `import.ide.component` (Einstellungen und PHPUnit-Run-Konfigurationen der Referenz-IDE) und `install.recipes` (`composer require --dev phpunit/phpunit` im Projekt-Interpreter) bereit; nutzt `runtime.pathMappings` und `nav.typeHierarchy` (falls php-index läuft) |
 | `agent` | – | `agent.*` | stellt `install.recipes` (opencode per `npm install -g opencode-ai`) bereit; startet den ACP-Agenten nur auf Nutzeraktion; Einstellungen `agent.command`, `agent.model`, `agent.allowEdits`, `agent.allowShell`, `agent.allowCommits`, `agent.allowPush`, `agent.allowWeb`, `agent.allowOther`, `agent.rules` |
 | `phpstan` | – | `analysis.*` | liest Reports und PHPStans Result-Cache (startet PHPStan nie), wendet `ignoreErrors`/Baselines an, bildet Container-Pfade über die Interpreter-Mappings ab; übernimmt die Funde eigener PHPStan-Läufe (`qa.finished` von `qa-phpstan` → `qa.diagnostics`), ruft `agent.status`/`agent.prompt` über die API (Fix with AI); stellt `settings.candidates` für `phpstan.reportFile` (gefundene Reports) und `phpstan.config` bereit; Einstellungen `phpstan.reportFile`, `phpstan.config`, `phpstan.useResultCache`, `phpstan.inline` |
+| `knowledge` | – | `knowledge.*` | Projektwissen (D560–D563): baut nur auf `knowledge.build`; trägt über `agent.mcpServers` den MCP-Server für den Agenten ein; Einstellungen `knowledge.giveAgent`, `knowledge.agentModel`, `knowledge.exclude`, `knowledge.maxFiles`, `knowledge.embedProvider`, `knowledge.embedEndpoint`, `knowledge.embedModel`, `knowledge.embedApiKey` (global; sonst `$TIEGEL_EMBED_API_KEY`), `knowledge.chunkSize` |
 | `php-generate` | – | `generate.*` | – (ruft `lsp.codeActions` von lang-php über die API, falls es läuft) |
 | `live-templates` | – | `templates.*` | – (Kontext per Tree-sitter, Einstellungen `live-templates.user`/`.disabled`) |
 
@@ -653,6 +696,17 @@ Die `$File…$`-Makros brauchen eine aktuelle Datei; ohne sie scheitert der Star
 | `analysis.import` | `file?` | Status; `-32001`, wenn die Datei fehlt; `-32002` (mit Status in `data`), wenn sie nicht lesbar ist |
 | `analysis.reload` | `ifChanged?` (nur bei geänderter Quelldatei, ein `stat`), `reset?` | Status |
 | `analysis.fix` | `path`, `line`, `identifier?`, `dryRun?`, `wait?`, `ask?` | `{prompt, path, findings, sent, turn?}`; `-32001` ohne Fund, `-32003` (`data.reason: noAgent`) ohne verfügbaren Agenten |
+| `knowledge.status` | – | `{dir, exists, units, stale, failed, lastRun?, agent, model?, embedding: {provider, endpoint, model, local, chunks, embedded, bytes, storeModel?, recovered?}, giveAgent, run: {running, phase?, units, done, failed, cancelled?, errors?, started?, ended?, embedded?, embedTotal?, embedError?}}` |
+| `knowledge.plan` | `scope?`, `all?` | `{units: [{id, title, dir, files, stale?, md?, confidence?, generatedAt?, commit?, error?, unverified?}], estimate: {units, files, calls, inputTokens, agent, model?, note}, total}` |
+| `knowledge.build` | `scope?`, `all?`, `units?`, `wait?`, `noEmbed?` | Lauf wie `status.run`; `-32004`, solange ein Build läuft; `-32001`, wenn der Agent fehlt |
+| `knowledge.cancel` | – | Lauf |
+| `knowledge.list` | – | Einheiten wie in `plan` (alle, auch aktuelle und nicht mehr geplante) |
+| `knowledge.show` / `knowledge.read` | `unit` (ID, Titel, Ordner; leer = `index.md`) / `path` (`index.md`, `units/<id>.md` oder Einheit) | `{path, file, content}` |
+| `knowledge.search` | `query`, `k?` (8, ≤ 50), `keywordOnly?` | `{hits: [{score, vector?, keyword?, unit, path, file, heading, anchor?, text, snippet, sources?}], mode: hybrid\|keyword, note?}` |
+| `knowledge.embed` | `model?` | `{chunks, embedded, deleted, pending, model, error?}` |
+| `knowledge.modelStatus` | – | `{provider, endpoint, model, reachable, available, pullCommand?, error?, pulling?, pullStatus?}` |
+| `knowledge.pullModel` | `wait?` | wie `modelStatus` (lädt das Modell am Ollama-Server; nur auf Nutzeraktion) |
+| `knowledge.mcpConfig` | – | `{command, args, opencode, claude}` |
 
 Läufe einer Run-Konfiguration vom Typ `phpunit` (z.B. mit Ctrl+R gestartet) erscheinen ebenso als Testlauf. Einstellungen: `phpunit.executable`, `phpunit.configuration`, `phpunit.interpreter` (Standard `project`), `phpunit.parallel` (ParaTest für Suites und Verzeichnisse), `phpunit.arguments`.
 

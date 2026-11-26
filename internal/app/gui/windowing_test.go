@@ -70,9 +70,9 @@ func TestToolWindowShortcuts(t *testing.T) {
 	e.v.openToolMenu(toolProblems)
 	e.frame()
 	e.chooseLabel("Move to Right")
-	// Right: Problems and the Agent window.
+	// Right: Problems, the Agent and the Knowledge window.
 	if e.ctl.Tools.SideOf(toolProblems) != controller.SideRight || !e.v.ToolShown(toolProblems) ||
-		len(e.v.bench.Stripes[templates.SideRight]) != 2 {
+		len(e.v.bench.Stripes[templates.SideRight]) != 3 {
 		t.Fatalf("move: %+v", e.v.bench.Stripes[templates.SideRight])
 	}
 	// Maximize editor and back.

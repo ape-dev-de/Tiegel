@@ -184,6 +184,7 @@ type View struct {
 	agtd  *agentDock
 	// analysisd marks PHPStan findings (analysisdock.go).
 	analysisd *analysisDock
+	knwd      *knowledgeDock
 	cmpd      *composerDock
 	mdd       *markdownDock
 	extd      *toolsDock
@@ -268,6 +269,7 @@ func newView(ctl *controller.Controller, goos string, sh *text.Shaper) *View {
 	v.tstd = installTests(v)
 	v.agtd = installAgent(v)
 	v.analysisd = installAnalysis(v)
+	v.knwd = installKnowledge(v)
 	v.cmpd = installComposer(v)
 	v.mdd = installMarkdown(v)
 	v.extd = installExternalTools(v)
