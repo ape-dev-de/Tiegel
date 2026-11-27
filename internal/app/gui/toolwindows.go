@@ -75,7 +75,7 @@ func (v *View) layoutSyncButton(th *tokens.Theme) layout.Widget {
 		b := &v.syncBtn
 		b.Glyph, b.Size, b.IconSize = atoms.GlyphRefresh, th.Size.ControlH-th.Space.XS, th.Size.IconSmall
 		b.Description = "Reload All from Disk"
-		if c := v.Registry.ChordText(ActReloadFromDisk, v.goos); c != "" {
+		if c := v.chordLabel(ActReloadFromDisk); c != "" {
 			b.Description += " (" + c + ")"
 		}
 		if b.Clicked(gtx) {
@@ -92,7 +92,7 @@ func (v *View) layoutLocateButton(gtx layout.Context, th *tokens.Theme) layout.D
 	t := v.ctl.ActiveTab()
 	b.Disabled = t == nil || t.Virtual != ""
 	b.Description = "Select Opened File"
-	if c := v.Registry.ChordText(ActSelectInTree, v.goos); c != "" {
+	if c := v.chordLabel(ActSelectInTree); c != "" {
 		b.Description += " (" + c + ")"
 	}
 	if b.Clicked(gtx) {
@@ -224,7 +224,7 @@ func (v *View) toolSlots(slots *templates.Slots) {
 				continue
 			}
 			b := templates.StripeButton{ID: id, Title: t.Title, Glyph: toolGlyph(t), Active: l.Visible(id),
-				Group: benchGroup(l.GroupOf(id)), Shortcut: v.Registry.ChordText(t.toggleAction(), v.goos)}
+				Group: benchGroup(l.GroupOf(id)), Shortcut: v.chordLabel(t.toggleAction())}
 			if t.Badge != nil {
 				b.Badge, b.BadgeKind = t.Badge()
 			}

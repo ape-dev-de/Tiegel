@@ -92,8 +92,8 @@ func (v *View) frameWelcome(gtx layout.Context) layout.Dimensions {
 	v.welcome.GOOS = v.goos
 	v.welcome.Error = v.ctl.Status.Notice
 	v.welcome.Hints = []string{
-		fmt.Sprintf("Find Action    %s", v.Registry.ChordText(ActFindAction, v.goos)),
-		fmt.Sprintf("Settings    %s", v.Registry.ChordText(ActSettings, v.goos)),
+		fmt.Sprintf("Find Action    %s", v.chordLabel(ActFindAction)),
+		fmt.Sprintf("Settings    %s", v.chordLabel(ActSettings)),
 	}
 	for _, e := range v.welcome.Update(gtx) {
 		switch e := e.(type) {

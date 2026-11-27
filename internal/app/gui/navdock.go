@@ -42,6 +42,8 @@ const (
 	ActGotoSymbol       keymap.Action = actions.NavGotoSymbol
 	ActSearchEverywhere keymap.Action = actions.NavSearchEverywhere
 	ActFindUsages       keymap.Action = actions.EditorFindUses
+	ActCopyReference    keymap.Action = actions.EditCopyReference
+	ActCopyPathLine     keymap.Action = actions.EditCopyPathLine
 	ActRenameSymbol     keymap.Action = actions.RefactorRename
 	ActReformat         keymap.Action = actions.CodeReformat
 	ActInspectFile      keymap.Action = actions.CodeInspectFile
@@ -116,8 +118,8 @@ func installNav(v *View) *navDock {
 	r.AddGutterProvider(d.markers)
 	// Index marks take clicks on their icons before the breakpoint toggle.
 	r.gutterClicks = append([]GutterClickHandler{d.gutterClick}, r.gutterClicks...)
-	d.usages.Empty = "Find Usages (Alt+F7) on a symbol lists its usages here."
-	d.hierarchy.Empty = "Type Hierarchy (Ctrl+H) on a class shows its supertypes and subtypes."
+	d.usages.Empty = keyLabel(v.goos, "Find Usages (Alt+F7) on a symbol lists its usages here.")
+	d.hierarchy.Empty = keyLabel(v.goos, "Type Hierarchy (Ctrl+H) on a class shows its supertypes and subtypes.")
 	d.structure.Empty = "No structure for this file."
 	d.structure.OpenOnClick = true
 	r.AddToolWindow(ToolWindow{ID: ToolStructure, Title: "Structure", Glyph: atoms.GlyphList, Side: Left, Split: true, Order: 5,
@@ -152,6 +154,12 @@ func (d *navDock) actions() []Action {
 		}),
 		ed(ActFindUsages, "Find Usages", "Alt+F7", "Alt+F7", "Edit/Find", "usages", func(s *editorSession) {
 			d.n.FindUsages(s.location(), s.wordAtCaret())
+		}),
+		ed(ActCopyReference, "Copy Reference", "", "", "Edit/Copy Path", "reference", func(s *editorSession) {
+			d.n.CopyReference(s.location(), d.pathLine(s), d.copied)
+		}),
+		ed(ActCopyPathLine, "Copy Path:Line", "", "", "Edit/Copy Path", "reference", func(s *editorSession) {
+			d.copied(d.pathLine(s))
 		}),
 		glob(ActGotoClass, "Go to Class…", "Cmd+O", "Ctrl+N", "Navigate", "goto", func() { d.openSymbols(symClasses) }),
 		glob(ActGotoSymbol, "Go to Symbol…", "Cmd+Alt+O", "Ctrl+Alt+Shift+N", "Navigate", "goto", func() { d.openSymbols(symSymbols) }),
@@ -687,3 +695,16 @@ func (s *editorSession) wordAtCaret() string {
 
 // Close stops the event subscription.
 func (d *navDock) Close() { d.n.Close() }
+
+// pathLine is "path:line" of the caret (project relative; document
+// locked).
+func (d *navDock) pathLine(s *editorSession) string {
+	line, _ := s.caretLineSel()
+	return fmt.Sprintf("%s:%d", d.v.ctl.Rel(s.file), line)
+}
+
+// copied puts a reference on the clipboard and says so.
+func (d *navDock) copied(ref string) {
+	d.v.CopyText(ref)
+	d.v.ctl.Status.Notice = "Copied " + ref
+}

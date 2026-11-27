@@ -47,7 +47,7 @@ func TestShellIntegration(t *testing.T) {
 			t.Errorf("stripe button %s without icon", sb.ID)
 		}
 	}
-	if structure.Group != templates.GroupSplit || structure.Shortcut != "Cmd+7" {
+	if structure.Group != templates.GroupSplit || structure.Shortcut != "⌘7" {
 		t.Fatalf("structure button %+v", structure)
 	}
 	// Project above Structure.

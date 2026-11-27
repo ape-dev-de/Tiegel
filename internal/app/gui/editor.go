@@ -297,9 +297,9 @@ func (v *View) layoutNoEditor(gtx layout.Context) layout.Dimensions {
 	th := v.th
 	lines := []string{
 		"No file open",
-		"Go to File    " + v.Registry.ChordText(ActQuickOpen, v.goos),
-		"Recent Files    " + v.Registry.ChordText(ActRecentFiles, v.goos),
-		"Settings    " + v.Registry.ChordText(ActSettings, v.goos),
+		"Go to File    " + v.chordLabel(ActQuickOpen),
+		"Recent Files    " + v.chordLabel(ActRecentFiles),
+		"Settings    " + v.chordLabel(ActSettings),
 	}
 	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		children := make([]layout.FlexChild, len(lines))

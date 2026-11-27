@@ -204,9 +204,9 @@ func (v *View) chooserMenu(title string, items []MenuItem) {
 		}
 		for _, m := range controller.FilterFuzzy(q, labels, 200) {
 			e := flat[m.Index]
-			detail := e.item.Shortcut
+			detail := keyLabel(v.goos, e.item.Shortcut)
 			if detail == "" && e.item.Action != "" {
-				detail = v.Registry.ChordText(e.item.Action, v.goos)
+				detail = v.chordLabel(e.item.Action)
 			}
 			g := atoms.GlyphChevronRight
 			switch {

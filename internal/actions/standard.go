@@ -26,14 +26,18 @@ const (
 	TabPin         = "tab.pin"
 	TabSplitRight  = "tab.splitRight"
 
-	EditCut        = string(keymap.Cut)
-	EditCopy       = string(keymap.Copy)
-	EditPaste      = string(keymap.Paste)
-	EditSelectAll  = string(keymap.SelectAll)
-	EditComment    = string(keymap.ToggleComment)
-	NavDefinition  = "navigate.definition"
-	NavImplement   = "navigate.implementation"
-	EditorFindUses = "navigate.usages"
+	EditCut       = string(keymap.Cut)
+	EditCopy      = string(keymap.Copy)
+	EditPaste     = string(keymap.Paste)
+	EditSelectAll = string(keymap.SelectAll)
+	EditComment   = string(keymap.ToggleComment)
+	NavDefinition = "navigate.definition"
+	// EditCopyReference copies the reference of the symbol at the caret
+	// (App\Room::size) or path:line; EditCopyPathLine copies path:line.
+	EditCopyReference = "edit.copyReference"
+	EditCopyPathLine  = "edit.copyPathLine"
+	NavImplement      = "navigate.implementation"
+	EditorFindUses    = "navigate.usages"
 
 	GutterToggleBreakpoint = "debug.toggleBreakpoint"
 	GutterShowLineNumbers  = "view.lineNumbers"

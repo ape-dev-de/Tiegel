@@ -375,6 +375,16 @@ func (n *CodeNav) Navigate(cur Location, kind string) {
 				c.notice(err)
 				return
 			}
+			// The index does not know every member call (e.g. through a
+			// promoted constructor property); the language server may.
+			if len(r.Locations) == 0 && kind != JumpSuper && c.Status.LSPRunning {
+				method := "lsp.definition"
+				if kind == JumpImplementations {
+					method = "lsp.implementation"
+				}
+				c.GoToDefinition(cur, method)
+				return
+			}
 			n.jump(cur, kind, r)
 		}
 	})
@@ -394,7 +404,18 @@ func (n *CodeNav) jump(cur Location, kind string, r navResult) {
 		}
 		c.Status.Notice = msg
 	case 1:
-		c.GoTo(cur, r.Locations[0].Location())
+		t := r.Locations[0]
+		// Already on the declaration: show its usages instead (the
+		// Cmd+click on a declaration of the reference IDE).
+		if kind == JumpDefinition && t.File == cur.File && t.Range.Start.Offset <= cur.Range.Start.Offset && cur.Range.Start.Offset <= t.Range.End.Offset {
+			name := t.Name
+			if name == "" {
+				name = t.FQN
+			}
+			n.FindUsages(cur, name)
+			return
+		}
+		c.GoTo(cur, t.Location())
 	default:
 		title := map[string]string{JumpDefinition: "Choose Declaration", JumpImplementations: "Choose Implementation", JumpSuper: "Choose Super Declaration"}[kind]
 		n.Choose(title, cur, r.Locations)
@@ -657,4 +678,27 @@ func (n *CodeNav) OpenTarget(cur Location, t NavTarget) {
 		return
 	}
 	n.c.GoTo(cur, t.Location())
+}
+
+// CopyReference resolves the reference of the symbol at cur – its fully
+// qualified name (App\Room, App\Room::size, a property as App\Room::$x)
+// via nav.definition – and hands it to done; without a symbol (or index)
+// done gets fallback (path:line).
+func (n *CodeNav) CopyReference(cur Location, fallback string, done func(ref string)) {
+	c := n.c
+	c.Go(func(ctx context.Context) func() {
+		var r navResult
+		err := c.call(ctx, "nav."+JumpDefinition, navParams{Path: cur.File, At: pos{Offset: cur.Range.Start.Offset}}, &r)
+		return func() {
+			ref := fallback
+			if err == nil && len(r.Locations) > 0 && r.Locations[0].FQN != "" {
+				t := r.Locations[0]
+				ref = t.FQN
+				if t.Kind == "property" && t.Container != "" && !strings.Contains(ref, "::$") {
+					ref = strings.Replace(ref, "::", "::$", 1)
+				}
+			}
+			done(ref)
+		}
+	})
 }

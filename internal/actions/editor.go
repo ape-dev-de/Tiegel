@@ -67,6 +67,8 @@ func phpLSP(c Context) bool {
 func editorActions() []Action {
 	hasLine := func(c Context) bool { return c.Line > 0 }
 	return []Action{
+		{ID: EditCopyReference, Label: "Copy Reference", Icon: "copy", Enabled: hasLine, Keywords: []string{"fqn", "symbol", "class", "method", "clipboard"}},
+		{ID: EditCopyPathLine, Label: "Copy Path:Line", Enabled: hasLine, Keywords: []string{"file", "line", "location", "clipboard"}},
 		{ID: NavSuper, Label: "Go to Super Method", Shortcut: Shortcut{Mac: "Cmd+U", PC: "Ctrl+U"}, Enabled: php, Keywords: []string{"parent", "overridden", "interface"}},
 		{ID: NavTypeHierarchy, Label: "Type Hierarchy", Icon: "branch", Shortcut: Shortcut{Mac: "Ctrl+H", PC: "Ctrl+H"}, Enabled: php, Keywords: []string{"subclasses", "supertypes", "inheritance"}},
 		{ID: NavGotoClass, Label: "Go to Class…", Icon: "file-code", Shortcut: Shortcut{Mac: "Cmd+O", PC: "Ctrl+N"}, Keywords: []string{"interface", "trait", "enum", "type"}},
@@ -97,7 +99,8 @@ func editorMenu() []MenuItem {
 	git.Icon = "branch"
 	return []MenuItem{
 		Item(CodeContextActions), Separator(),
-		Item(EditCut), Item(EditCopy), Item(EditPaste), Separator(),
+		Item(EditCut), Item(EditCopy), Item(EditPaste),
+		Sub("Copy Path/Reference", Item(EditCopyReference), Item(EditCopyPathLine), Separator(), Item(FileCopyPath), Item(FileCopyRelPath)), Separator(),
 		gotoMenu, Item(EditorFindUses), Item(RefactorRename), Separator(),
 		Item(CodeReformat), Item(CodeInspectFile), Item(EditComment), Separator(),
 		git, Separator(),

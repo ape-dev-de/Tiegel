@@ -283,6 +283,7 @@ func (v *View) ShowActionMenu(ctx ContextID, t ContextTarget, ac actions.Context
 
 // menuPresenter shows menus with the ContextMenu molecule (D135).
 type menuPresenter struct {
+	goos   string
 	menu   molecules.ContextMenu
 	items  map[string]MenuItem
 	source []MenuItem
@@ -297,7 +298,7 @@ func (p *menuPresenter) present(v *View, _ string, items []MenuItem, pos image.P
 		return
 	}
 	p.items = map[string]MenuItem{}
-	p.source = items
+	p.source, p.goos = items, v.goos
 	p.menu.Items = p.convert(items, "")
 	if pos != (image.Point{}) {
 		p.menu.ShowAt(pos)
@@ -311,7 +312,7 @@ func (p *menuPresenter) convert(items []MenuItem, prefix string) []molecules.Men
 	out := make([]molecules.MenuItem, 0, len(items))
 	for i, it := range items {
 		id := fmt.Sprintf("%s%d", prefix, i)
-		mi := molecules.MenuItem{ID: id, Label: it.Title, Shortcut: it.Shortcut, Disabled: it.Disabled, Separator: it.Separator,
+		mi := molecules.MenuItem{ID: id, Label: it.Title, Shortcut: keyLabel(p.goos, it.Shortcut), Disabled: it.Disabled, Separator: it.Separator,
 			Glyph: atoms.GlyphNamed(it.Icon)}
 		if it.Checked {
 			mi.Check, mi.Checked = molecules.MenuCheckBox, true
@@ -418,7 +419,7 @@ func (v *View) openFindAction() {
 			if m.Path != "" {
 				label += "  (" + m.Path + ")"
 			}
-			detail := m.Shortcut
+			detail := keyLabel(v.goos, m.Shortcut)
 			if m.Disabled {
 				detail = strings.TrimSpace("disabled " + detail)
 			}

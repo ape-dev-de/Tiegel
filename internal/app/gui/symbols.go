@@ -202,7 +202,7 @@ func (sc *symbolChooser) items() []palette.Item {
 			if g == nil {
 				g = atoms.GlyphChevronRight
 			}
-			add(symEntry{action: m.ID}, palette.Item{Label: m.Label, Detail: m.Shortcut, Glyph: g, Group: "Actions"})
+			add(symEntry{action: m.ID}, palette.Item{Label: m.Label, Detail: keyLabel(v.goos, m.Shortcut), Glyph: g, Group: "Actions"})
 		}
 	}
 	sc.message(fresh || !sc.needSymbols(), res)

@@ -302,7 +302,7 @@ func (d *runDock) layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return d.layoutOutput(gtx, th, cur) }))
 	} else {
 		children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			hint := "No runs yet. Run (Ctrl+R) starts the selected configuration, Run File (Ctrl+Shift+R) the current PHP file."
+			hint := "No runs yet. Run (" + d.v.chordLabel(ActRun) + ") starts the selected configuration, Run File (" + d.v.chordLabel(ActRunFile) + ") the current PHP file."
 			return layout.Inset{Left: th.Space.S, Top: th.Space.S}.Layout(gtx, atoms.Muted(hint).Fn(th))
 		}))
 	}

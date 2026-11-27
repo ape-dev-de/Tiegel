@@ -392,9 +392,23 @@ func (v *View) treeEvent(e filetree.Event) {
 
 func shortcutText(goos, k string) string {
 	if goos == "darwin" {
-		return "Cmd+" + k
+		return keyLabel(goos, "Cmd+"+k)
 	}
 	return "Ctrl+" + k
+}
+
+// keyLabel formats shortcut text for display: macOS symbols (⌥⌘B) on
+// darwin, unchanged elsewhere. Native menus get the plain chord instead.
+func keyLabel(goos, s string) string {
+	if goos == "darwin" {
+		return keymap.MacLabel(s)
+	}
+	return s
+}
+
+// chordLabel is the display text of an action's shortcut ("" = none).
+func (v *View) chordLabel(id keymap.Action) string {
+	return keyLabel(v.goos, v.Registry.ChordText(id, v.goos))
 }
 
 // treeMenu is the context menu of a tree entry (rel "" = project root).

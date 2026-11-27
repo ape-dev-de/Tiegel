@@ -166,7 +166,7 @@ func (v *View) analysisHint() *string {
 	}
 	h := ""
 	if p.FixAvailable() {
-		h = "Fix with AI: " + v.Registry.ChordText(ActContextActions, v.goos) + " or right click"
+		h = "Fix with AI: " + v.chordLabel(ActContextActions) + " or right click"
 	}
 	return &h
 }
