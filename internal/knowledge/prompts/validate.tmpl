@@ -1,0 +1,24 @@
+{{template "base" .}}
+
+## Task: review ({{.Level}}) – {{.Title}}
+Another analyst wrote the page below. Check every claim against the code: do the files and symbols exist and do what is claimed? Are the order of the steps and the data stores right? Is something important missing (entry points, reads, writes, outputs, external calls)?
+Remove what you cannot confirm in the code, fix what is wrong, add what is missing. Delete generic explanations that would be true for any project. Move doubts to openQuestions.
+
+Tiegel checked the references mechanically:
+{{if .Notes}}{{range .Notes}}- {{.}}
+{{end}}{{if .MoreNotes}}- … {{.MoreNotes}} more
+{{end}}{{else}}- all referenced files and symbols were found
+{{end}}
+The page:
+```json
+{{.Doc}}
+```
+
+Answer with exactly one fenced json block and nothing after it:
+```json
+{
+  "confidence": 0.0-1.0 (how well the corrected page matches the code),
+  "issues": ["what you corrected, one line each"],
+  "result": { the corrected page in the same shape }
+}
+```

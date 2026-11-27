@@ -1,0 +1,14 @@
+{{template "base" .}}
+
+## Task: overview (level 0)
+Describe the system as a whole: what data it takes in, keeps and puts out, its architecture style, and its containers in the sense of C4 (the application(s), workers, databases, caches, queues, search, storage, mail, external APIs, the people or systems using it) with the data that flows between them.
+
+{{template "facts" .}}
+
+Files worth reading first:
+{{range .Files}}- {{.}}
+{{end}}{{if .MoreFiles}}- … and {{.MoreFiles}} more
+{{end}}
+Check the mechanical guess of the architecture style against the code (routes, templates, API serializers, console commands, workers). Name concrete containers only (from compose files, config, client classes); do not invent infrastructure. Folders: the role of each top-level source folder for the data (one line each), not what the folder type means in the framework.{{template "questions" .}}
+
+{{template "answer" .}}

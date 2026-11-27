@@ -1,0 +1,13 @@
+{{template "base" .}}
+
+## Task: entry points (level 1) – {{.Title}}
+List where data enters the system through {{.Title | lower}}: for each entry point the handler, what comes in, what goes out and – in one line – which data it handles.
+
+{{template "facts" .}}
+
+Inventory Tiegel extracted mechanically (route files, attributes, annotations, command classes, handlers):
+{{if .Entries}}{{trim (budget 2500 .Entries)}}{{else}}- nothing found: search the code for {{.Title | lower}} yourself (front controllers, route definitions, command classes, consumers, cron configuration).{{end}}
+
+Keep every inventory entry (same name), fix wrong handlers, add entry points the inventory missed (only with a file you read). Group related entry points with the same "process" name (e.g. all order routes → "Orders"). Input/output: concrete parameters, bodies, response shapes, tables written – no framework explanations.{{template "questions" .}}
+
+{{template "answer" .}}

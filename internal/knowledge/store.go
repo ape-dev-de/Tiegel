@@ -12,8 +12,12 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // Record is a chunk with its embedding (nil: not embedded yet).
@@ -64,30 +68,65 @@ type Store interface {
 	Close() error
 }
 
-// FileStore is a Store in a directory: chunks.json (metadata, in row
-// order) and vectors.bin (header, float32 rows, CRC). Writes replace
-// both files atomically.
+// FileStore is a Store in a directory: chunks.json (metadata in row
+// order, model, dimension and the name of the vector file) and
+// vectors-<generation>.bin (header, float32 rows, CRC).
+//
+// Readers never wait for writers and never see a half-written store
+// (D565): the store is an immutable snapshot behind an atomic pointer; a
+// write copies it, saves a new vector file, then replaces chunks.json
+// atomically (the commit point) and swaps the snapshot. The previous
+// vector file is kept for readers in other processes (the MCP server)
+// that loaded the old chunks.json a moment ago. Readers reload when
+// chunks.json changed on disk (another process wrote it).
 type FileStore struct {
 	dir string
 
-	mu        sync.Mutex
+	// wmu serializes writers (and reloads).
+	wmu  sync.Mutex
+	snap atomic.Pointer[snapshot]
+}
+
+// snapshot is an immutable state of the store.
+type snapshot struct {
 	model     string
 	dim       int
 	chunks    []Chunk
 	vecs      [][]float32 // nil rows: not embedded
 	byID      map[string]int
 	recovered string
+	// vectors is the vector file, stamp the chunks.json it came from.
+	vectors string
+	stamp   fileStamp
+}
+
+type fileStamp struct {
+	size    int64
+	modTime time.Time
+}
+
+func stampOf(file string) fileStamp {
+	st, err := os.Stat(file)
+	if err != nil {
+		return fileStamp{}
+	}
+	return fileStamp{st.Size(), st.ModTime()}
 }
 
 const vecMagic = "TGVS"
+
+// legacyVectors is the vector file of stores written before D565.
+const legacyVectors = "vectors.bin"
 
 type storeMeta struct {
 	Version int     `json:"version"`
 	Model   string  `json:"model"`
 	Dim     int     `json:"dim"`
 	Chunks  []Chunk `json:"chunks"`
-	// Rows tells per chunk whether it has a vector (in vectors.bin order).
+	// Rows tells per chunk whether it has a vector (in vector file order).
 	Rows []bool `json:"rows"`
+	// Vectors names the vector file ("" = vectors.bin).
+	Vectors string `json:"vectors,omitempty"`
 }
 
 // OpenFileStore opens (or creates) the store in dir. A broken store is
@@ -96,32 +135,50 @@ func OpenFileStore(dir string) (*FileStore, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("vector store: %w", err)
 	}
-	s := &FileStore{dir: dir, byID: map[string]int{}}
-	if err := s.load(); err != nil {
-		s.model, s.dim, s.chunks, s.vecs, s.byID = "", 0, nil, nil, map[string]int{}
-		s.recovered = err.Error()
-	}
+	s := &FileStore{dir: dir}
+	s.snap.Store(s.load())
 	return s, nil
 }
 
-func (s *FileStore) load() error {
-	mb, err := os.ReadFile(filepath.Join(s.dir, "chunks.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+// load reads the store from disk; a broken store yields an empty
+// snapshot with recovered set.
+func (s *FileStore) load() *snapshot {
+	var sn *snapshot
+	var err error
+	// A writer in another process may remove the vector file between
+	// reading chunks.json and the vector file: read again then.
+	for range 3 {
+		if sn, err = s.read(); err == nil || !errors.Is(err, os.ErrNotExist) {
+			break
+		}
 	}
 	if err != nil {
-		return err
+		return &snapshot{byID: map[string]int{}, recovered: err.Error(), stamp: stampOf(filepath.Join(s.dir, "chunks.json"))}
+	}
+	return sn
+}
+
+func (s *FileStore) read() (*snapshot, error) {
+	cj := filepath.Join(s.dir, "chunks.json")
+	stamp := stampOf(cj)
+	sn := &snapshot{byID: map[string]int{}, stamp: stamp}
+	mb, err := os.ReadFile(cj)
+	if errors.Is(err, os.ErrNotExist) {
+		return sn, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	var meta storeMeta
 	if err := json.Unmarshal(mb, &meta); err != nil {
-		return fmt.Errorf("chunks.json is broken: %w", err)
+		return nil, fmt.Errorf("chunks.json is broken: %w", err)
 	}
 	if len(meta.Rows) != len(meta.Chunks) {
-		return errors.New("chunks.json: rows and chunks differ")
+		return nil, errors.New("chunks.json: rows and chunks differ")
 	}
-	vb, err := os.ReadFile(filepath.Join(s.dir, "vectors.bin"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	vf := meta.Vectors
+	if vf == "" || strings.ContainsAny(vf, `/\`) {
+		vf = legacyVectors
 	}
 	n := 0
 	for _, r := range meta.Rows {
@@ -131,36 +188,60 @@ func (s *FileStore) load() error {
 	}
 	var rows [][]float32
 	if n > 0 {
+		vb, err := os.ReadFile(filepath.Join(s.dir, vf))
+		if err != nil {
+			return nil, fmt.Errorf("vector store: %w", err)
+		}
 		if rows, err = decodeVectors(vb, meta.Dim, n); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	s.model, s.dim, s.chunks = meta.Model, meta.Dim, meta.Chunks
-	s.vecs = make([][]float32, len(meta.Chunks))
+	sn.model, sn.dim, sn.chunks, sn.vectors = meta.Model, meta.Dim, meta.Chunks, vf
+	sn.vecs = make([][]float32, len(meta.Chunks))
 	j := 0
 	for i, c := range meta.Chunks {
-		s.byID[c.ID] = i
+		sn.byID[c.ID] = i
 		if meta.Rows[i] {
-			s.vecs[i] = rows[j]
+			sn.vecs[i] = rows[j]
 			j++
 		}
 	}
-	return nil
+	return sn, nil
 }
 
-// decodeVectors reads vectors.bin: magic, dim (uint32), count (uint32),
-// count*dim float32 (little endian), CRC32 of everything before.
+// current returns the snapshot readers use: the last one, reloaded when
+// another process changed chunks.json (unless a write is running – then
+// the writer's snapshot follows shortly).
+func (s *FileStore) current() *snapshot {
+	sn := s.snap.Load()
+	if stampOf(filepath.Join(s.dir, "chunks.json")) == sn.stamp {
+		return sn
+	}
+	if !s.wmu.TryLock() {
+		return sn
+	}
+	defer s.wmu.Unlock()
+	if sn = s.snap.Load(); stampOf(filepath.Join(s.dir, "chunks.json")) != sn.stamp {
+		sn = s.load()
+		s.snap.Store(sn)
+	}
+	return sn
+}
+
+// decodeVectors reads a vector file: magic, dim (uint32), count
+// (uint32), count*dim float32 (little endian), CRC32 of everything
+// before.
 func decodeVectors(b []byte, dim, n int) ([][]float32, error) {
 	if len(b) < 16 || string(b[:4]) != vecMagic {
-		return nil, errors.New("vectors.bin is broken: bad header")
+		return nil, errors.New("vector file is broken: bad header")
 	}
 	body, sum := b[:len(b)-4], binary.LittleEndian.Uint32(b[len(b)-4:])
 	if crc32.ChecksumIEEE(body) != sum {
-		return nil, errors.New("vectors.bin is broken: checksum mismatch")
+		return nil, errors.New("vector file is broken: checksum mismatch")
 	}
 	d, c := int(binary.LittleEndian.Uint32(b[4:])), int(binary.LittleEndian.Uint32(b[8:]))
 	if d != dim || c != n || len(body) != 12+4*d*c {
-		return nil, fmt.Errorf("vectors.bin is broken: %d×%d vectors, expected %d×%d", c, d, n, dim)
+		return nil, fmt.Errorf("vector file is broken: %d×%d vectors, expected %d×%d", c, d, n, dim)
 	}
 	out := make([][]float32, c)
 	off := 12
@@ -192,19 +273,23 @@ func encodeVectors(dim int, rows [][]float32) []byte {
 	return buf.Bytes()
 }
 
-// save writes both files (callers hold mu). vectors.bin is written
-// first; chunks.json last, so a crash in between is caught by the
-// count check on the next open.
-func (s *FileStore) save() error {
-	meta := storeMeta{Version: 1, Model: s.model, Dim: s.dim, Chunks: s.chunks, Rows: make([]bool, len(s.chunks))}
+var genCounter atomic.Uint64
+
+// commit saves sn (callers hold wmu) and makes it the current snapshot:
+// a new vector file first, then chunks.json (the commit point); vector
+// files older than the previous one are removed.
+func (s *FileStore) commit(sn *snapshot) error {
+	prev := s.snap.Load()
+	meta := storeMeta{Version: 2, Model: sn.model, Dim: sn.dim, Chunks: sn.chunks, Rows: make([]bool, len(sn.chunks))}
 	var rows [][]float32
-	for i, v := range s.vecs {
+	for i, v := range sn.vecs {
 		if v != nil {
 			meta.Rows[i] = true
 			rows = append(rows, v)
 		}
 	}
-	if err := WriteFileAtomic(filepath.Join(s.dir, "vectors.bin"), encodeVectors(s.dim, rows)); err != nil {
+	meta.Vectors = fmt.Sprintf("vectors-%x-%x.bin", time.Now().UnixNano(), genCounter.Add(1))
+	if err := WriteFileAtomic(filepath.Join(s.dir, meta.Vectors), encodeVectors(sn.dim, rows)); err != nil {
 		return fmt.Errorf("vector store: %w", err)
 	}
 	mb, err := json.Marshal(meta)
@@ -212,9 +297,36 @@ func (s *FileStore) save() error {
 		return err
 	}
 	if err := WriteFileAtomic(filepath.Join(s.dir, "chunks.json"), mb); err != nil {
+		_ = os.Remove(filepath.Join(s.dir, meta.Vectors))
 		return fmt.Errorf("vector store: %w", err)
 	}
+	sn.vectors = meta.Vectors
+	sn.stamp = stampOf(filepath.Join(s.dir, "chunks.json"))
+	s.snap.Store(sn)
+	keep := map[string]bool{meta.Vectors: true, prev.vectors: true}
+	if ms, _ := filepath.Glob(filepath.Join(s.dir, "vectors*.bin")); len(ms) > 0 {
+		for _, m := range ms {
+			if !keep[filepath.Base(m)] {
+				_ = os.Remove(m)
+			}
+		}
+	}
 	return nil
+}
+
+// edit returns a copy of the current snapshot to change (callers hold
+// wmu; the snapshot is reloaded first when another process wrote).
+func (s *FileStore) edit() *snapshot {
+	cur := s.snap.Load()
+	if stampOf(filepath.Join(s.dir, "chunks.json")) != cur.stamp {
+		cur = s.load()
+		s.snap.Store(cur)
+	}
+	sn := &snapshot{model: cur.model, dim: cur.dim, chunks: slices.Clone(cur.chunks), vecs: slices.Clone(cur.vecs), byID: make(map[string]int, len(cur.byID)), vectors: cur.vectors}
+	for k, v := range cur.byID {
+		sn.byID[k] = v
+	}
+	return sn
 }
 
 // Upsert implements Store.
@@ -222,15 +334,16 @@ func (s *FileStore) Upsert(ctx context.Context, recs []Record) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	sn := s.edit()
 	for _, r := range recs {
 		if r.Vector != nil {
-			if s.dim == 0 {
-				s.dim = len(r.Vector)
+			if sn.dim == 0 {
+				sn.dim = len(r.Vector)
 			}
-			if len(r.Vector) != s.dim {
-				return fmt.Errorf("vector store: dimension %d, store has %d", len(r.Vector), s.dim)
+			if len(r.Vector) != sn.dim {
+				return fmt.Errorf("vector store: dimension %d, store has %d", len(r.Vector), sn.dim)
 			}
 		}
 	}
@@ -239,15 +352,15 @@ func (s *FileStore) Upsert(ctx context.Context, recs []Record) error {
 		if r.Vector != nil {
 			v = Normalize(r.Vector)
 		}
-		if i, ok := s.byID[r.Chunk.ID]; ok {
-			s.chunks[i], s.vecs[i] = r.Chunk, v
+		if i, ok := sn.byID[r.Chunk.ID]; ok {
+			sn.chunks[i], sn.vecs[i] = r.Chunk, v
 			continue
 		}
-		s.byID[r.Chunk.ID] = len(s.chunks)
-		s.chunks = append(s.chunks, r.Chunk)
-		s.vecs = append(s.vecs, v)
+		sn.byID[r.Chunk.ID] = len(sn.chunks)
+		sn.chunks = append(sn.chunks, r.Chunk)
+		sn.vecs = append(sn.vecs, v)
 	}
-	return s.save()
+	return s.commit(sn)
 }
 
 // Delete implements Store.
@@ -255,37 +368,34 @@ func (s *FileStore) Delete(ctx context.Context, ids []string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	cur := s.edit()
 	drop := map[string]bool{}
 	for _, id := range ids {
 		drop[id] = true
 	}
-	var cs []Chunk
-	var vs [][]float32
-	s.byID = map[string]int{}
-	for i, c := range s.chunks {
+	sn := &snapshot{model: cur.model, dim: cur.dim, byID: map[string]int{}, vectors: cur.vectors}
+	for i, c := range cur.chunks {
 		if drop[c.ID] {
 			continue
 		}
-		s.byID[c.ID] = len(cs)
-		cs = append(cs, c)
-		vs = append(vs, s.vecs[i])
+		sn.byID[c.ID] = len(sn.chunks)
+		sn.chunks = append(sn.chunks, c)
+		sn.vecs = append(sn.vecs, cur.vecs[i])
 	}
-	s.chunks, s.vecs = cs, vs
-	return s.save()
+	return s.commit(sn)
 }
 
 // Search implements Store.
 func (s *FileStore) Search(ctx context.Context, q []float32, k int) ([]Hit, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(q) != s.dim || s.dim == 0 {
-		return nil, fmt.Errorf("vector store: query dimension %d, store has %d", len(q), s.dim)
+	sn := s.current()
+	if len(q) != sn.dim || sn.dim == 0 {
+		return nil, fmt.Errorf("vector store: query dimension %d, store has %d", len(q), sn.dim)
 	}
 	q = Normalize(q)
 	var hits []Hit
-	for i, v := range s.vecs {
+	for i, v := range sn.vecs {
 		if v == nil {
 			continue
 		}
@@ -294,7 +404,7 @@ func (s *FileStore) Search(ctx context.Context, q []float32, k int) ([]Hit, erro
 				return nil, err
 			}
 		}
-		hits = append(hits, Hit{Chunk: s.chunks[i], Score: dot(q, v)})
+		hits = append(hits, Hit{Chunk: sn.chunks[i], Score: dot(q, v)})
 	}
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 	if k > 0 && len(hits) > k {
@@ -305,40 +415,44 @@ func (s *FileStore) Search(ctx context.Context, q []float32, k int) ([]Hit, erro
 
 // Chunks implements Store.
 func (s *FileStore) Chunks(context.Context) ([]Chunk, map[string]bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	emb := make(map[string]bool, len(s.chunks))
-	for i, c := range s.chunks {
-		emb[c.ID] = s.vecs[i] != nil
+	sn := s.current()
+	emb := make(map[string]bool, len(sn.chunks))
+	for i, c := range sn.chunks {
+		emb[c.ID] = sn.vecs[i] != nil
 	}
-	return append([]Chunk(nil), s.chunks...), emb, nil
+	return slices.Clone(sn.chunks), emb, nil
 }
 
 // SetModel implements Store.
 func (s *FileStore) SetModel(_ context.Context, model string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.model == model {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if s.snap.Load().model == model && s.snap.Load().stamp == stampOf(filepath.Join(s.dir, "chunks.json")) {
 		return nil
 	}
-	s.model, s.dim = model, 0
-	for i := range s.vecs {
-		s.vecs[i] = nil
+	sn := s.edit()
+	if sn.model == model {
+		return nil
 	}
-	return s.save()
+	sn.model, sn.dim = model, 0
+	sn.vecs = make([][]float32, len(sn.chunks))
+	return s.commit(sn)
 }
 
 // Stats implements Store.
 func (s *FileStore) Stats(context.Context) (StoreStats, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st := StoreStats{Chunks: len(s.chunks), Model: s.model, Dim: s.dim, Recovered: s.recovered}
-	for _, v := range s.vecs {
+	sn := s.current()
+	st := StoreStats{Chunks: len(sn.chunks), Model: sn.model, Dim: sn.dim, Recovered: sn.recovered}
+	for _, v := range sn.vecs {
 		if v != nil {
 			st.Embedded++
 		}
 	}
-	for _, f := range []string{"chunks.json", "vectors.bin"} {
+	files := []string{"chunks.json"}
+	if sn.vectors != "" {
+		files = append(files, sn.vectors)
+	}
+	for _, f := range files {
 		if fi, err := os.Stat(filepath.Join(s.dir, f)); err == nil {
 			st.Bytes += fi.Size()
 		}

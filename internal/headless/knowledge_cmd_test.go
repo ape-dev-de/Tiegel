@@ -11,31 +11,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ape-dev-de/tiegel/internal/acp"
 	"github.com/ape-dev-de/tiegel/internal/acp/acptest"
 	"github.com/ape-dev-de/tiegel/internal/api"
 	kn "github.com/ape-dev-de/tiegel/internal/knowledge"
+	"github.com/ape-dev-de/tiegel/internal/knowledge/knowledgetest"
 	knmod "github.com/ape-dev-de/tiegel/internal/modules/knowledge"
 )
 
-// knowledgeScript answers the three pipeline prompts.
-func knowledgeScript(_ context.Context, t *acptest.Turn) string {
-	p := t.Prompt
-	switch {
-	case strings.Contains(p, "You document the data flows"):
-		d := kn.Description{Summary: "Stores orders.", Flows: []kn.Flow{{Name: "Place order", Trigger: "POST /orders",
-			Steps: []kn.Step{{File: "src/Order.php", Symbol: "Order::place", What: "saves the order"}}}}}
-		b, _ := json.Marshal(d)
-		t.Text("```json\n" + string(b) + "\n```")
-	case strings.Contains(p, "You review a description"):
-		i := strings.Index(p, "```json\n")
-		j := strings.Index(p[i+8:], "\n```")
-		var d kn.Description
-		_ = json.Unmarshal([]byte(p[i+8:i+8+j]), &d)
-		v, _ := json.Marshal(kn.Validation{Confidence: 0.9, Description: &d})
-		t.Text("```json\n" + string(v) + "\n```")
-	default:
-		t.Text("## Overview\nStores orders in the database.\n\n## Data flows\n### Place order\n1. [src/Order.php:3](src/Order.php#L3) – saves the order\n")
+// knowledgeFake answers the pipeline's prompts; the script adds a
+// thought and a read tool call to every describe prompt.
+var knowledgeFake = &knowledgetest.Fake{Service: kn.Ref{File: "src/Service/OrderService.php", Symbol: `App\Service\OrderService::save`}}
+
+func knowledgeScript(ctx context.Context, t *acptest.Turn) string {
+	if _, step, _ := knowledgetest.Level(t.Prompt); step == kn.StepDescribe {
+		t.Thought("Checking the routes first.")
+		t.Tool(false, acp.ToolCall{ToolCallID: "r1", Title: "read src/Controller/OrderController.php", Kind: acp.KindRead, Status: "completed"})
 	}
+	t.Text(knowledgeFake.Answer(ctx, t.Prompt))
 	return ""
 }
 
@@ -53,8 +46,9 @@ func runKnowledgeCLI(t *testing.T, cfg string, stdin io.Reader, args ...string) 
 
 func TestKnowledgeCommands(t *testing.T) {
 	dir := project(t, map[string]string{
-		"composer.json": `{"autoload":{"psr-4":{"App\\":"src/"}}}`,
-		"src/Order.php": "<?php\nclass Order {\n  public function place() {}\n}\n",
+		"composer.json":                      `{"require":{"symfony/framework-bundle":"^7"},"autoload":{"psr-4":{"App\\":"src/"}}}`,
+		"src/Controller/OrderController.php": "<?php\nnamespace App\\Controller;\nclass OrderController {\n  #[Route('/orders', methods: ['POST'])]\n  public function create() {}\n}\n",
+		"src/Service/OrderService.php":       "<?php\nnamespace App\\Service;\nclass OrderService {\n  public function save() {}\n}\n",
 	})
 	cfg := filepath.Join(t.TempDir(), "cfg")
 	// The embedding server is unreachable: keyword search only.
@@ -66,40 +60,64 @@ func TestKnowledgeCommands(t *testing.T) {
 		return runKnowledgeCLI(t, cfg, nil, append([]string{"--headless", "--project", dir, "knowledge"}, args...)...)
 	}
 	code, out, errs = run("status")
-	if code != 0 || !strings.Contains(out, "0 built, 1 to build") || !strings.Contains(out, "Embeddings:") || !strings.Contains(out, "(local)") {
+	if code != 0 || !strings.Contains(out, "0 built, 3 to build") || !strings.Contains(out, "Overview:") || !strings.Contains(out, "Questions:") || !strings.Contains(out, "(local)") {
 		t.Fatalf("%d %s %s", code, out, errs)
 	}
 	code, out, _ = run("plan")
-	if code != 0 || !strings.Contains(squash(out), "src App 1 new") || !strings.Contains(out, "billed by your agent's provider") {
+	if code != 0 || !strings.Contains(squash(out), "overview overview Overview") || !strings.Contains(squash(out), "Processes 1 of 1 2") || !strings.Contains(out, "billed by your agent's provider") || !strings.Contains(out, "upper bound") {
 		t.Fatalf("%d %s", code, out)
+	}
+	code, out, _ = run("plan", "--level", "entrypoints")
+	if code != 0 || strings.Contains(out, "overview") || !strings.Contains(out, "entrypoints-http") {
+		t.Fatalf("%d %s", code, out)
+	}
+	if code, _, _ = run("plan", "--level", "nope"); code == 0 {
+		t.Fatal("unknown level")
 	}
 	// build without --yes runs nothing.
 	code, out, _ = run("build")
 	if code != 0 || !strings.Contains(out, "nothing was run: add --yes") {
 		t.Fatalf("%d %s", code, out)
 	}
-	code, out, errs = run("build", "--yes")
-	if code != 0 || !strings.Contains(out, "1 units built, 0 failed") || !strings.Contains(errs, "[1/1] src: write done (confidence 0.90)") || !strings.Contains(out, "embedding:") {
+	code, out, errs = run("build", "--yes", "--verbose")
+	if code != 0 || !strings.Contains(out, "5 pages built, 0 failed") || !strings.Contains(errs, "[1/1] overview overview: write done (confidence 0.85)") ||
+		!strings.Contains(errs, "describe running (step 1 of 3)") || !strings.Contains(errs, "  overview thought: Checking the routes first.") ||
+		!strings.Contains(errs, "  overview tool read src/Controller/OrderController.php [completed]") || !strings.Contains(out, "embedding:") {
 		t.Fatalf("%d %s %s", code, out, errs)
+	}
+	// The step lines come once each, without counter repeats.
+	if n := strings.Count(errs, "overview overview: describe running"); n != 1 {
+		t.Fatal(n, errs)
+	}
+	code, out, _ = run("transcript", "overview")
+	if code != 0 || !strings.Contains(out, "» describe (step 1 of 3)") || !strings.Contains(out, "thought: Checking the routes first.") || !strings.Contains(out, "log: ") {
+		t.Fatalf("%d %s", code, out)
+	}
+	if code, _, _ = run("transcript"); code != ExitUsage {
+		t.Fatal(code)
 	}
 	code, out, _ = run("plan")
 	if code != 0 || !strings.Contains(out, "nothing to build") {
 		t.Fatalf("%d %s", code, out)
 	}
 	code, out, _ = run("list")
-	if code != 0 || !strings.Contains(squash(out), "src App 1 0.90 current") {
+	if code != 0 || !strings.Contains(squash(out), "overview overview Overview") || !strings.Contains(squash(out), "processes process-app-controller-ordercontroller OrderController (HTTP)") || !strings.Contains(out, "0.85") {
 		t.Fatalf("%d %q", code, out)
 	}
-	code, out, _ = run("show", "src")
-	if code != 0 || !strings.HasPrefix(out, "---\nunit: src") || !strings.Contains(out, "## Data flows") {
+	code, out, _ = run("show", "overview")
+	if code != 0 || !strings.HasPrefix(out, "---\nid: overview") || !strings.Contains(out, "```mermaid") {
 		t.Fatalf("%d %s", code, out)
 	}
 	code, out, _ = run("read", "index.md")
-	if code != 0 || !strings.Contains(out, "(units/src.md)") {
+	if code != 0 || !strings.Contains(out, "(processes/app-controller-ordercontroller.md)") {
 		t.Fatalf("%d %s", code, out)
 	}
-	code, out, _ = run("search", "orders", "database", "-k", "2")
-	if code != 0 || !strings.Contains(out, "1. ") || !strings.Contains(out, "units/src.md#") {
+	code, out, _ = run("questions", "--answered")
+	if code != 0 || !strings.Contains(out, "Which table keeps the order lines?") {
+		t.Fatalf("%d %s", code, out)
+	}
+	code, out, _ = run("search", "orders", "POST", "-k", "2")
+	if code != 0 || !strings.Contains(out, "1. ") || !strings.Contains(out, ".md#") {
 		t.Fatalf("%d %s", code, out)
 	}
 	code, out, _ = run("search", "orders", "--json")
@@ -136,7 +154,7 @@ func TestKnowledgeCommands(t *testing.T) {
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"knowledge_search","arguments":{"query":"orders"}}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"knowledge_list","arguments":{}}}`,
-		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"knowledge_read","arguments":{"path":"units/src.md"}}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"knowledge_read","arguments":{"path":"overview.md"}}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"knowledge_read","arguments":{"path":"../../secret.md"}}}`,
 	}, "\n") + "\n"
 	done := make(chan struct{})
@@ -155,6 +173,7 @@ func TestKnowledgeCommands(t *testing.T) {
 	}
 	var resps []map[string]any
 	sc := bufio.NewScanner(strings.NewReader(mcpOut))
+	sc.Buffer(nil, 1<<20)
 	for sc.Scan() {
 		var m map[string]any
 		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
@@ -172,13 +191,13 @@ func TestKnowledgeCommands(t *testing.T) {
 	if tools := resps[1]["result"].(map[string]any)["tools"].([]any); len(tools) != 3 {
 		t.Fatal(tools)
 	}
-	if s, isErr := text(2); isErr || !strings.Contains(s, "page: units/src.md") {
+	if s, isErr := text(2); isErr || !strings.Contains(s, "page: ") {
 		t.Fatal(s)
 	}
-	if s, _ := text(3); !strings.Contains(s, "units/src.md  App") {
+	if s, _ := text(3); !strings.Contains(s, "## Overview") || !strings.Contains(s, "## Processes") || !strings.Contains(s, "processes/app-controller-ordercontroller.md") {
 		t.Fatal(s)
 	}
-	if s, _ := text(4); !strings.Contains(s, "## Overview") {
+	if s, _ := text(4); !strings.Contains(s, "# Overview") {
 		t.Fatal(s)
 	}
 	if s, isErr := text(5); !isErr || !strings.Contains(s, "does not exist") {

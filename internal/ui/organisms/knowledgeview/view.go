@@ -1,14 +1,17 @@
-// Package knowledgeview is the Knowledge tool window (D560): the state of
-// the project knowledge base (units, stale units, last run, agent and
-// embedding model, store size), Update / Rebuild buttons that first show
-// the estimate for confirmation, the progress of a running build with
-// cancel, a search box with results and the list of units. The host
-// fills the exported fields every frame and handles the Events.
+// Package knowledgeview is the Knowledge tool window (D560, D565): the
+// state of the project knowledge base (pages per level, stale pages,
+// open questions, last run, agent and embedding model, store size),
+// Update / Rebuild buttons with a level selector that first show the
+// estimate for confirmation, the progress of a running build with
+// cancel, a search box with results and the pages grouped by level.
+// Search and pages stay usable while a build runs. The host fills the
+// exported fields every frame and handles the Events.
 package knowledgeview
 
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"gioui.org/layout"
 
@@ -27,10 +30,13 @@ type Notice struct {
 	Error            bool
 }
 
-// Unit is a row of the unit list.
+// Unit is a row of the page list.
 type Unit struct {
 	ID, Title, Dir string
-	Files          int
+	// Level groups the rows (rows of a level are adjacent); LevelTitle
+	// is its header.
+	Level, LevelTitle string
+	Files             int
 	// Confidence is shown when HasDoc.
 	Confidence float64
 	HasDoc     bool
@@ -39,12 +45,23 @@ type Unit struct {
 	Error string
 }
 
-// Step is a unit of the running build.
+// Step is a page of the running (or last) build.
 type Step struct {
+	// ID is the page ID (PeekEvent).
+	ID    string
 	Title string
+	// Level is the page's level title.
+	Level string
 	// Step is describe, validate or write; State queued, running, done
 	// or failed.
 	Step, State, Error string
+	// StepIndex of Steps is the position of Step within the page (the
+	// bar moves within a page); Started is when the page started.
+	StepIndex, Steps int
+	Started          time.Time
+	// Tools, Reads and Chars are the live counters of the agent: tool
+	// calls, of them reads/searches, streamed characters.
+	Tools, Reads, Chars int
 }
 
 // Hit is a search result.
@@ -56,9 +73,13 @@ type Hit struct {
 // Event is reported by View.Update.
 type Event interface{ isKnowledgeEvent() }
 
-// BuildEvent: Update (All false) or Rebuild all was clicked; the host
-// fetches the estimate and sets Confirm.
-type BuildEvent struct{ All bool }
+// BuildEvent: Update (All false) or Rebuild was clicked for the level
+// selected in the level selector (Level: an entry of LevelIDs, "" = all
+// levels); the host fetches the estimate and sets Confirm.
+type BuildEvent struct {
+	All   bool
+	Level string
+}
 
 // ConfirmEvent: the user confirmed the estimate.
 type ConfirmEvent struct{}
@@ -81,6 +102,12 @@ type OpenHitEvent struct{ Index int }
 // NoticeEvent: the notice's action was clicked.
 type NoticeEvent struct{ ActionID string }
 
+// PeekEvent opens the live transcript of a page of the build (ID ""
+// closes it).
+type PeekEvent struct{ ID string }
+
+func (PeekEvent) isKnowledgeEvent() {}
+
 // SettingsEvent: the settings button was clicked.
 type SettingsEvent struct{}
 
@@ -100,11 +127,15 @@ type View struct {
 	// Details the agent and embedding lines.
 	Summary string
 	Details []string
-	// Exists enables the index button and the search.
+	// Exists enables the index button and the search (true as soon as
+	// the first page is written, also while a build runs).
 	Exists bool
-	// Stale counts units to build (the Update button's label).
+	// Stale counts pages to build (the Update button's label).
 	Stale  int
 	Notice *Notice
+	// Questions is the questions line ("3 open · 5 answered", "" = none);
+	// clicking it opens questions.md (OpenUnitEvent{ID: "questions"}).
+	Questions string
 	// Confirm is the estimate waiting for confirmation ("" = none).
 	Confirm string
 	// Running, Phase and Steps describe a running build; Done/Total
@@ -113,6 +144,16 @@ type View struct {
 	Phase       string
 	Done, Total int
 	Steps       []Step
+	// Started is when the build started (elapsed time).
+	Started time.Time
+	// LastRun shows the Steps of the finished last build (collapsed).
+	LastRun bool
+	// Peek is the page whose transcript is open (PeekEvent), Transcript
+	// its lines ("» step", "thought: …", "tool: …", message text).
+	Peek       string
+	Transcript []string
+	// Now is the clock (nil: the frame time; tests fix it).
+	Now func() time.Time
 	// Hits are the search results; SearchNote explains a fallback;
 	// Searching shows a spinner.
 	Hits       []Hit
@@ -125,10 +166,32 @@ type View struct {
 	search                   *molecules.SearchField
 	update, rebuild, confirm atoms.Button
 	dismiss, cancel, notice  atoms.Button
+	questions                atoms.Button
 	settings, index          atoms.IconButton
+	level                    *molecules.Dropdown
 	list                     molecules.ScrollList
 	unitRows, hitRows        []molecules.ListRow
+	stepRows                 []molecules.ListRow
+	lastRun                  atoms.Button
+	showLast                 bool
+	peekList                 molecules.ScrollList
+	peekLines                int
 	lastQuery                string
+}
+
+// LevelIDs are the choices of the level selector (BuildEvent.Level);
+// levelLabels their labels.
+var LevelIDs = []string{"", "overview", "entrypoints", "processes", "components", "questions"}
+
+var levelLabels = []string{"All levels", "Overview only", "Entry points", "Processes", "Components", "Answer questions"}
+
+// SelectedLevel is the level chosen in the selector ("" = all).
+func (v *View) SelectedLevel() string {
+	v.init()
+	if v.level.Selected < 0 || v.level.Selected >= len(LevelIDs) {
+		return ""
+	}
+	return LevelIDs[v.level.Selected]
 }
 
 func (v *View) init() {
@@ -144,6 +207,15 @@ func (v *View) init() {
 	v.notice = atoms.Button{Kind: atoms.Secondary}
 	v.index = atoms.IconButton{Glyph: atoms.GlyphFileText, Description: "Open the table of contents (index.md)"}
 	v.settings = atoms.IconButton{Glyph: atoms.GlyphSettings, Description: "Knowledge settings"}
+	v.questions = atoms.Button{Kind: atoms.Ghost}
+	v.lastRun = atoms.Button{Kind: atoms.Ghost}
+	var opts []molecules.DropdownOption
+	for _, l := range levelLabels {
+		opts = append(opts, molecules.DropdownOption{Label: l})
+	}
+	v.level = molecules.NewSelect("Level", opts...)
+	v.level.Selected = 0
+	v.level.Width = 200
 }
 
 // Query returns the text of the search box.
@@ -156,11 +228,15 @@ func (v *View) Query() string {
 func (v *View) Update(gtx layout.Context) []Event {
 	v.init()
 	var out []Event
+	v.level.Update(gtx)
 	if v.update.Clicked(gtx) {
-		out = append(out, BuildEvent{})
+		out = append(out, BuildEvent{Level: v.SelectedLevel()})
 	}
 	if v.rebuild.Clicked(gtx) {
-		out = append(out, BuildEvent{All: true})
+		out = append(out, BuildEvent{All: true, Level: v.SelectedLevel()})
+	}
+	if v.questions.Clicked(gtx) {
+		out = append(out, OpenUnitEvent{ID: "questions"})
 	}
 	if v.confirm.Clicked(gtx) {
 		out = append(out, ConfirmEvent{})
@@ -197,6 +273,18 @@ func (v *View) Update(gtx layout.Context) []Event {
 			out = append(out, OpenUnitEvent{ID: u.ID})
 		}
 	}
+	if v.lastRun.Clicked(gtx) {
+		v.showLast = !v.showLast
+	}
+	for i, s := range v.Steps {
+		if c, _ := v.stepRows[i].Update(gtx); c && s.ID != "" {
+			id := s.ID
+			if v.Peek == id {
+				id = ""
+			}
+			out = append(out, PeekEvent{ID: id})
+		}
+	}
 	return out
 }
 
@@ -208,6 +296,9 @@ func (v *View) ensureRows() {
 	for len(v.unitRows) < len(v.Units) {
 		v.unitRows = append(v.unitRows, molecules.ListRow{})
 	}
+	for len(v.stepRows) < len(v.Steps) {
+		v.stepRows = append(v.stepRows, molecules.ListRow{})
+	}
 }
 
 // item kinds of the scrolling part.
@@ -218,6 +309,7 @@ const (
 	itemSearchNote
 	itemHit
 	itemUnitsHeader
+	itemLevelHeader
 	itemUnit
 	itemEmpty
 )
@@ -233,12 +325,14 @@ func (v *View) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	}
 	v.update.Disabled = v.Running || v.Confirm != ""
 	v.rebuild.Disabled = v.update.Disabled
+	v.level.Disabled = v.update.Disabled
 	v.index.Disabled = !v.Exists
-	if v.Stale > 0 {
+	if v.Stale > 0 && v.SelectedLevel() == "" {
 		v.update.Text = fmt.Sprintf("Update %d", v.Stale)
 	} else {
 		v.update.Text = "Update"
 	}
+	v.rebuild.Text = "Rebuild"
 	var items []item
 	if v.Notice != nil {
 		items = append(items, item{itemNotice, 0})
@@ -246,7 +340,7 @@ func (v *View) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	if v.Confirm != "" {
 		items = append(items, item{itemConfirm, 0})
 	}
-	if v.Running {
+	if v.Running || v.LastRun && len(v.Steps) > 0 {
 		items = append(items, item{itemProgress, 0})
 	}
 	if v.SearchNote != "" {
@@ -259,7 +353,10 @@ func (v *View) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	if len(v.Units) == 0 {
 		items = append(items, item{itemEmpty, 0})
 	}
-	for i := range v.Units {
+	for i, u := range v.Units {
+		if u.LevelTitle != "" && (i == 0 || v.Units[i-1].Level != u.Level) {
+			items = append(items, item{itemLevelHeader, i})
+		}
 		items = append(items, item{itemUnit, i})
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -301,11 +398,24 @@ func (v *View) layoutHeader(gtx layout.Context, th *tokens.Theme) layout.Dimensi
 		for _, d := range v.Details {
 			children = append(children, layout.Rigid(atoms.Small(d).Fn(th)))
 		}
+		if v.Questions != "" {
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.X = 0
+				v.questions.Text, v.questions.Glyph = "Questions: "+v.Questions, atoms.GlyphInfo
+				return v.questions.Layout(gtx, th)
+			}))
+		}
 		children = append(children,
 			layout.Rigid(layout.Spacer{Height: th.Space.S}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return v.update.Layout(gtx, th) }),
+					layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(160))
+						gtx.Constraints.Min.X = gtx.Constraints.Max.X
+						return v.level.Layout(gtx, th)
+					}),
 					layout.Rigid(layout.Spacer{Width: th.Space.S}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return v.rebuild.Layout(gtx, th) }),
 				)
@@ -359,82 +469,40 @@ func (v *View) layoutItem(gtx layout.Context, th *tokens.Theme, it item) layout.
 			)
 		})(gtx)
 	case itemProgress:
-		return inset(th, v.layoutProgress(th))(gtx)
+		return inset(th, func(gtx layout.Context) layout.Dimensions { return v.layoutProgress(gtx, th) })(gtx)
 	case itemSearchNote:
 		return inset(th, atoms.Small(v.SearchNote).Fn(th))(gtx)
 	case itemHit:
 		return v.layoutHit(gtx, th, it.i)
 	case itemUnitsHeader:
-		title := "Units"
+		title := "Pages"
 		if v.Searching {
 			title = "Searching…"
 		}
 		return molecules.SectionHeader{Title: title, Badge: fmt.Sprint(len(v.Units))}.Layout(gtx, th)
+	case itemLevelHeader:
+		u := v.Units[it.i]
+		n := 0
+		for _, x := range v.Units {
+			if x.Level == u.Level {
+				n++
+			}
+		}
+		return layout.Inset{Left: th.Space.M, Right: th.Space.M, Top: th.Space.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					return atoms.Strong(u.LevelTitle).Layout(gtx, th)
+				}),
+				layout.Rigid(atoms.Small(fmt.Sprint(n)).Fn(th)),
+			)
+		})
 	case itemEmpty:
-		return inset(th, atoms.Muted("No PHP units found in this project.").Fn(th))(gtx)
+		return inset(th, atoms.Muted("Nothing to analyse in this project yet.").Fn(th))(gtx)
 	case itemUnit:
 		return v.layoutUnit(gtx, th, it.i)
 	}
 	return layout.Dimensions{}
-}
-
-func (v *View) layoutProgress(th *tokens.Theme) layout.Widget {
-	return func(gtx layout.Context) layout.Dimensions {
-		val := float32(-1)
-		if v.Total > 0 && v.Phase != "embedding" {
-			val = float32(v.Done) / float32(v.Total)
-		}
-		label := fmt.Sprintf("Building: %d of %d units", v.Done, v.Total)
-		if v.Phase == "embedding" {
-			label = "Embedding the documents…"
-		}
-		children := []layout.FlexChild{
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Min.X = gtx.Constraints.Max.X
-						return atoms.Strong(label).Layout(gtx, th)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Min.X = 0
-						return v.cancel.Layout(gtx, th)
-					}),
-				)
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Min.X = gtx.Constraints.Max.X
-				return layout.Inset{Top: th.Space.XS, Bottom: th.Space.XS}.Layout(gtx, atoms.ProgressBar{Value: val}.Fn(th))
-			}),
-		}
-		for _, s := range v.Steps {
-			s := s
-			if s.State == "queued" || s.State == "" {
-				continue
-			}
-			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				g, col := atoms.GlyphRun, th.Color.Accent
-				switch s.State {
-				case "done":
-					g, col = atoms.GlyphDone, th.Color.Success
-				case "failed":
-					g, col = atoms.GlyphError, th.Color.Danger
-				}
-				text := s.Title + " · " + s.Step
-				if s.Error != "" {
-					text += " – " + s.Error
-				}
-				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(atoms.Icon{Glyph: g, Size: th.Size.IconSmall, Color: col}.Fn(th)),
-					layout.Rigid(layout.Spacer{Width: th.Space.XS}.Layout),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Min.X = 0
-						return atoms.Small(text).SingleLine().Layout(gtx, th)
-					}),
-				)
-			}))
-		}
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
-	}
 }
 
 func (v *View) layoutHit(gtx layout.Context, th *tokens.Theme, i int) layout.Dimensions {
@@ -494,7 +562,12 @@ func (v *View) layoutUnit(gtx layout.Context, th *tokens.Theme, i int) layout.Di
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						info := plural(u.Files, "file")
-						if u.HasDoc {
+						switch {
+						case u.Level == "questions":
+							info = u.Dir
+						case u.HasDoc && u.Confidence < 0:
+							info += " · facts only"
+						case u.HasDoc:
 							info += fmt.Sprintf(" · %.0f%%", u.Confidence*100)
 						}
 						return layout.Inset{Left: th.Space.S}.Layout(gtx, atoms.Small(info).SingleLine().Fn(th))

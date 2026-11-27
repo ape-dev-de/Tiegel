@@ -15,14 +15,13 @@ import (
 	kn "github.com/ape-dev-de/tiegel/internal/knowledge"
 )
 
-// planned is a computed plan: the units of the scope with their file
-// hashes and staleness.
+// planned is what Tiegel knows about the project for planning (the
+// expensive part: file list, facts, entry point inventory). Manifest and
+// questions are always read fresh from disk, so readers see the pages a
+// running build writes.
 type planned struct {
-	units    []kn.Unit
-	hashes   map[string]map[string]string
-	stale    map[string]string
-	manifest *kn.Manifest
-	dir      string
+	dir     string
+	planner kn.Planner
 }
 
 // projectFiles lists the project's PHP files (project relative; the
@@ -51,29 +50,23 @@ func (m *Module) projectFiles(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// psr4 reads the PSR-4 map of the PHP root, relative to the project.
-func (m *Module) psr4() map[string][]string {
+// phpRoot returns the absolute PHP root and its project relative path.
+func (m *Module) phpRoot() (string, string) {
 	app := m.application()
 	root, phpRoot := app.ProjectRoot(), app.PHPRoot()
 	if phpRoot == "" {
-		phpRoot = root
+		return root, "."
 	}
-	raw := kn.ReadPSR4(phpRoot)
 	rel, err := filepath.Rel(root, phpRoot)
-	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
-		return raw
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return root, "."
 	}
-	out := map[string][]string{}
-	for ns, dirs := range raw {
-		for _, d := range dirs {
-			out[ns] = append(out[ns], path.Join(filepath.ToSlash(rel), d))
-		}
-	}
-	return out
+	return phpRoot, filepath.ToSlash(rel)
 }
 
-// computePlan plans the units of scope (nil: the whole project; the
-// unscoped plan is cached until files change).
+// computePlan collects files, facts and the entry point inventory of
+// scope (nil: the whole project; that plan is cached until files
+// change).
 func (m *Module) computePlan(ctx context.Context, scope []string) (*planned, error) {
 	dir, err := m.dir()
 	if err != nil {
@@ -103,24 +96,13 @@ func (m *Module) computePlan(ctx context.Context, scope []string) (*planned, err
 		}
 		rel = append(rel, filepath.ToSlash(s))
 	}
-	units := kn.PlanUnits(files, kn.PlanOptions{
-		PSR4: m.psr4(), Scope: rel,
-		Exclude:  setting(m, SettingExclude, kn.DefaultExclude),
-		MaxFiles: setting(m, SettingMaxFiles, 40),
-	})
-	man, merr := kn.LoadManifest(dir)
-	if merr != nil {
-		m.application().Logger().Warn("knowledge", "err", merr)
-	}
-	p := &planned{units: units, hashes: map[string]map[string]string{}, stale: map[string]string{}, manifest: man, dir: dir}
-	for i := range p.units {
-		u := &p.units[i]
-		h := kn.HashFiles(root, u)
-		p.hashes[u.ID] = h
-		if s := man.Stale(dir, *u, h); s != "" {
-			p.stale[u.ID] = s
-		}
-	}
+	files = kn.FilterFiles(files, rel, setting(m, SettingExclude, kn.DefaultExclude))
+	phpAbs, phpRel := m.phpRoot()
+	facts := kn.GatherFacts(root, phpAbs, files)
+	entries := kn.ExtractEntryPoints(root, phpRel, files)
+	facts.DeriveStyle(entries)
+	p := &planned{dir: dir, planner: kn.Planner{Root: root, Dir: dir, Facts: facts, Files: files, Entries: entries,
+		MaxProcesses: setting(m, SettingMaxProcesses, kn.DefaultMaxProcesses), MaxComponents: setting(m, SettingMaxComponents, kn.DefaultMaxComponents)}}
 	if len(scope) == 0 {
 		m.mu.Lock()
 		m.planCache = p
@@ -129,14 +111,64 @@ func (m *Module) computePlan(ctx context.Context, scope []string) (*planned, err
 	return p, nil
 }
 
-// unitInfo describes a unit for the API.
-func unitInfo(dir string, u kn.Unit, stale string, st *kn.UnitState) api.KnowledgeUnit {
-	ku := api.KnowledgeUnit{ID: u.ID, Title: u.Title, Dir: u.Dir, Files: len(u.Files), Stale: stale}
+// state is the knowledge directory as it is now: manifest and questions.
+type state struct {
+	man *kn.Manifest
+	qs  *kn.QuestionStore
+}
+
+func (m *Module) loadState(dir string) state {
+	man, err := kn.LoadManifest(dir)
+	if err != nil {
+		m.application().Logger().Warn("knowledge", "err", err)
+	}
+	qs, err := kn.LoadQuestions(dir)
+	if err != nil {
+		m.application().Logger().Warn("knowledge", "err", err)
+	}
+	return state{man, qs}
+}
+
+// levelItem is a planned item with its staleness.
+type levelItem struct {
+	it    kn.Item
+	stale string
+}
+
+// levelPlan is the plan of one level.
+type levelPlan struct {
+	level   string
+	items   []levelItem
+	skipped int
+}
+
+// planLevels plans the given levels against the current state.
+func planLevels(pl *planned, s state, levels []string, all bool) []levelPlan {
+	var out []levelPlan
+	for _, l := range levels {
+		items, skipped := pl.planner.Items(l, s.man, s.qs, all)
+		lp := levelPlan{level: l, skipped: skipped}
+		for _, it := range items {
+			why, _ := pl.planner.Stale(&it, s.man)
+			lp.items = append(lp.items, levelItem{it, why})
+		}
+		out = append(out, lp)
+	}
+	return out
+}
+
+// unitInfo describes a page for the API.
+func unitInfo(dir string, it kn.Item, stale string, st *kn.ItemState) api.KnowledgeUnit {
+	ku := api.KnowledgeUnit{ID: it.ID, Title: it.Title, Level: it.Level, Group: it.Group, Dir: it.Group, Files: len(it.Files), Stale: stale}
 	if st != nil {
 		if st.MD != "" {
-			ku.MD = filepath.Join(dir, filepath.FromSlash(st.MD))
+			ku.MD, ku.Path = filepath.Join(dir, filepath.FromSlash(st.MD)), st.MD
 		}
 		ku.Confidence, ku.GeneratedAt, ku.Commit, ku.Unverified = st.Confidence, st.GeneratedAt, st.Commit, st.Unverified
+		ku.Summary, ku.Mechanical = st.Summary, st.Mechanical
+		if n := countSources(st.Files); n > ku.Files {
+			ku.Files = n
+		}
 		if st.Status == kn.StatusFailed {
 			ku.Error = st.Error
 		}
@@ -144,76 +176,136 @@ func unitInfo(dir string, u kn.Unit, stale string, st *kn.UnitState) api.Knowled
 	return ku
 }
 
-// selectUnits returns the units a build runs.
-func selectUnits(p *planned, all bool, ids []string) []kn.Unit {
-	var out []kn.Unit
-	for _, u := range p.units {
-		if len(ids) > 0 && !slices.Contains(ids, u.ID) {
-			continue
-		}
-		if all || len(ids) > 0 || p.stale[u.ID] != "" {
-			out = append(out, u)
+func countSources(files map[string]string) int {
+	n := 0
+	for f := range files {
+		if !strings.HasPrefix(f, "@") {
+			n++
 		}
 	}
-	return out
+	return n
 }
 
-func (m *Module) estimate(units []kn.Unit) api.KnowledgeEstimate {
-	line, _ := m.agentCommand()
-	e := api.KnowledgeEstimate{Units: len(units), Calls: 3 * len(units), Agent: line, Model: m.agentModel()}
+// estimateLevel estimates the agent work of a level: two calls per page
+// (describe, validate); the agents read the sources about twice plus a
+// few thousand tokens of prompt and answer per page.
+func estimateLevel(lp levelPlan, pages []kn.Item) api.KnowledgeLevelEstimate {
+	e := api.KnowledgeLevelEstimate{Level: lp.level, Title: kn.LevelTitle(lp.level), Pages: len(pages), Total: len(lp.items), Calls: 2 * len(pages), Skipped: lp.skipped}
 	var bytes int64
-	for _, u := range units {
-		e.Files += len(u.Files)
-		bytes += u.Bytes
+	for _, it := range pages {
+		bytes += it.Bytes
 	}
-	// The describing and the validating agent read the sources; prompts
-	// and answers add a few thousand tokens per unit.
-	e.InputTokens = int(bytes/4)*2 + len(units)*4000
+	e.InputTokens = int(bytes/4)*2 + len(pages)*4000
+	return e
+}
+
+func (m *Module) estimate(levels []api.KnowledgeLevelEstimate) api.KnowledgeEstimate {
+	line, _ := m.agentCommand()
+	e := api.KnowledgeEstimate{Agent: line, Model: m.agentModel(), Levels: levels}
+	for _, l := range levels {
+		e.Units += l.Pages
+		e.Calls += l.Calls
+		e.InputTokens += l.InputTokens
+	}
 	model := e.Model
 	if model == "" {
 		model = "the agent's default model"
 	}
-	e.Note = fmt.Sprintf("Runs %s with %s: about %d agent calls reading ~%dk tokens of source. The tokens are billed by your agent's provider. The project is only read, never changed.",
-		line, model, e.Calls, (e.InputTokens+999)/1000)
+	later := ""
+	for _, l := range levels {
+		if l.Later {
+			later = " Components and questions are planned when the run reaches them; their numbers are an upper bound."
+		}
+	}
+	e.Note = fmt.Sprintf("Runs %s with %s: about %d agent calls reading ~%dk tokens of source.%s The tokens are billed by your agent's provider. The project is only read, never changed.",
+		line, model, e.Calls, (e.InputTokens+999)/1000, later)
 	return e
+}
+
+// buildPlan computes what a build of params would run.
+func (m *Module) buildPlan(ctx context.Context, p api.KnowledgeScopeParams, only []string) (*planned, []string, api.KnowledgePlan, error) {
+	levels, err := kn.ParseLevels(p.Level)
+	if err != nil {
+		return nil, nil, api.KnowledgePlan{}, api.Errorf(api.CodeInvalidParams, "%v", err)
+	}
+	pl, err := m.computePlan(ctx, p.Scope)
+	if err != nil {
+		return nil, nil, api.KnowledgePlan{}, err
+	}
+	s := m.loadState(pl.dir)
+	res := api.KnowledgePlan{Units: []api.KnowledgeUnit{}}
+	var ests []api.KnowledgeLevelEstimate
+	pending := map[string]int{} // level → pages to build before it
+	for _, lp := range planLevels(pl, s, levels, p.All) {
+		var pages []kn.Item
+		for _, li := range lp.items {
+			if len(only) > 0 && !slices.Contains(only, li.it.ID) {
+				continue
+			}
+			if li.stale == "" && !p.All && len(only) == 0 {
+				continue
+			}
+			pages = append(pages, li.it)
+			res.Units = append(res.Units, unitInfo(pl.dir, li.it, li.stale, s.man.Items[li.it.ID]))
+		}
+		res.Total += len(lp.items)
+		e := estimateLevel(lp, pages)
+		switch lp.level {
+		case kn.LevelComponents:
+			if n := pending[kn.LevelProcesses]; n > 0 && len(only) == 0 {
+				// Re-planned after the processes ran: at most one page per
+				// class, bounded by the setting.
+				e.Later = true
+				upper := min(pl.planner.MaxComponents, max(len(lp.items), n))
+				e.Pages, e.Calls, e.InputTokens = upper, 2*upper, upper*8000
+			}
+		case kn.LevelQuestions:
+			if pending[kn.LevelOverview]+pending[kn.LevelEntryPoints]+pending[kn.LevelProcesses]+pending[kn.LevelComponents] > 0 && len(only) == 0 {
+				e.Later = true
+				upper := max(e.Pages, 1)
+				e.Pages, e.Calls, e.InputTokens = upper, 2*upper, upper*6000
+			}
+		}
+		pending[lp.level] = e.Pages
+		ests = append(ests, e)
+	}
+	res.Estimate = m.estimate(ests)
+	return pl, levels, res, nil
 }
 
 // plan is knowledge.plan.
 func (m *Module) plan(ctx context.Context, p api.KnowledgeScopeParams) (api.KnowledgePlan, error) {
-	pl, err := m.computePlan(ctx, p.Scope)
-	if err != nil {
-		return api.KnowledgePlan{}, err
-	}
-	units := selectUnits(pl, p.All, nil)
-	res := api.KnowledgePlan{Units: []api.KnowledgeUnit{}, Estimate: m.estimate(units), Total: len(pl.units)}
-	for _, u := range units {
-		res.Units = append(res.Units, unitInfo(pl.dir, u, pl.stale[u.ID], pl.manifest.Units[u.ID]))
-	}
-	return res, nil
+	_, _, res, err := m.buildPlan(ctx, p, nil)
+	return res, err
 }
 
-// list is knowledge.list: all units of the project (planned and built).
+// list is knowledge.list: the pages of all levels (planned and built),
+// in level order; questions.md as the last entry when it exists.
 func (m *Module) list(ctx context.Context, _ struct{}) ([]api.KnowledgeUnit, error) {
 	pl, err := m.computePlan(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
+	s := m.loadState(pl.dir)
 	out := []api.KnowledgeUnit{}
 	seen := map[string]bool{}
-	for _, u := range pl.units {
-		seen[u.ID] = true
-		out = append(out, unitInfo(pl.dir, u, pl.stale[u.ID], pl.manifest.Units[u.ID]))
-	}
-	// Units built earlier that are no longer planned (scope, folders
-	// removed) stay searchable until rebuilt.
-	for _, st := range pl.manifest.Sorted() {
-		if !seen[st.ID] {
-			files := make([]string, 0, len(st.Files))
-			for f := range st.Files {
-				files = append(files, f)
-			}
-			out = append(out, unitInfo(pl.dir, kn.Unit{ID: st.ID, Title: st.Title, Dir: st.Dir, Files: files}, "", st))
+	for _, lp := range planLevels(pl, s, kn.Levels[:4], false) {
+		for _, li := range lp.items {
+			seen[li.it.ID] = true
+			out = append(out, unitInfo(pl.dir, li.it, li.stale, s.man.Items[li.it.ID]))
 		}
+		// Pages built earlier that are no longer planned (scope, removed
+		// code) stay readable until rebuilt.
+		for _, st := range s.man.Level(lp.level) {
+			if !seen[st.ID] && st.MD != "" {
+				out = append(out, unitInfo(pl.dir, kn.Item{ID: st.ID, Level: st.Level, Title: st.Title, Group: st.Group}, "", st))
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(pl.dir, "questions.md")); err == nil {
+		open, answered := s.qs.Counts()
+		out = append(out, api.KnowledgeUnit{ID: "questions", Title: "Open questions", Level: kn.LevelQuestions, MD: filepath.Join(pl.dir, "questions.md"), Path: "questions.md",
+			Summary: fmt.Sprintf("%d open, %d answered", open, answered), Confidence: 1})
 	}
 	return out, nil
 }
@@ -238,16 +330,31 @@ func (m *Module) statusNow(ctx context.Context) (api.KnowledgeStatus, error) {
 		st.Exists = true
 	}
 	if pl, err := m.computePlan(ctx, nil); err == nil {
-		st.LastRun = pl.manifest.LastRun
-		for _, s := range pl.manifest.Units {
-			if s.MD != "" {
-				st.Units++
+		s := m.loadState(pl.dir)
+		st.LastRun, st.Legacy = s.man.LastRun, s.man.Legacy
+		for _, lp := range planLevels(pl, s, kn.Levels[:4], false) {
+			ls := api.KnowledgeLevelStatus{Level: lp.level, Title: kn.LevelTitle(lp.level), Planned: len(lp.items)}
+			for _, li := range lp.items {
+				if li.stale != "" {
+					ls.Stale++
+				}
 			}
-			if s.Status == kn.StatusFailed {
-				st.Failed++
+			for _, is := range s.man.Level(lp.level) {
+				if is.MD != "" {
+					ls.Pages++
+				}
+				if is.Status == kn.StatusFailed {
+					ls.Failed++
+				}
 			}
+			st.Units += ls.Pages
+			st.Stale += ls.Stale
+			st.Failed += ls.Failed
+			st.Levels = append(st.Levels, ls)
 		}
-		st.Stale = len(pl.stale)
+		st.Exists = st.Exists || st.Units > 0
+		st.Questions.Open, st.Questions.Answered = s.qs.Counts()
+		st.Questions.Answerable = len(s.qs.Answerable())
 	}
 	if st.Exists {
 		if s, err := m.openStore(); err == nil {
@@ -296,14 +403,13 @@ func (m *Module) build(ctx context.Context, p api.KnowledgeBuildParams) (api.Kno
 	}
 	m.mu.Unlock()
 	m.invalidate()
-	pl, err := m.computePlan(ctx, p.Scope)
+	pl, levels, plan, err := m.buildPlan(ctx, p.KnowledgeScopeParams, p.Units)
 	if err != nil {
 		return api.KnowledgeRun{}, err
 	}
-	units := selectUnits(pl, p.All, p.Units)
 	line, argv := m.agentCommand()
 	var agentPath string
-	if len(units) > 0 {
+	if plan.Estimate.Units > 0 {
 		if agentPath, err = m.resolve(argv[0]); err != nil {
 			return api.KnowledgeRun{}, api.Errorf(api.CodeNotFound, "agent %q not found (Settings › AI › Agent)", argv[0])
 		}
@@ -316,17 +422,20 @@ func (m *Module) build(ctx context.Context, p api.KnowledgeBuildParams) (api.Kno
 		cancel()
 		return api.KnowledgeRun{}, api.Errorf(api.CodeConflict, "a knowledge build is running")
 	}
-	m.run = api.KnowledgeRun{Running: true, Phase: "agents", Started: time.Now()}
-	for i, u := range units {
-		m.run.Units = append(m.run.Units, api.KnowledgeProgress{Unit: u.ID, Title: u.Title, Index: i, Total: len(units), State: kn.RunQueued})
+	started := time.Now()
+	m.run = api.KnowledgeRun{Running: true, Phase: "agents", Started: started, Level: p.Level, ID: started.UTC().Format("20060102-150405.000")}
+	m.act = newActivityLog(pl.dir, m.run.ID, m.publish, m.counters)
+	for i, u := range plan.Units {
+		m.run.Units = append(m.run.Units, api.KnowledgeProgress{Unit: u.ID, Level: u.Level, Title: u.Title, Index: i, Total: len(plan.Units), State: kn.RunQueued})
 	}
 	m.cancel, m.done = cancel, done
 	m.mu.Unlock()
 	m.publishStatus()
+	work := kn.Work{Levels: levels, All: p.All, Only: p.Units}
 	go func() {
 		defer close(done)
 		defer cancel()
-		m.runBuild(bctx, root, line, argv, agentPath, units, pl, !p.NoEmbed)
+		m.runBuild(bctx, root, line, argv, agentPath, work, pl, plan.Estimate.Units > 0, !p.NoEmbed)
 	}()
 	if !p.Wait {
 		m.mu.Lock()
@@ -344,13 +453,28 @@ func (m *Module) build(ctx context.Context, p api.KnowledgeBuildParams) (api.Kno
 	return cloneRun(m.run), nil
 }
 
+// promptDir is the user's prompt override directory.
+func (m *Module) promptDir() string {
+	if cd := m.application().ConfigDir(); cd != "" {
+		return filepath.Join(cd, "knowledge-prompts")
+	}
+	return ""
+}
+
 // runBuild runs the pipeline and the embedding (in the background).
-func (m *Module) runBuild(ctx context.Context, root, line string, argv []string, agentPath string, units []kn.Unit, pl *planned, embed bool) {
+func (m *Module) runBuild(ctx context.Context, root, line string, argv []string, agentPath string, work kn.Work, pl *planned, useAgent, embed bool) {
 	app := m.application()
 	finish := func(sum kn.Summary, errMsg string) {
 		m.mu.Lock()
+		act := m.act
+		m.mu.Unlock()
+		if act != nil {
+			act.close() // last activity before the final status
+		}
+		m.mu.Lock()
 		m.run.Running, m.run.Phase, m.run.Ended = false, "", time.Now()
 		m.run.Done, m.run.Failed, m.run.Cancelled = sum.Done, sum.Failed, sum.Cancelled || m.run.Cancelled
+		m.run.Answered = sum.Answered
 		m.run.Errors = append(m.run.Errors, sum.Errors...)
 		if errMsg != "" {
 			m.run.Errors = append(m.run.Errors, errMsg)
@@ -361,10 +485,10 @@ func (m *Module) runBuild(ctx context.Context, root, line string, argv []string,
 		m.publishStatus()
 	}
 	var sum kn.Summary
-	// The pipeline owns its own copy of the manifest (the cached plan's
-	// copy is read concurrently by status calls).
+	// The pipeline owns its copy of the manifest; readers load theirs
+	// from disk (written after every page).
 	man, _ := kn.LoadManifest(pl.dir)
-	if len(units) > 0 {
+	if useAgent {
 		env := append(os.Environ(), "PATH="+m.searchPath())
 		if strings.TrimSuffix(filepath.Base(argv[0]), ".exe") == "opencode" {
 			env = append(env, "OPENCODE_CONFIG_CONTENT="+readOnlyConfig)
@@ -375,12 +499,22 @@ func (m *Module) runBuild(ctx context.Context, root, line string, argv []string,
 			return
 		}
 		defer agent.Close()
+		m.mu.Lock()
+		agent.act = m.act
+		m.mu.Unlock()
+		prompts, perr := kn.LoadPrompts(m.promptDir())
+		if perr != nil {
+			sum.Errors = append(sum.Errors, perr.Error()+" (using the built-in prompts)")
+			prompts, _ = kn.LoadPrompts("")
+		}
 		chk := &kn.Checker{Root: root, Lookup: m.lookupSymbol}
-		pipe := &kn.Pipeline{Root: root, Dir: pl.dir, Project: filepath.Base(root), Agent: agent, Checker: chk,
-			Commit: gitHead(ctx, root), Model: m.agentModel(), Progress: m.progress}
-		sum = pipe.Run(ctx, units, man)
+		pipe := &kn.Pipeline{Planner: pl.planner, Project: filepath.Base(root), Agent: agent, Checker: chk, Prompts: prompts,
+			Commit: gitHead(ctx, root), Model: m.agentModel(), Progress: m.progress, OnItem: func(*kn.ItemState) { m.publishStatus() }}
+		s := pipe.Run(ctx, work, man)
+		s.Errors = append(sum.Errors, s.Errors...)
+		sum = s
 		sum.Errors = append(sum.Errors, agent.Notes()...)
-	} else if err := kn.WriteIndex(pl.dir, filepath.Base(root), man); err != nil {
+	} else if err := kn.WriteIndex(pl.dir, filepath.Base(root), man, nil, root); err != nil {
 		sum.Errors = append(sum.Errors, err.Error())
 	}
 	if ctx.Err() == nil && embed {
@@ -400,11 +534,54 @@ func (m *Module) runBuild(ctx context.Context, root, line string, argv []string,
 
 // progress records and publishes a pipeline event.
 func (m *Module) progress(e kn.Event) {
-	p := api.KnowledgeProgress{Unit: e.Unit, Title: e.Title, Index: e.Index, Total: e.Total, Step: e.Step, State: e.State, Error: e.Error, Confidence: e.Confidence, Attempt: e.Attempt}
+	p := api.KnowledgeProgress{Unit: e.Item, Level: e.Level, Title: e.Title, Index: e.Index, Total: e.Total, Step: e.Step, State: e.State, Error: e.Error, Confidence: e.Confidence, Attempt: e.Attempt,
+		StepIndex: kn.StepIndex(e.Step), Steps: kn.StepCount}
 	m.mu.Lock()
-	if e.Index >= 0 && e.Index < len(m.run.Units) {
-		m.run.Units[e.Index] = p
+	act := m.act
+	if e.Index >= 0 && e.Index < len(m.run.Units) && m.run.Units[e.Index].Unit == e.Item && e.State != kn.RunQueued {
+		// Keep the page's start and counters across its steps.
+		old := m.run.Units[e.Index]
+		p.Started, p.Tools, p.Reads, p.Chars = old.Started, old.Tools, old.Reads, old.Chars
 	}
+	if e.State == kn.RunRunning && p.Started.IsZero() {
+		p.Started = time.Now()
+	}
+	if e.Index >= 0 {
+		// The run's list is rebuilt from the pipeline's events (later
+		// levels are planned when they start).
+		for len(m.run.Units) <= e.Index {
+			m.run.Units = append(m.run.Units, api.KnowledgeProgress{Index: len(m.run.Units), State: kn.RunQueued})
+		}
+		if e.Index == 0 && e.State == kn.RunQueued {
+			m.run.Units = m.run.Units[:0]
+			m.run.Units = append(m.run.Units, p)
+		} else {
+			m.run.Units[e.Index] = p
+		}
+		for i := range m.run.Units {
+			m.run.Units[i].Total = max(m.run.Units[i].Total, e.Total)
+		}
+	}
+	m.mu.Unlock()
+	if act != nil && e.State != kn.RunQueued {
+		if s := stepText(e); s != "" {
+			act.step(kn.StepInfo{Item: e.Item, Level: e.Level, Title: e.Title, Step: e.Step, Index: e.Index}, s, e.State == kn.RunRunning)
+		}
+	}
+	m.publish(api.TopicKnowledgeProgress, p)
+}
+
+// counters records the live counters of the page at index (from the
+// activity log, at most ten times a second) and publishes its progress.
+func (m *Module) counters(index, tools, reads, chars int) {
+	m.mu.Lock()
+	if index < 0 || index >= len(m.run.Units) {
+		m.mu.Unlock()
+		return
+	}
+	u := &m.run.Units[index]
+	u.Tools, u.Reads, u.Chars = tools, reads, chars
+	p := *u
 	m.mu.Unlock()
 	m.publish(api.TopicKnowledgeProgress, p)
 }
@@ -461,4 +638,43 @@ func (m *Module) cancelBuild(context.Context, struct{}) (api.KnowledgeRun, error
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return cloneRun(m.run), nil
+}
+
+// questions is knowledge.questions.
+func (m *Module) questions(_ context.Context, p api.KnowledgeQuestionsParams) (api.KnowledgeQuestionsResult, error) {
+	res := api.KnowledgeQuestionsResult{Questions: []api.KnowledgeQuestion{}}
+	dir, err := m.dir()
+	if err != nil {
+		return res, err
+	}
+	switch p.Status {
+	case "", kn.QuestionOpen, kn.QuestionAnswered:
+	default:
+		return res, api.Errorf(api.CodeInvalidParams, "status is open, answered or empty")
+	}
+	qs, _ := kn.LoadQuestions(dir)
+	refs := func(l []kn.Ref) []string {
+		var out []string
+		for _, r := range l {
+			s := r.File
+			if r.Line > 0 {
+				s = fmt.Sprintf("%s:%d", r.File, r.Line)
+			}
+			if r.Symbol != "" {
+				s = strings.TrimSpace(s + " " + r.Symbol)
+			}
+			out = append(out, s)
+		}
+		return out
+	}
+	for _, q := range qs.Questions {
+		if p.Status != "" && q.Status != p.Status {
+			continue
+		}
+		res.Questions = append(res.Questions, api.KnowledgeQuestion{ID: q.ID, Text: q.Text, Level: q.Level, Item: q.Item, Refs: refs(q.Refs), Status: q.Status,
+			Answer: q.Answer, AnsweredBy: q.AnsweredBy, AnswerRefs: refs(q.AnswerRefs), Attempts: q.Attempts})
+	}
+	res.Counts.Open, res.Counts.Answered = qs.Counts()
+	res.Counts.Answerable = len(qs.Answerable())
+	return res, nil
 }

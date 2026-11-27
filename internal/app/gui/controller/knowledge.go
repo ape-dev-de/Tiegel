@@ -22,9 +22,11 @@ type Knowledge struct {
 	Loaded   bool
 	Disabled bool
 	// Plan is the estimate waiting for confirmation (nil: none);
-	// PlanAll tells whether it is a full rebuild.
-	Plan    *api.KnowledgePlan
-	PlanAll bool
+	// PlanAll tells whether it is a rebuild, PlanLevel which level ("" =
+	// all).
+	Plan      *api.KnowledgePlan
+	PlanAll   bool
+	PlanLevel string
 	// Query, Hits and SearchNote are the last search.
 	Query      string
 	Hits       []api.KnowledgeHit
@@ -32,8 +34,17 @@ type Knowledge struct {
 	Searching  bool
 	// Error is the last failed call.
 	Error string
+	// Peek is the page whose live transcript is open ("" = none),
+	// Transcript its lines (knowledge.transcript, refreshed on
+	// knowledge.activity events of the page).
+	Peek       string
+	Transcript []string
 	// Version changes with every update.
 	Version uint64
+
+	// peekBusy is set while a transcript fetch runs; peekDirty asks for
+	// another one after it.
+	peekBusy, peekDirty bool
 
 	project string
 	// opened is set once the window loaded (only then the Ollama
@@ -86,17 +97,17 @@ func (k *Knowledge) ProjectChanged() {
 	*k = Knowledge{c: k.c, project: k.project, Version: k.Version + 1}
 }
 
-// AskBuild fetches the plan with its estimate; the window shows it for
-// confirmation (nothing runs yet).
-func (k *Knowledge) AskBuild(all bool) {
+// AskBuild fetches the plan of a level ("" = all levels) with its
+// estimate; the window shows it for confirmation (nothing runs yet).
+func (k *Knowledge) AskBuild(all bool, level string) {
 	k.c.Go(func(ctx context.Context) func() {
 		var pl api.KnowledgePlan
-		err := k.c.call(ctx, "knowledge.plan", api.KnowledgeScopeParams{All: all}, &pl)
+		err := k.c.call(ctx, "knowledge.plan", api.KnowledgeScopeParams{All: all, Level: level}, &pl)
 		return func() {
 			if err != nil {
 				k.Error = err.Error()
 			} else {
-				k.Plan, k.PlanAll, k.Error = &pl, all, ""
+				k.Plan, k.PlanAll, k.PlanLevel, k.Error = &pl, all, level, ""
 			}
 			k.Version++
 		}
@@ -111,12 +122,12 @@ func (k *Knowledge) DismissPlan() {
 
 // Build runs the confirmed plan.
 func (k *Knowledge) Build() {
-	all := k.PlanAll
+	all, level := k.PlanAll, k.PlanLevel
 	k.Plan = nil
 	k.Version++
 	k.c.Go(func(ctx context.Context) func() {
 		var run api.KnowledgeRun
-		err := k.c.call(ctx, "knowledge.build", api.KnowledgeBuildParams{KnowledgeScopeParams: api.KnowledgeScopeParams{All: all}}, &run)
+		err := k.c.call(ctx, "knowledge.build", api.KnowledgeBuildParams{KnowledgeScopeParams: api.KnowledgeScopeParams{All: all, Level: level}}, &run)
 		return func() {
 			if err != nil {
 				k.Error = err.Error()
@@ -217,7 +228,7 @@ func (k *Knowledge) handleEvent(topic string, payload json.RawMessage) {
 		finished := k.Status.Run.Running && !st.Run.Running
 		k.Status, k.Loaded = st, true
 		if finished || st.Units != countDocs(k.Units) {
-			k.load() // units changed
+			k.load() // pages changed (also while a build runs)
 		}
 		if !st.Run.Running && k.opened {
 			k.refreshModel()
@@ -234,8 +245,54 @@ func (k *Knowledge) handleEvent(topic string, payload json.RawMessage) {
 		if p.Index >= 0 {
 			r.Units[p.Index] = p
 		}
+	case api.TopicKnowledgeActivity:
+		var a api.KnowledgeActivity
+		if json.Unmarshal(payload, &a) != nil || a.Item != k.Peek || k.Peek == "" {
+			return
+		}
+		k.fetchTranscript()
+		return
 	}
 	k.Version++
+}
+
+// PeekAt opens the live transcript of a page ("" closes it).
+func (k *Knowledge) PeekAt(id string) {
+	k.Peek, k.Transcript = id, nil
+	k.Version++
+	if id != "" {
+		k.fetchTranscript()
+	}
+}
+
+// fetchTranscript loads the open transcript; requests during a fetch
+// coalesce into one more fetch.
+func (k *Knowledge) fetchTranscript() {
+	if k.peekBusy {
+		k.peekDirty = true
+		return
+	}
+	id := k.Peek
+	k.peekBusy = true
+	k.c.Go(func(ctx context.Context) func() {
+		var tr api.KnowledgeTranscript
+		err := k.c.call(ctx, "knowledge.transcript", api.KnowledgeTranscriptParams{Item: id}, &tr)
+		return func() {
+			k.peekBusy = false
+			if k.Peek == id {
+				if err != nil {
+					k.Transcript = []string{err.Error()}
+				} else {
+					k.Transcript = tr.Lines
+				}
+				k.Version++
+			}
+			if k.peekDirty && k.Peek != "" {
+				k.peekDirty = false
+				k.fetchTranscript()
+			}
+		}
+	})
 }
 
 // refreshModel updates the model state while a pull runs or ended.
@@ -255,7 +312,7 @@ func (k *Knowledge) refreshModel() {
 func countDocs(us []api.KnowledgeUnit) int {
 	n := 0
 	for _, u := range us {
-		if u.MD != "" {
+		if u.MD != "" && u.Level != api.KnowledgeLevelQuestions {
 			n++
 		}
 	}

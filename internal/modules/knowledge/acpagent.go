@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/acp"
+	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/knowledge"
 	"github.com/ape-dev-de/tiegel/internal/version"
 )
@@ -28,8 +29,13 @@ type acpAgent struct {
 	root  string
 	model string
 
+	// act receives the live activity (nil: none).
+	act *activityLog
+
 	mu    sync.Mutex
 	sinks map[string]*strings.Builder
+	// steps maps a session to the page and step it works on.
+	steps map[string]knowledge.StepInfo
 	// blocked counts rejected tool calls.
 	blocked int
 	// modelErr says that the wanted model is not offered.
@@ -55,7 +61,7 @@ type acpHandler struct{ a *acpAgent }
 
 // startAgent starts the agent process and initializes it.
 func startAgent(ctx context.Context, start StartFunc, cmd acp.Command, root, model string) (*acpAgent, error) {
-	a := &acpAgent{root: root, model: model, sinks: map[string]*strings.Builder{}}
+	a := &acpAgent{root: root, model: model, sinks: map[string]*strings.Builder{}, steps: map[string]knowledge.StepInfo{}}
 	proc, err := start(ctx, cmd, acpHandler{a})
 	if err != nil {
 		return nil, err
@@ -126,6 +132,9 @@ func (a *acpAgent) NewSession(ctx context.Context) (knowledge.Session, error) {
 	}
 	a.mu.Lock()
 	a.sinks[res.SessionID] = &strings.Builder{}
+	if st, ok := knowledge.StepOf(ctx); ok {
+		a.steps[res.SessionID] = st
+	}
 	a.mu.Unlock()
 	return &acpSession{a: a, id: res.SessionID}, nil
 }
@@ -180,19 +189,40 @@ func (s *acpSession) Prompt(ctx context.Context, text string) (string, error) {
 func (s *acpSession) Close() {
 	s.a.mu.Lock()
 	delete(s.a.sinks, s.id)
+	delete(s.a.steps, s.id)
 	s.a.mu.Unlock()
 }
 
-// SessionUpdate collects the agent's message text per session.
+// SessionUpdate collects the agent's message text per session and
+// passes thoughts, message chunks and tool calls to the activity log.
 func (h acpHandler) SessionUpdate(n acp.SessionNotification) {
-	if n.Update.Kind != acp.UpdateAgentMessage {
+	h.a.mu.Lock()
+	st, known := h.a.steps[n.SessionID]
+	if n.Update.Kind == acp.UpdateAgentMessage {
+		if c := n.Update.Chunk(); c.Type == "text" {
+			if sink := h.a.sinks[n.SessionID]; sink != nil {
+				sink.WriteString(c.Text)
+			}
+		}
+	}
+	h.a.mu.Unlock()
+	act := h.a.act
+	if act == nil || !known {
 		return
 	}
-	c := n.Update.Chunk()
-	h.a.mu.Lock()
-	defer h.a.mu.Unlock()
-	if sink := h.a.sinks[n.SessionID]; sink != nil && c.Type == "text" {
-		sink.WriteString(c.Text)
+	switch n.Update.Kind {
+	case acp.UpdateAgentMessage:
+		if c := n.Update.Chunk(); c.Type == "text" {
+			act.chunk(st, api.KnowledgeActivityMessage, c.Text)
+		}
+	case acp.UpdateAgentThought:
+		if c := n.Update.Chunk(); c.Type == "text" {
+			act.chunk(st, api.KnowledgeActivityThought, c.Text)
+		}
+	case acp.UpdateToolCall:
+		act.tool(st, n.Update.ToolCall(), false)
+	case acp.UpdateToolCallUpdate:
+		act.tool(st, n.Update.ToolCall(), true)
 	}
 }
 

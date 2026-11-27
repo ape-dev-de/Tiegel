@@ -6,22 +6,86 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/hooks"
 )
 
-// Project knowledge contract (D560–D563): the knowledge module owns the
-// namespace knowledge.*: knowledge.status, knowledge.plan,
+// Project knowledge contract (D560–D563, D565): the knowledge module
+// owns the namespace knowledge.*: knowledge.status, knowledge.plan,
 // knowledge.build, knowledge.cancel, knowledge.list, knowledge.show,
-// knowledge.read, knowledge.search, knowledge.embed,
-// knowledge.modelStatus, knowledge.pullModel, knowledge.mcpConfig.
+// knowledge.read, knowledge.questions, knowledge.search,
+// knowledge.embed, knowledge.modelStatus, knowledge.pullModel,
+// knowledge.mcpConfig. The analysis runs top-down in levels (overview,
+// entrypoints, processes, components, questions); reading (status,
+// list, show, read, questions, search) works while a build runs.
 // Building runs coding agents (paid tokens) and starts only on an
 // explicit user action; nothing runs automatically.
 
 // Topics of the knowledge namespace.
 const (
-	// TopicKnowledgeStatus: units, run state or store changed
-	// (KnowledgeStatus).
+	// TopicKnowledgeStatus: pages, run state or store changed (also after
+	// every finished page of a running build) (KnowledgeStatus).
 	TopicKnowledgeStatus = "knowledge.status"
-	// TopicKnowledgeProgress: a unit of the running build moved on
+	// TopicKnowledgeProgress: a page of the running build moved on
 	// (KnowledgeProgress).
 	TopicKnowledgeProgress = "knowledge.progress"
+	// TopicKnowledgeActivity: live activity of a running page – agent
+	// thoughts, message chunks, tool calls, steps (KnowledgeActivity;
+	// coalesced, at most about ten per second and page).
+	TopicKnowledgeActivity = "knowledge.activity"
+)
+
+// Kinds of KnowledgeActivity.
+const (
+	KnowledgeActivityThought = "thought"
+	KnowledgeActivityMessage = "message"
+	KnowledgeActivityTool    = "tool"
+	KnowledgeActivityStep    = "step"
+)
+
+// KnowledgeActivity is a piece of live activity of a page of the
+// running build (D566).
+type KnowledgeActivity struct {
+	// Item is the page ID, Level its level.
+	Item  string `json:"item"`
+	Level string `json:"level,omitempty"`
+	// Kind is thought, message, tool or step; Text the (coalesced) text:
+	// streamed chunks, the tool's title or the step name.
+	Kind string `json:"kind"`
+	Text string `json:"text"`
+	// Tool and Status describe a tool call (kind read/search/…, status
+	// pending/in_progress/completed/failed).
+	Tool   string `json:"tool,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+// KnowledgeTranscriptParams are the params of knowledge.transcript.
+type KnowledgeTranscriptParams struct {
+	Item string `json:"item"`
+}
+
+// KnowledgeTranscript is the read-only transcript of a page's agent
+// sessions in the running or last build.
+type KnowledgeTranscript struct {
+	Item  string `json:"item"`
+	Level string `json:"level,omitempty"`
+	Title string `json:"title,omitempty"`
+	// Run identifies the build; File is the log on disk
+	// (<knowledge>/runs/<run>/<item>.log, "" when not written).
+	Run  string `json:"run,omitempty"`
+	File string `json:"file,omitempty"`
+	// Lines are the last lines ("» step", "thought: …", "tool: …",
+	// message text); Truncated counts dropped older lines.
+	Lines     []string `json:"lines"`
+	Truncated int      `json:"truncated,omitempty"`
+	// Running is set while the page is being built.
+	Running bool `json:"running,omitempty"`
+}
+
+// Knowledge levels (KnowledgeScopeParams.Level, KnowledgeUnit.Level).
+const (
+	KnowledgeLevelOverview    = "overview"
+	KnowledgeLevelEntryPoints = "entrypoints"
+	KnowledgeLevelProcesses   = "processes"
+	KnowledgeLevelComponents  = "components"
+	KnowledgeLevelQuestions   = "questions"
+	KnowledgeLevelAll         = "all"
 )
 
 // AgentMCPServer is an MCP server a module offers to the coding agent's
@@ -39,18 +103,30 @@ type AgentMCPServer struct {
 // knowledge base exists and the setting allows it).
 var HookAgentMCPServers = hooks.NewFilter[[]AgentMCPServer]("agent.mcpServers")
 
-// KnowledgeUnit is a unit of the knowledge base (planned or built).
+// KnowledgeUnit is a page of the knowledge base (planned or built).
 type KnowledgeUnit struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
-	Dir   string `json:"dir"`
-	Files int    `json:"files"`
-	// Stale says why the unit needs a build ("" = current; new, changed,
+	// Level is overview, entrypoints, processes or components.
+	Level string `json:"level"`
+	// Group is the entry point kind (entrypoints), the handler class or
+	// file (processes) or the class (components).
+	Group string `json:"group,omitempty"`
+	// Dir is kept for old clients (the group of the page).
+	Dir string `json:"dir,omitempty"`
+	// Files counts the sources of the page.
+	Files int `json:"files"`
+	// Stale says why the page needs a build ("" = current; new, changed,
 	// failed, missing).
 	Stale string `json:"stale,omitempty"`
-	// MD is the absolute path of the document ("" before the first
-	// build).
-	MD          string    `json:"md,omitempty"`
+	// MD is the absolute path of the page ("" before the first build),
+	// Path the page relative to the knowledge directory.
+	MD   string `json:"md,omitempty"`
+	Path string `json:"path,omitempty"`
+	// Summary is the first sentences of the page; Mechanical marks a
+	// page with Tiegel's facts only (the agent failed).
+	Summary     string    `json:"summary,omitempty"`
+	Mechanical  bool      `json:"mechanical,omitempty"`
 	Confidence  float64   `json:"confidence,omitempty"`
 	GeneratedAt time.Time `json:"generatedAt,omitzero"`
 	Commit      string    `json:"commit,omitempty"`
@@ -60,10 +136,32 @@ type KnowledgeUnit struct {
 
 // KnowledgeScopeParams restrict a plan or build.
 type KnowledgeScopeParams struct {
-	// Scope are project relative directories (empty: the whole project).
+	// Scope are project relative directories whose PHP files are
+	// analysed (empty: the whole project).
 	Scope []string `json:"scope,omitempty"`
-	// All rebuilds every unit, not only stale ones.
+	// All rebuilds every page, not only stale ones.
 	All bool `json:"all,omitempty"`
+	// Level is overview, entrypoints, processes, components, questions
+	// or all ("" = all; a comma separated list works too).
+	Level string `json:"level,omitempty"`
+}
+
+// KnowledgeLevelEstimate is the estimate of one level.
+type KnowledgeLevelEstimate struct {
+	Level string `json:"level"`
+	Title string `json:"title"`
+	// Pages counts the pages to build, Total all pages of the level.
+	Pages int `json:"pages"`
+	Total int `json:"total"`
+	Calls int `json:"calls"`
+	// InputTokens is the rough estimate of the level.
+	InputTokens int `json:"inputTokens"`
+	// Later is set when the level is planned only when the run reaches
+	// it (components need the process pages); the numbers are an upper
+	// bound then.
+	Later bool `json:"later,omitempty"`
+	// Skipped counts processes left out by knowledge.maxProcesses.
+	Skipped int `json:"skipped,omitempty"`
 }
 
 // KnowledgeEstimate tells the user what a build costs before it runs.
@@ -82,6 +180,8 @@ type KnowledgeEstimate struct {
 	Model string `json:"model,omitempty"`
 	// Note says in words that the configured agent's tokens are used.
 	Note string `json:"note"`
+	// Levels are the estimates per level (in run order).
+	Levels []KnowledgeLevelEstimate `json:"levels,omitempty"`
 }
 
 // KnowledgePlan is the result of knowledge.plan.
@@ -106,7 +206,9 @@ type KnowledgeBuildParams struct {
 
 // KnowledgeProgress is a progress event of a build.
 type KnowledgeProgress struct {
+	// Unit is the page ID.
 	Unit       string  `json:"unit"`
+	Level      string  `json:"level,omitempty"`
 	Title      string  `json:"title"`
 	Index      int     `json:"index"`
 	Total      int     `json:"total"`
@@ -115,6 +217,16 @@ type KnowledgeProgress struct {
 	Error      string  `json:"error,omitempty"`
 	Confidence float64 `json:"confidence,omitempty"`
 	Attempt    int     `json:"attempt,omitempty"`
+	// StepIndex is the step within the page (1 describe, 2 validate, 3
+	// write) of Steps; Started is when the page started.
+	StepIndex int       `json:"stepIndex,omitempty"`
+	Steps     int       `json:"steps,omitempty"`
+	Started   time.Time `json:"started,omitzero"`
+	// Tools counts the agent's tool calls, Reads those that read or
+	// searched, Chars the streamed characters (about four per token).
+	Tools int `json:"tools,omitempty"`
+	Reads int `json:"reads,omitempty"`
+	Chars int `json:"chars,omitempty"`
 }
 
 // KnowledgeRun is the state of the running (or last) build.
@@ -133,6 +245,33 @@ type KnowledgeRun struct {
 	Embedded   int    `json:"embedded,omitempty"`
 	EmbedTotal int    `json:"embedTotal,omitempty"`
 	EmbedError string `json:"embedError,omitempty"`
+	// Level is the level parameter of the run; Answered counts the
+	// questions answered in it.
+	Level    string `json:"level,omitempty"`
+	Answered int    `json:"answered,omitempty"`
+	// ID identifies the run (transcripts in <knowledge>/runs/<id>/).
+	ID string `json:"id,omitempty"`
+}
+
+// KnowledgeLevelStatus counts the pages of a level.
+type KnowledgeLevelStatus struct {
+	Level string `json:"level"`
+	Title string `json:"title"`
+	// Pages counts written pages, Planned the pages the level has now,
+	// Stale those to build, Failed those whose last build failed.
+	Pages   int `json:"pages"`
+	Planned int `json:"planned"`
+	Stale   int `json:"stale"`
+	Failed  int `json:"failed"`
+}
+
+// KnowledgeQuestionCounts counts the questions of the knowledge base.
+type KnowledgeQuestionCounts struct {
+	Open     int `json:"open"`
+	Answered int `json:"answered"`
+	// Answerable are open questions the next "answer questions" run
+	// tries.
+	Answerable int `json:"answerable"`
 }
 
 // KnowledgeEmbedding describes the embedding configuration and store.
@@ -170,6 +309,41 @@ type KnowledgeStatus struct {
 	// GiveAgent tells whether the agent gets the knowledge (MCP).
 	GiveAgent bool         `json:"giveAgent"`
 	Run       KnowledgeRun `json:"run"`
+	// Levels count the pages per level; Questions the open and answered
+	// questions.
+	Levels    []KnowledgeLevelStatus  `json:"levels,omitempty"`
+	Questions KnowledgeQuestionCounts `json:"questions"`
+	// Legacy is set when the directory holds pages of the old unit
+	// format (D560); they are replaced by the next build.
+	Legacy bool `json:"legacy,omitempty"`
+}
+
+// KnowledgeQuestionsParams are the params of knowledge.questions.
+type KnowledgeQuestionsParams struct {
+	// Status filters: open, answered or "" (all).
+	Status string `json:"status,omitempty"`
+}
+
+// KnowledgeQuestion is an open or answered question.
+type KnowledgeQuestion struct {
+	ID    string `json:"id"`
+	Text  string `json:"text"`
+	Level string `json:"level"`
+	// Item is the page that asked it.
+	Item   string   `json:"item"`
+	Refs   []string `json:"refs,omitempty"`
+	Status string   `json:"status"`
+	Answer string   `json:"answer,omitempty"`
+	// AnsweredBy is the page or question batch that answered it.
+	AnsweredBy string   `json:"answeredBy,omitempty"`
+	AnswerRefs []string `json:"answerRefs,omitempty"`
+	Attempts   int      `json:"attempts,omitempty"`
+}
+
+// KnowledgeQuestionsResult is the result of knowledge.questions.
+type KnowledgeQuestionsResult struct {
+	Questions []KnowledgeQuestion     `json:"questions"`
+	Counts    KnowledgeQuestionCounts `json:"counts"`
 }
 
 // KnowledgeUnitParams address a unit.
@@ -189,7 +363,7 @@ type KnowledgeDoc struct {
 // KnowledgeReadParams are the params of knowledge.read.
 type KnowledgeReadParams struct {
 	// Path is relative to the knowledge directory ("index.md",
-	// "units/src-billing.md") or a unit ID.
+	// "overview.md", "processes/<id>.md", "questions.md") or a page ID.
 	Path string `json:"path"`
 }
 
@@ -207,7 +381,9 @@ type KnowledgeHit struct {
 	Score   float64 `json:"score"`
 	Vector  float64 `json:"vector,omitempty"`
 	Keyword float64 `json:"keyword,omitempty"`
-	Unit    string  `json:"unit"`
+	// Unit is the page ID, Level its level.
+	Unit  string `json:"unit"`
+	Level string `json:"level,omitempty"`
 	// Path is the document relative to the knowledge directory, File
 	// absolute; Heading the section path, Anchor its heading anchor.
 	Path    string `json:"path"`

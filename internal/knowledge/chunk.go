@@ -14,10 +14,11 @@ import (
 type Chunk struct {
 	// ID is "<md>#<anchor>[-n]", unique in the store.
 	ID string `json:"id"`
-	// Unit is the unit ID, MD the document relative to the knowledge
-	// directory.
-	Unit string `json:"unit"`
-	MD   string `json:"md"`
+	// Unit is the page's item ID, Level its level, MD the page relative
+	// to the knowledge directory.
+	Unit  string `json:"unit"`
+	Level string `json:"level,omitempty"`
+	MD    string `json:"md"`
 	// Heading is the heading path ("App\Billing › Data flows › Checkout"),
 	// Anchor the anchor of the section's heading.
 	Heading string `json:"heading"`
@@ -47,11 +48,11 @@ type section struct {
 	text   strings.Builder
 }
 
-// ChunkDoc splits a unit document (with front matter) into chunks by
+// ChunkDoc splits a page (with front matter) into chunks by
 // heading: sections of level 2 and 3 are chunks; small neighbours below
 // the same level-2 heading are merged, long sections are split at
 // paragraphs.
-func ChunkDoc(unit, md string, sources []string, doc string, o ChunkOptions) []Chunk {
+func ChunkDoc(unit, level, md string, sources []string, doc string, o ChunkOptions) []Chunk {
 	if o.Target <= 0 {
 		o.Target = 500
 	}
@@ -128,7 +129,7 @@ func ChunkDoc(unit, md string, sources []string, doc string, o ChunkOptions) []C
 				text = head + "\n\n" + p // keep the context of a continued section
 			}
 			sum := sha256.Sum256([]byte(text))
-			out = append(out, Chunk{ID: id, Unit: unit, MD: md, Heading: head, Anchor: s.anchor, Sources: sources, Text: text, Hash: hex.EncodeToString(sum[:8])})
+			out = append(out, Chunk{ID: id, Unit: unit, Level: level, MD: md, Heading: head, Anchor: s.anchor, Sources: sources, Text: text, Hash: hex.EncodeToString(sum[:8])})
 		}
 	}
 	return out

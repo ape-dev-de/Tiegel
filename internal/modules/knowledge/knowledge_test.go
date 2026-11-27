@@ -19,73 +19,47 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/core/bus"
 	"github.com/ape-dev-de/tiegel/internal/core/module"
 	kn "github.com/ape-dev-de/tiegel/internal/knowledge"
+	"github.com/ape-dev-de/tiegel/internal/knowledge/knowledgetest"
 	"github.com/ape-dev-de/tiegel/internal/modules/modtest"
 )
 
-// project is a small PHP project with two namespaces.
+// project is a small Symfony project: an invoice controller and a cart
+// command that both use the InvoiceService.
 var project = map[string]string{
-	"composer.json":               `{"autoload":{"psr-4":{"App\\":"src/"}}}`,
-	"src/Billing/Invoice.php":     "<?php\nnamespace App\\Billing;\nclass Invoice {\n  public function create(array $data) { return $data; }\n}\n",
-	"src/Billing/Payment.php":     "<?php\nnamespace App\\Billing;\nclass Payment {\n  public function charge() {}\n}\n",
-	"src/Shop/CartController.php": "<?php\nnamespace App\\Shop;\nclass CartController {\n  public function add() {}\n}\n",
-	"tests/InvoiceTest.php":       "<?php\n",
-	"vendor/x/y.php":              "<?php\n",
+	"composer.json":                        `{"require":{"symfony/framework-bundle":"^7"},"autoload":{"psr-4":{"App\\":"src/"}}}`,
+	"src/Controller/InvoiceController.php": "<?php\nnamespace App\\Controller;\nclass InvoiceController {\n  #[Route('/invoices', methods: ['POST'])]\n  public function create(array $data) { return $data; }\n}\n",
+	"src/Command/CartCommand.php":          "<?php\nnamespace App\\Command;\n#[AsCommand(name: 'cart:clear')]\nclass CartCommand {\n  public function execute() {}\n}\n",
+	"src/Billing/InvoiceService.php":       "<?php\nnamespace App\\Billing;\nclass InvoiceService {\n  public function save(array $data) {}\n}\n",
+	"tests/InvoiceTest.php":                "<?php\n",
+	"vendor/x/y.php":                       "<?php\n",
 }
 
-// unitOf returns the unit directory named in a prompt.
-func unitOf(prompt string) string {
-	i := strings.Index(prompt, "(directory ")
-	if i < 0 {
-		return ""
-	}
-	rest := prompt[i+len("(directory "):]
-	if j := strings.IndexAny(rest, ",)"); j >= 0 {
-		return rest[:j]
-	}
-	return rest
-}
-
-// script answers the three pipeline prompts like a real agent: it reads
-// a file (allowed), tries an edit (rejected) and answers with JSON or
-// Markdown.
-func script(mu *sync.Mutex, perms *[]string, broken *bool) acptest.Script {
+// script answers like a real agent: on the first describe prompt it
+// reads a file (allowed), tries an edit and a shell command (rejected),
+// then answers with the fake's JSON.
+func script(f *fixture) acptest.Script {
 	return func(ctx context.Context, t *acptest.Turn) string {
-		p := t.Prompt
-		dir := unitOf(p)
-		file, sym := "src/Billing/Invoice.php", "Invoice::create"
-		if dir == "src/Shop" || strings.Contains(p, `Unit: App\Shop`) {
-			file, sym = "src/Shop/CartController.php", "CartController::add"
+		_, step, _ := knowledgetest.Level(t.Prompt)
+		if step == kn.StepDescribe {
+			// Live activity: a thought, a read tool call and its update.
+			t.Thought("Looking at the controller first.\nThen the service.")
+			t.Tool(false, acp.ToolCall{ToolCallID: "t1", Title: "read src/Billing/InvoiceService.php", Kind: acp.KindRead, Status: "pending"})
+			t.Tool(true, acp.ToolCall{ToolCallID: "t1", Status: "completed"})
 		}
-		switch {
-		case strings.Contains(p, "You document the data flows"):
-			read := t.Permission(ctx, acp.ToolCall{ToolCallID: "r1", Name: "read", Kind: acp.KindRead, Title: "read " + file})
-			edit := t.Permission(ctx, acp.ToolCall{ToolCallID: "e1", Name: "edit", Kind: acp.KindEdit, Title: "edit " + file})
-			shell := t.Permission(ctx, acp.ToolCall{ToolCallID: "s1", Kind: acp.KindExecute, Title: "rm -rf", RawInput: json.RawMessage(`{"command":"rm -rf src"}`)})
-			mu.Lock()
-			*perms = append(*perms, read, edit, shell)
-			bad := *broken
-			mu.Unlock()
-			if bad {
-				t.Text("I could not finish.")
-				return ""
+		if step == kn.StepDescribe {
+			f.mu.Lock()
+			first := len(f.perms) == 0
+			f.mu.Unlock()
+			if first {
+				read := t.Permission(ctx, acp.ToolCall{ToolCallID: "r1", Name: "read", Kind: acp.KindRead, Title: "read src/Billing/InvoiceService.php"})
+				edit := t.Permission(ctx, acp.ToolCall{ToolCallID: "e1", Name: "edit", Kind: acp.KindEdit, Title: "edit"})
+				shell := t.Permission(ctx, acp.ToolCall{ToolCallID: "s1", Kind: acp.KindExecute, Title: "rm -rf", RawInput: json.RawMessage(`{"command":"rm -rf src"}`)})
+				f.mu.Lock()
+				f.perms = append(f.perms, read, edit, shell)
+				f.mu.Unlock()
 			}
-			d := kn.Description{Summary: "Unit " + dir + " handles data.", Flows: []kn.Flow{{Name: "Main flow", Trigger: "HTTP POST",
-				Steps: []kn.Step{{File: file, Symbol: sym, What: "receives and stores the data"}}, SideEffects: []string{"DB write"}}}}
-			b, _ := json.Marshal(d)
-			t.Text("Here is the description:\n```json\n")
-			t.Text(string(b) + "\n```\n")
-		case strings.Contains(p, "You review a description"):
-			i := strings.Index(p, "```json\n")
-			j := strings.Index(p[i+8:], "\n```")
-			var d kn.Description
-			_ = json.Unmarshal([]byte(p[i+8:i+8+j]), &d)
-			v, _ := json.Marshal(kn.Validation{Confidence: 0.85, Issues: []string{"checked"}, Description: &d})
-			t.Text("```json\n" + string(v) + "\n```")
-		case strings.Contains(p, "Write the knowledge base page"):
-			t.Text("## Overview\nThe unit stores invoices and payments.\n\n## Data flows\n### Main flow\n**Trigger:** HTTP POST\n1. [" + file + ":4](" + file + "#L4) `" + sym + "` – stores\n")
-		default:
-			t.Text("?")
 		}
+		t.Text(f.kf.Answer(ctx, t.Prompt))
 		return ""
 	}
 }
@@ -95,18 +69,19 @@ type fixture struct {
 	app   *api.App
 	root  string
 	fake  *acptest.Agent
+	kf    *knowledgetest.Fake
 	mod   *Module
 	ol    *fakeOllama
 	mu    sync.Mutex
 	cmds  []acp.Command
 	perms []string
-	bad   bool
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{t: t, ol: &fakeOllama{models: map[string]bool{}}}
-	f.fake = &acptest.Agent{Script: script(&f.mu, &f.perms, &f.bad), Models: []string{"fake/small", "fake/large"}}
+	f.kf = &knowledgetest.Fake{Service: kn.Ref{File: "src/Billing/InvoiceService.php", Symbol: `App\Billing\InvoiceService::save`}}
+	f.fake = &acptest.Agent{Script: script(f), Models: []string{"fake/small", "fake/large"}}
 	srv := httptest.NewServer(f.ol.handler())
 	t.Cleanup(srv.Close)
 	f.mod = New(Options{
@@ -204,24 +179,57 @@ func (o *fakeOllama) handler() http.Handler {
 	return mux
 }
 
+func levelEstimate(pl api.KnowledgePlan, level string) api.KnowledgeLevelEstimate {
+	for _, l := range pl.Estimate.Levels {
+		if l.Level == level {
+			return l
+		}
+	}
+	return api.KnowledgeLevelEstimate{}
+}
+
 func TestPlanAndEstimate(t *testing.T) {
 	f := newFixture(t)
 	var pl api.KnowledgePlan
 	f.call("knowledge.plan", api.KnowledgeScopeParams{}, &pl)
-	if pl.Total != 2 || len(pl.Units) != 2 || pl.Units[0].ID != "src-billing" || pl.Units[0].Title != `App\Billing` || pl.Units[0].Stale != kn.StaleNew {
-		t.Fatalf("%+v", pl)
+	// Overview 1, entry points 2 (http, cli), processes 2; components and
+	// questions are planned when the run gets there.
+	ids := []string{}
+	for _, u := range pl.Units {
+		ids = append(ids, u.ID)
+	}
+	if strings.Join(ids, ",") != "overview,entrypoints-http,entrypoints-cli,process-app-command-cartcommand,process-app-controller-invoicecontroller" || pl.Units[0].Level != kn.LevelOverview || pl.Units[0].Stale != kn.StaleNew {
+		t.Fatalf("%+v", ids)
 	}
 	e := pl.Estimate
-	if e.Units != 2 || e.Files != 3 || e.Calls != 6 || e.InputTokens < 8000 || e.Agent != "opencode acp" || !strings.Contains(e.Note, "billed by your agent's provider") {
+	if len(e.Levels) != 5 || e.Agent != "opencode acp" || !strings.Contains(e.Note, "billed by your agent's provider") || !strings.Contains(e.Note, "upper bound") {
 		t.Fatalf("%+v", e)
 	}
-	f.call("knowledge.plan", api.KnowledgeScopeParams{Scope: []string{"src/Shop"}}, &pl)
-	if pl.Total != 1 || pl.Units[0].ID != "src-shop" {
+	if c := levelEstimate(pl, kn.LevelComponents); !c.Later || c.Pages == 0 || c.Calls != 2*c.Pages {
+		t.Fatalf("%+v", c)
+	}
+	if p := levelEstimate(pl, kn.LevelProcesses); p.Pages != 2 || p.Calls != 4 || p.InputTokens < 8000 || p.Later {
+		t.Fatalf("%+v", p)
+	}
+	if e.Units != 1+2+2+levelEstimate(pl, kn.LevelComponents).Pages+levelEstimate(pl, kn.LevelQuestions).Pages {
+		t.Fatal(e.Units)
+	}
+	// A single level.
+	f.call("knowledge.plan", api.KnowledgeScopeParams{Level: "overview"}, &pl)
+	if len(pl.Units) != 1 || len(pl.Estimate.Levels) != 1 || pl.Estimate.Calls != 2 {
 		t.Fatalf("%+v", pl)
 	}
-	f.call("knowledge.plan", api.KnowledgeScopeParams{Scope: []string{filepath.Join(f.root, "tests")}}, &pl)
-	if pl.Total != 1 || pl.Units[0].ID != "tests" {
-		t.Fatalf("explicit excluded folder: %+v", pl)
+	f.call("knowledge.plan", api.KnowledgeScopeParams{Level: "components"}, &pl)
+	if pl.Estimate.Units != 0 || pl.Estimate.Levels[0].Later {
+		t.Fatalf("components without process pages: %+v", pl.Estimate)
+	}
+	if err := modtest.WantCode(t, f.app, "knowledge.plan", api.KnowledgeScopeParams{Level: "nope"}, api.CodeInvalidParams); err == nil {
+		t.Fatal("unknown level")
+	}
+	// Scope narrows the analysed files; explicit excluded folders count.
+	f.call("knowledge.plan", api.KnowledgeScopeParams{Scope: []string{"src/Command"}, Level: "processes"}, &pl)
+	if len(pl.Units) != 1 || pl.Units[0].ID != "process-app-command-cartcommand" {
+		t.Fatalf("%+v", pl.Units)
 	}
 	if err := modtest.WantCode(t, f.app, "knowledge.plan", api.KnowledgeScopeParams{Scope: []string{"/elsewhere"}}, api.CodeInvalidParams); err == nil {
 		t.Fatal("outside scope")
@@ -231,9 +239,15 @@ func TestPlanAndEstimate(t *testing.T) {
 	if pl.Estimate.Model != "fake/small" {
 		t.Fatal(pl.Estimate)
 	}
+	f.set(SettingMaxProcesses, 1)
+	f.mod.invalidate()
+	f.call("knowledge.plan", api.KnowledgeScopeParams{Level: "processes"}, &pl)
+	if l := pl.Estimate.Levels[0]; l.Pages != 1 || l.Skipped != 1 {
+		t.Fatalf("%+v", l)
+	}
 	var st api.KnowledgeStatus
 	f.call("knowledge.status", nil, &st)
-	if st.Exists || st.Stale != 2 || st.Units != 0 || !strings.HasSuffix(st.Dir, "knowledge") || strings.HasPrefix(st.Dir, f.root) || !st.Embedding.Local || !st.GiveAgent {
+	if st.Exists || st.Units != 0 || st.Stale == 0 || len(st.Levels) != 4 || st.Levels[1].Planned != 2 || !strings.HasSuffix(st.Dir, "knowledge") || strings.HasPrefix(st.Dir, f.root) || !st.Embedding.Local || !st.GiveAgent {
 		t.Fatalf("%+v", st)
 	}
 	// Building requires an agent.
@@ -251,11 +265,10 @@ func TestBuildSearchAndIncremental(t *testing.T) {
 	// keyword search works.
 	var run api.KnowledgeRun
 	f.call("knowledge.build", api.KnowledgeBuildParams{Wait: true}, &run)
-	if run.Running || run.Done != 2 || run.Failed != 0 || run.EmbedError == "" || !strings.Contains(run.EmbedError, "pull") {
+	// overview, 2 entry point pages, 2 processes, 1 component, 1 batch.
+	if run.Running || run.Done != 7 || run.Failed != 0 || run.Answered != 2 || run.EmbedError == "" || !strings.Contains(run.EmbedError, "pull") || len(run.Units) != 7 {
 		t.Fatalf("%+v", run)
 	}
-	// Read-only: read allowed, edit and shell rejected; opencode-style
-	// inline config not set for a non-opencode command name? (opencode).
 	f.mu.Lock()
 	perms, cmds := append([]string(nil), f.perms...), append([]acp.Command(nil), f.cmds...)
 	f.mu.Unlock()
@@ -265,36 +278,40 @@ func TestBuildSearchAndIncremental(t *testing.T) {
 	if len(cmds) != 1 || cmds[0].Path != "/fake/bin/opencode" || cmds[0].Dir != f.root || !containsEnv(cmds[0].Env, "OPENCODE_CONFIG_CONTENT="+readOnlyConfig) {
 		t.Fatalf("%+v", cmds)
 	}
-	if f.fake.Model() != "fake/large" {
-		t.Fatal("model not applied", f.fake.Model())
+	if f.fake.Model() != "fake/large" || len(f.fake.Prompts()) != 14 {
+		t.Fatal(f.fake.Model(), len(f.fake.Prompts()))
 	}
-	if len(f.fake.Prompts()) != 6 {
-		t.Fatal(len(f.fake.Prompts()))
-	}
-	if strings.Contains(strings.Join(run.Errors, " "), "rejected") == false {
+	if !strings.Contains(strings.Join(run.Errors, " "), "rejected") {
 		t.Fatal("rejections not reported", run.Errors)
 	}
-	// Documents outside the project with front matter.
 	var st api.KnowledgeStatus
 	f.call("knowledge.status", nil, &st)
-	if !st.Exists || st.Units != 2 || st.Stale != 0 || st.Embedding.Chunks == 0 || st.Embedding.Embedded != 0 {
+	if !st.Exists || st.Units != 6 || st.Stale != 0 || st.Questions.Answered != 2 || st.Questions.Open != 0 || st.Embedding.Chunks == 0 || st.Embedding.Embedded != 0 {
 		t.Fatalf("%+v", st)
 	}
 	var doc api.KnowledgeDoc
-	f.call("knowledge.show", api.KnowledgeUnitParams{Unit: "src-billing"}, &doc)
-	if !strings.HasPrefix(doc.Content, "---\nunit: src-billing\n") || !strings.Contains(doc.Content, "# App\\Billing") || !strings.Contains(doc.Content, "confidence: 0.85") || !strings.HasPrefix(doc.File, st.Dir) {
+	f.call("knowledge.show", api.KnowledgeUnitParams{Unit: "overview"}, &doc)
+	if !strings.HasPrefix(doc.Content, "---\nid: overview\nlevel: overview\n") || !strings.Contains(doc.Content, "```mermaid") || !strings.HasPrefix(doc.File, st.Dir) {
 		t.Fatal(doc)
 	}
-	f.call("knowledge.show", api.KnowledgeUnitParams{Unit: `App\Shop`}, &doc)
-	if doc.Path != "units/src-shop.md" {
+	f.call("knowledge.show", api.KnowledgeUnitParams{Unit: `App\Controller\InvoiceController`}, &doc)
+	if doc.Path != "processes/app-controller-invoicecontroller.md" {
+		t.Fatal(doc.Path)
+	}
+	f.call("knowledge.show", api.KnowledgeUnitParams{Unit: "InvoiceService"}, &doc)
+	if doc.Path != "components/app-billing-invoiceservice.md" {
 		t.Fatal(doc.Path)
 	}
 	f.call("knowledge.read", api.KnowledgeReadParams{Path: "index.md"}, &doc)
-	if !strings.Contains(doc.Content, "[App\\\\Billing](units/src-billing.md)") && !strings.Contains(doc.Content, "(units/src-billing.md)") {
+	if !strings.Contains(doc.Content, "(processes/app-controller-invoicecontroller.md)") || !strings.Contains(doc.Content, "## 4. Components") {
 		t.Fatal(doc.Content)
 	}
-	f.call("knowledge.read", api.KnowledgeReadParams{Path: "src-shop"}, &doc)
-	if doc.Path != "units/src-shop.md" {
+	f.call("knowledge.read", api.KnowledgeReadParams{Path: "entrypoints-http"}, &doc)
+	if doc.Path != "entrypoints/http.md" {
+		t.Fatal(doc)
+	}
+	f.call("knowledge.show", api.KnowledgeUnitParams{Unit: "questions"}, &doc)
+	if doc.Path != "questions.md" {
 		t.Fatal(doc)
 	}
 	f.call("knowledge.show", api.KnowledgeUnitParams{}, &doc)
@@ -307,11 +324,30 @@ func TestBuildSearchAndIncremental(t *testing.T) {
 		}
 	}
 	if err := modtest.WantCode(t, f.app, "knowledge.show", api.KnowledgeUnitParams{Unit: "nope"}, api.CodeNotFound); err == nil {
-		t.Fatal("unknown unit")
+		t.Fatal("unknown page")
+	}
+	var qs api.KnowledgeQuestionsResult
+	f.call("knowledge.questions", api.KnowledgeQuestionsParams{Status: "answered"}, &qs)
+	if len(qs.Questions) != 2 || qs.Counts.Answered != 2 || qs.Questions[0].Answer == "" || qs.Questions[0].AnsweredBy == "" {
+		t.Fatalf("%+v", qs)
+	}
+	if err := modtest.WantCode(t, f.app, "knowledge.questions", api.KnowledgeQuestionsParams{Status: "x"}, api.CodeInvalidParams); err == nil {
+		t.Fatal("bad status")
+	}
+	var units []api.KnowledgeUnit
+	f.call("knowledge.list", nil, &units)
+	levels := []string{}
+	for _, u := range units {
+		if len(levels) == 0 || levels[len(levels)-1] != u.Level {
+			levels = append(levels, u.Level)
+		}
+	}
+	if strings.Join(levels, ",") != "overview,entrypoints,processes,components,questions" || units[0].Path != "overview.md" || units[0].Confidence != 0.85 || units[0].Summary == "" {
+		t.Fatalf("%v %+v", levels, units[0])
 	}
 	var res api.KnowledgeSearchResult
-	f.call("knowledge.search", api.KnowledgeSearchParams{Query: "cart controller"}, &res)
-	if res.Mode != "keyword" || len(res.Hits) == 0 || res.Hits[0].Unit != "src-shop" || !strings.Contains(res.Note, "no embeddings") {
+	f.call("knowledge.search", api.KnowledgeSearchParams{Query: "cart clear"}, &res)
+	if res.Mode != "keyword" || len(res.Hits) == 0 || !strings.Contains(res.Note, "no embeddings") || res.Hits[0].Level == "" {
 		t.Fatalf("%+v", res)
 	}
 	// Pull the model (explicit), then embed: hybrid search.
@@ -330,15 +366,13 @@ func TestBuildSearchAndIncremental(t *testing.T) {
 		t.Fatalf("%+v", er)
 	}
 	f.call("knowledge.search", api.KnowledgeSearchParams{Query: "where are invoices created", K: 3}, &res)
-	if res.Mode != "hybrid" || len(res.Hits) == 0 || res.Hits[0].Unit != "src-billing" || res.Hits[0].Vector <= 0 || res.Hits[0].Anchor == "" || !strings.HasPrefix(res.Hits[0].File, st.Dir) {
+	if res.Mode != "hybrid" || len(res.Hits) == 0 || res.Hits[0].Vector <= 0 || res.Hits[0].Anchor == "" || !strings.HasPrefix(res.Hits[0].File, st.Dir) {
 		t.Fatalf("%+v", res)
 	}
 	f.call("knowledge.search", api.KnowledgeSearchParams{Query: "invoice", KeywordOnly: true}, &res)
 	if res.Mode != "keyword" {
 		t.Fatal(res.Mode)
 	}
-	// Another embedding model in the settings: search falls back with a
-	// note until re-embedded.
 	f.set(SettingEmbedModel, "other")
 	f.call("knowledge.search", api.KnowledgeSearchParams{Query: "invoice"}, &res)
 	if res.Mode != "keyword" || !strings.Contains(res.Note, "knowledge embed") {
@@ -348,54 +382,277 @@ func TestBuildSearchAndIncremental(t *testing.T) {
 	if err := modtest.WantCode(t, f.app, "knowledge.search", api.KnowledgeSearchParams{}, api.CodeInvalidParams); err == nil {
 		t.Fatal("empty query")
 	}
-	// Incremental: nothing to do; a changed file makes its unit stale.
+	// Incremental: nothing to do; a changed service makes the processes
+	// citing it and its component stale.
 	var pl api.KnowledgePlan
 	f.call("knowledge.plan", api.KnowledgeScopeParams{}, &pl)
-	if len(pl.Units) != 0 || pl.Total != 2 {
+	if pl.Estimate.Units != 0 || len(pl.Units) != 0 {
 		t.Fatalf("%+v", pl)
 	}
-	modtest.WriteFile(t, filepath.Join(f.root, "src/Shop/CartController.php"), "<?php\nclass CartController { public function add() { /* changed */ } }\n")
+	modtest.WriteFile(t, filepath.Join(f.root, "src/Billing/InvoiceService.php"), "<?php\nnamespace App\\Billing;\nclass InvoiceService {\n  public function save(array $data) { /* changed */ }\n}\n")
 	f.mod.invalidate()
 	f.call("knowledge.plan", api.KnowledgeScopeParams{}, &pl)
-	if len(pl.Units) != 1 || pl.Units[0].ID != "src-shop" || pl.Units[0].Stale != kn.StaleChanged {
-		t.Fatalf("%+v", pl)
+	stale := []string{}
+	for _, u := range pl.Units {
+		stale = append(stale, u.ID+":"+u.Stale)
 	}
-	var units []api.KnowledgeUnit
-	f.call("knowledge.list", nil, &units)
-	if len(units) != 2 || units[1].Stale != kn.StaleChanged || units[0].MD == "" || units[0].Confidence != 0.85 {
-		t.Fatalf("%+v", units)
+	if strings.Join(stale, ",") != "process-app-command-cartcommand:changed,process-app-controller-invoicecontroller:changed,component-app-billing-invoiceservice:changed" {
+		t.Fatal(stale)
 	}
+	// Only the processes level.
 	n := len(f.fake.Prompts())
-	f.call("knowledge.build", api.KnowledgeBuildParams{Wait: true}, &run)
-	if run.Done != 1 || len(f.fake.Prompts()) != n+3 || run.EmbedError != "" {
+	f.call("knowledge.build", api.KnowledgeBuildParams{KnowledgeScopeParams: api.KnowledgeScopeParams{Level: "processes"}, Wait: true}, &run)
+	if run.Done != 2 || len(f.fake.Prompts()) != n+4 || run.EmbedError != "" || run.Level != "processes" {
 		t.Fatalf("%+v", run)
 	}
-	// --all rebuilds everything; a unit list builds exactly those.
-	f.call("knowledge.plan", api.KnowledgeScopeParams{All: true}, &pl)
-	if len(pl.Units) != 2 {
-		t.Fatal(pl)
-	}
-	f.call("knowledge.build", api.KnowledgeBuildParams{Units: []string{"src-billing"}, Wait: true, NoEmbed: true}, &run)
+	// A page list builds exactly those.
+	f.call("knowledge.build", api.KnowledgeBuildParams{Units: []string{"overview"}, Wait: true, NoEmbed: true}, &run)
 	if run.Done != 1 {
 		t.Fatal(run)
 	}
-	// Failure keeps the old document and marks the unit.
-	f.mu.Lock()
-	f.bad = true
-	f.mu.Unlock()
-	f.call("knowledge.build", api.KnowledgeBuildParams{Units: []string{"src-shop"}, Wait: true}, &run)
+	// Failure keeps the old page and marks it.
+	f.kf.Hook = func(_ context.Context, level, _ string) error {
+		if level == kn.LevelEntryPoints {
+			return fmt.Errorf("tired")
+		}
+		return nil
+	}
+	f.call("knowledge.build", api.KnowledgeBuildParams{Units: []string{"entrypoints-cli"}, Wait: true}, &run)
 	if run.Failed != 1 || !strings.Contains(strings.Join(run.Errors, " "), "describe") {
 		t.Fatalf("%+v", run)
 	}
 	f.call("knowledge.status", nil, &st)
-	if st.Failed != 1 || st.Stale != 1 || st.Units != 2 {
+	if st.Failed != 1 || st.Levels[1].Failed != 1 || st.Units != 6 {
 		t.Fatalf("%+v", st)
 	}
-	// Progress events were published.
 	rec.Wait(t, api.TopicKnowledgeProgress, func(e bus.Event) bool {
 		p, ok := e.Payload.(api.KnowledgeProgress)
-		return ok && p.State == kn.RunDone && p.Step == kn.StepWrite
+		return ok && p.State == kn.RunDone && p.Step == kn.StepWrite && p.Level != ""
 	})
+}
+
+// TestReadWhileBuilding reads status, list, pages, questions and search
+// from several goroutines while a scripted build runs (go test -race):
+// nothing blocks or fails, finished pages are there at once, search
+// finds them before the embedding phase.
+func TestReadWhileBuilding(t *testing.T) {
+	f := newFixture(t)
+	release := make(chan struct{})
+	reached := make(chan struct{})
+	var once sync.Once
+	f.kf.Hook = func(ctx context.Context, level, _ string) error {
+		if level == kn.LevelProcesses {
+			once.Do(func() { close(reached) })
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+		}
+		return nil
+	}
+	var run api.KnowledgeRun
+	f.call("knowledge.build", api.KnowledgeBuildParams{}, &run)
+	if !run.Running {
+		t.Fatal(run)
+	}
+	select {
+	case <-reached:
+	case <-time.After(20 * time.Second):
+		t.Fatal("processes not reached")
+	}
+	// While the build waits in the processes level:
+	var st api.KnowledgeStatus
+	f.call("knowledge.status", nil, &st)
+	if !st.Run.Running || !st.Exists || st.Levels[0].Pages != 1 || st.Levels[1].Pages != 2 || st.Questions.Open != 1 {
+		t.Fatalf("%+v", st)
+	}
+	var units []api.KnowledgeUnit
+	f.call("knowledge.list", nil, &units)
+	if units[0].ID != "overview" || units[0].MD == "" || units[1].MD == "" {
+		t.Fatalf("%+v", units)
+	}
+	var doc api.KnowledgeDoc
+	f.call("knowledge.read", api.KnowledgeReadParams{Path: "overview.md"}, &doc)
+	if !strings.Contains(doc.Content, "# Overview") {
+		t.Fatal(doc.Content)
+	}
+	f.call("knowledge.read", api.KnowledgeReadParams{Path: "index.md"}, &doc)
+	if !strings.Contains(doc.Content, "entrypoints/http.md") {
+		t.Fatal(doc.Content)
+	}
+	var res api.KnowledgeSearchResult
+	f.call("knowledge.search", api.KnowledgeSearchParams{Query: "cart:clear"}, &res)
+	if len(res.Hits) == 0 || res.Hits[0].Path != "entrypoints/cli.md" {
+		t.Fatalf("%+v", res)
+	}
+	if _, ok := api.HookAgentMCPServers.Apply(context.Background(), f.app.Hooks(), nil); ok != nil {
+		t.Fatal(ok)
+	}
+	var wg sync.WaitGroup
+	for i := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 15; j++ {
+				var st api.KnowledgeStatus
+				var us []api.KnowledgeUnit
+				var qs api.KnowledgeQuestionsResult
+				var res api.KnowledgeSearchResult
+				var doc api.KnowledgeDoc
+				for _, c := range []struct {
+					m    string
+					p, o any
+				}{{"knowledge.status", nil, &st}, {"knowledge.list", nil, &us}, {"knowledge.questions", nil, &qs},
+					{"knowledge.search", api.KnowledgeSearchParams{Query: "invoices"}, &res}, {"knowledge.show", api.KnowledgeUnitParams{Unit: "overview"}, &doc}} {
+					if err := modtest.TryCall(f.app, c.m, c.p, c.o); err != nil {
+						t.Error(c.m, err)
+						return
+					}
+				}
+				if i == 0 && j == 3 {
+					once := sync.OnceFunc(func() { close(release) })
+					once()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	select {
+	case <-release:
+	default:
+		close(release)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		f.call("knowledge.status", nil, &st)
+		if !st.Run.Running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("build did not end")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if st.Run.Failed != 0 || st.Units != 6 {
+		t.Fatalf("%+v", st.Run)
+	}
+}
+
+func TestActivityAndTranscript(t *testing.T) {
+	f := newFixture(t)
+	rec := modtest.Record(t, f.app, "knowledge.*")
+	var run api.KnowledgeRun
+	f.call("knowledge.build", api.KnowledgeBuildParams{KnowledgeScopeParams: api.KnowledgeScopeParams{Level: "overview"}, Wait: true, NoEmbed: true}, &run)
+	if run.Done != 1 || run.ID == "" {
+		t.Fatalf("%+v", run)
+	}
+	// Events: thought, tool and step activity of the page.
+	kinds := map[string]bool{}
+	rec.Wait(t, api.TopicKnowledgeActivity, func(e bus.Event) bool {
+		a, ok := e.Payload.(api.KnowledgeActivity)
+		if ok && a.Item == "overview" {
+			kinds[a.Kind] = true
+		}
+		return kinds["thought"] && kinds["tool"] && kinds["step"] && kinds["message"]
+	})
+	// Counters and step positions in the progress.
+	u := run.Units[0]
+	if u.Tools != 1 || u.Reads != 1 || u.Chars == 0 || u.Steps != 3 || u.StepIndex != 3 || u.Started.IsZero() {
+		t.Fatalf("%+v", u)
+	}
+	var tr api.KnowledgeTranscript
+	f.call("knowledge.transcript", api.KnowledgeTranscriptParams{Item: "overview"}, &tr)
+	all := strings.Join(tr.Lines, "\n")
+	for _, want := range []string{"» describe (step 1 of 3)", "thought: Looking at the controller first.", "  Then the service.", "tool: read src/Billing/InvoiceService.php [pending]", "→ completed", "```json", "» validate (step 2 of 3)", "» done (confidence"} {
+		if !strings.Contains(all, want) {
+			t.Fatal(want, "\n", all)
+		}
+	}
+	if tr.Running || tr.Run != run.ID || tr.Title == "" || !strings.HasSuffix(tr.File, filepath.Join("runs", run.ID, "overview.log")) {
+		t.Fatalf("%+v", tr)
+	}
+	b, err := os.ReadFile(tr.File)
+	if err != nil || !strings.Contains(string(b), "thought: Looking at the controller first.") {
+		t.Fatal(err)
+	}
+	// From disk after a restart of the module state.
+	f.mod.mu.Lock()
+	f.mod.act = nil
+	f.mod.mu.Unlock()
+	var tr2 api.KnowledgeTranscript
+	f.call("knowledge.transcript", api.KnowledgeTranscriptParams{Item: "overview"}, &tr2)
+	if tr2.Run != run.ID || !strings.Contains(strings.Join(tr2.Lines, "\n"), "» done") {
+		t.Fatalf("%+v", tr2)
+	}
+	if err := modtest.WantCode(t, f.app, "knowledge.transcript", api.KnowledgeTranscriptParams{Item: "nope"}, api.CodeNotFound); err == nil {
+		t.Fatal("unknown item")
+	}
+	if err := modtest.WantCode(t, f.app, "knowledge.transcript", api.KnowledgeTranscriptParams{}, api.CodeInvalidParams); err == nil {
+		t.Fatal("no item")
+	}
+}
+
+func TestTranscriptCapAndPrune(t *testing.T) {
+	base := t.TempDir()
+	for i := range keepRuns + 2 {
+		modtest.WriteFile(t, filepath.Join(base, "runs", fmt.Sprintf("2026010%d", i), "x.log"), "x")
+	}
+	var mu sync.Mutex
+	var evs []api.KnowledgeActivity
+	a := newActivityLog(base, "20261127", func(_ string, v any) { mu.Lock(); evs = append(evs, v.(api.KnowledgeActivity)); mu.Unlock() }, nil)
+	runs, _ := os.ReadDir(filepath.Join(base, "runs"))
+	if len(runs) != keepRuns {
+		t.Fatal(len(runs))
+	}
+	info := kn.StepInfo{Item: "p", Level: kn.LevelProcesses, Step: kn.StepDescribe}
+	for i := range maxTranscriptLines + 10 {
+		a.chunk(info, api.KnowledgeActivityMessage, fmt.Sprintf("line %d\n", i))
+	}
+	a.tool(info, acp.ToolCall{ToolCallID: "x", Name: "grep"}, false)
+	a.tool(info, acp.ToolCall{ToolCallID: "x", Status: "in_progress"}, true)
+	a.close()
+	tr, _ := a.transcriptOf("p")
+	if len(tr.Lines) != maxTranscriptLines || tr.Truncated == 0 || tr.Lines[len(tr.Lines)-1] != "tool: grep" {
+		t.Fatal(len(tr.Lines), tr.Truncated, tr.Lines[len(tr.Lines)-1])
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	// Coalesced: one message event for the burst, one tool event.
+	if len(evs) != 2 || evs[0].Kind != "message" || evs[1].Kind != "tool" || evs[0].Level != kn.LevelProcesses {
+		t.Fatalf("%d %+v", len(evs), evs[len(evs)-1])
+	}
+	if stepText(kn.Event{State: kn.RunRunning, Step: kn.StepValidate, Attempt: 1, Error: "bad"}) != "repair 1 of validate: bad" || stepText(kn.Event{State: kn.RunFailed, Error: "x"}) != "failed: x" || stepText(kn.Event{State: kn.RunQueued}) != "" {
+		t.Fatal("stepText")
+	}
+}
+
+func TestLegacyKnowledge(t *testing.T) {
+	f := newFixture(t)
+	var st api.KnowledgeStatus
+	f.call("knowledge.status", nil, &st)
+	modtest.WriteFile(t, filepath.Join(st.Dir, "manifest.json"), `{"version":1,"units":{"src":{"id":"src","title":"App","md":"units/src.md","status":"done"}}}`)
+	modtest.WriteFile(t, filepath.Join(st.Dir, "units", "src.md"), "---\nunit: src\n---\n# App\n\n## Overview\n\nOld invoices page.\n")
+	modtest.WriteFile(t, filepath.Join(st.Dir, "index.md"), "# old")
+	f.call("knowledge.status", nil, &st)
+	if !st.Legacy || st.Units != 0 || st.Stale == 0 {
+		t.Fatalf("%+v", st)
+	}
+	var units []api.KnowledgeUnit
+	f.call("knowledge.list", nil, &units)
+	var res api.KnowledgeSearchResult
+	f.call("knowledge.search", api.KnowledgeSearchParams{Query: "invoices"}, &res)
+	var run api.KnowledgeRun
+	f.call("knowledge.build", api.KnowledgeBuildParams{KnowledgeScopeParams: api.KnowledgeScopeParams{Level: "overview"}, Wait: true, NoEmbed: true}, &run)
+	if run.Done != 1 {
+		t.Fatal(run)
+	}
+	if _, err := os.Stat(filepath.Join(st.Dir, "units")); !os.IsNotExist(err) {
+		t.Fatal("old pages kept")
+	}
+	f.call("knowledge.status", nil, &st)
+	if st.Legacy || st.Units != 1 {
+		t.Fatalf("%+v", st)
+	}
 }
 
 func containsEnv(env []string, kv string) bool {
@@ -420,7 +677,7 @@ func TestAgentGetsKnowledge(t *testing.T) {
 		t.Fatal("server without knowledge")
 	}
 	var run api.KnowledgeRun
-	f.call("knowledge.build", api.KnowledgeBuildParams{Wait: true, NoEmbed: true}, &run)
+	f.call("knowledge.build", api.KnowledgeBuildParams{KnowledgeScopeParams: api.KnowledgeScopeParams{Level: "overview"}, Wait: true, NoEmbed: true}, &run)
 	l := servers()
 	if len(l) != 1 || l[0].Name != "tiegel-knowledge" || l[0].Command != "/opt/tiegel/tiegel" ||
 		strings.Join(l[0].Args[:5], " ") != "--headless mcp knowledge --project "+f.root || l[0].Args[5] != "--config-dir" {
@@ -435,11 +692,36 @@ func TestAgentGetsKnowledge(t *testing.T) {
 	if mc.Command != "/opt/tiegel/tiegel" || !strings.Contains(mc.Opencode, `"type": "local"`) || !strings.Contains(mc.Claude, `"mcpServers"`) {
 		t.Fatalf("%+v", mc)
 	}
-	// Search chunks documents built without embedding on demand.
+	// Pages built without embedding are searched by keyword; searching
+	// does not write the store.
 	var res api.KnowledgeSearchResult
-	f.call("knowledge.search", api.KnowledgeSearchParams{Query: "invoices"}, &res)
+	f.call("knowledge.search", api.KnowledgeSearchParams{Query: "mysql"}, &res)
 	if len(res.Hits) == 0 {
 		t.Fatal("no hits")
+	}
+	var st api.KnowledgeStatus
+	f.call("knowledge.status", nil, &st)
+	if st.Embedding.Chunks != 0 {
+		t.Fatal("search wrote the store", st.Embedding)
+	}
+}
+
+func TestPromptOverride(t *testing.T) {
+	f := newFixture(t)
+	dir := f.mod.promptDir()
+	if dir == "" {
+		t.Skip("no config dir")
+	}
+	modtest.WriteFile(t, filepath.Join(dir, "overview.tmpl"), "{{template \"base\" .}}\n\n## Task: overview (level 0)\nCUSTOM PROMPT\n\n{{template \"answer\" .}}")
+	var run api.KnowledgeRun
+	f.call("knowledge.build", api.KnowledgeBuildParams{KnowledgeScopeParams: api.KnowledgeScopeParams{Level: "overview"}, Wait: true, NoEmbed: true}, &run)
+	if run.Done != 1 || f.kf.Count("CUSTOM PROMPT") != 1 {
+		t.Fatalf("%+v", run)
+	}
+	modtest.WriteFile(t, filepath.Join(dir, "overview.tmpl"), "{{broken")
+	f.call("knowledge.build", api.KnowledgeBuildParams{KnowledgeScopeParams: api.KnowledgeScopeParams{Level: "overview", All: true}, Wait: true, NoEmbed: true}, &run)
+	if run.Done != 1 || !strings.Contains(strings.Join(run.Errors, " "), "using the built-in prompts") {
+		t.Fatalf("%+v", run)
 	}
 }
 
@@ -453,7 +735,7 @@ func TestCancelAndConflict(t *testing.T) {
 	}
 	var run api.KnowledgeRun
 	f.call("knowledge.build", api.KnowledgeBuildParams{}, &run)
-	if !run.Running || len(run.Units) != 2 {
+	if !run.Running || len(run.Units) == 0 {
 		t.Fatalf("%+v", run)
 	}
 	select {
@@ -475,8 +757,8 @@ func TestCancelAndConflict(t *testing.T) {
 	}
 	var pl api.KnowledgePlan
 	f.call("knowledge.plan", api.KnowledgeScopeParams{}, &pl)
-	if len(pl.Units) != 2 {
-		t.Fatal("cancelled units must stay stale")
+	if levelEstimate(pl, kn.LevelOverview).Pages != 1 {
+		t.Fatal("cancelled pages must stay stale")
 	}
 	// The agent cannot start.
 	f.mod.opts.Start = func(context.Context, acp.Command, acp.Handler) (*acp.Process, error) {
