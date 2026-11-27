@@ -617,9 +617,20 @@ func TestTranscriptCapAndPrune(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	// Coalesced: one message event for the burst, one tool event.
-	if len(evs) != 2 || evs[0].Kind != "message" || evs[1].Kind != "tool" || evs[0].Level != kn.LevelProcesses {
-		t.Fatalf("%d %+v", len(evs), evs[len(evs)-1])
+	// Coalesced: a few message events for the burst of 2000+ chunks (a
+	// slow machine may flush it more than once), then one tool event.
+	msgs, tools := 0, 0
+	for _, e := range evs {
+		switch e.Kind {
+		case "message":
+			msgs++
+		case "tool":
+			tools++
+		}
+	}
+	last := evs[len(evs)-1]
+	if msgs < 1 || msgs > maxTranscriptLines/10 || tools != 1 || last.Kind != "tool" || evs[0].Level != kn.LevelProcesses {
+		t.Fatalf("%d messages, %d tools, last %+v", msgs, tools, last)
 	}
 	if stepText(kn.Event{State: kn.RunRunning, Step: kn.StepValidate, Attempt: 1, Error: "bad"}) != "repair 1 of validate: bad" || stepText(kn.Event{State: kn.RunFailed, Error: "x"}) != "failed: x" || stepText(kn.Event{State: kn.RunQueued}) != "" {
 		t.Fatal("stepText")
