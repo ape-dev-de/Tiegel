@@ -89,3 +89,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-27: Einfügen/Kopieren/Ausschneiden/Alles auswählen wirken im fokussierten Textfeld (Search Everywhere, Dialoge, Popups, Agent-Chat) statt im Code-Editor – per Tastatur und Edit-Menü (D564).
 - 2026-11-27: Projektwissen top-down: Überblick (C4) → Einstiegspunkte (Routen/Commands mechanisch) → Prozesse/Datenflüsse → Komponenten → offene Fragen beantworten; Prompt-Vorlagen überschreibbar; Lesen und Suchen während eines Laufs; Live-Aktivität mit aufklappbarem Protokoll; Gehirn-Icon (D565, D566).
 - 2026-11-27: Diff-Tabs (Agent-Änderungen, Git, Vergleiche) öffnen an der ersten Änderung.
+- 2026-11-27: Projektwissen für den Agenten: Modus aus/MCP/RAG/beides, Hinweis „am Code prüfen, Quelle nennen“, aufklappbarer Kontext im Chat, Wissens-Werkzeuge ohne Nachfrage, `agent eval` zum Vergleich der Modi (D571). Laufender Knowledge-Build verhindert das Schlafenlegen des Projekts (D572).
