@@ -7,6 +7,7 @@ const (
 	MethodInitialize        = "initialize"
 	MethodAuthenticate      = "authenticate"
 	MethodSessionNew        = "session/new"
+	MethodSessionLoad       = "session/load"
 	MethodSessionPrompt     = "session/prompt"
 	MethodSessionCancel     = "session/cancel"
 	MethodSessionUpdate     = "session/update"
@@ -135,6 +136,21 @@ type ConfigOption struct {
 // NewSessionResponse is the result of session/new.
 type NewSessionResponse struct {
 	SessionID     string         `json:"sessionId"`
+	ConfigOptions []ConfigOption `json:"configOptions,omitempty"`
+}
+
+// LoadSessionRequest are the params of session/load (agents with
+// AgentCapabilities.LoadSession): the agent restores the session and
+// replays its conversation as session/update notifications before it
+// answers.
+type LoadSessionRequest struct {
+	SessionID  string `json:"sessionId"`
+	Cwd        string `json:"cwd"`
+	MCPServers []any  `json:"mcpServers"`
+}
+
+// LoadSessionResponse is the result of session/load.
+type LoadSessionResponse struct {
 	ConfigOptions []ConfigOption `json:"configOptions,omitempty"`
 }
 

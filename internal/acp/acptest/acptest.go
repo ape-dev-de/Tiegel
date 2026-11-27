@@ -1,5 +1,5 @@
 // Package acptest is a scriptable fake ACP agent for tests: it speaks
-// the agent side of the protocol (initialize, session/new,
+// the agent side of the protocol (initialize, session/new, session/load,
 // session/prompt, session/cancel, session/set_config_option) and runs a
 // Script for every prompt, which streams updates and calls back into the
 // client (permissions, file access) like a real coding agent.
@@ -30,6 +30,10 @@ type Agent struct {
 	Models []string
 	// Script runs for each prompt (default: echo the prompt).
 	Script Script
+	// LoadSession advertises agentCapabilities.loadSession: session/load
+	// restores the sessions this agent created (also in an earlier
+	// process) and replays one agent message per earlier prompt.
+	LoadSession bool
 
 	mu       sync.Mutex
 	model    string
@@ -39,6 +43,15 @@ type Agent struct {
 	cancels  map[string]context.CancelFunc
 	inits    []acp.InitializeRequest
 	news     []acp.NewSessionRequest
+	loads    []acp.LoadSessionRequest
+	history  map[string][]string // session ID → prompts
+}
+
+// LoadSessions returns the session/load requests received.
+func (a *Agent) LoadSessions() []acp.LoadSessionRequest {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]acp.LoadSessionRequest(nil), a.loads...)
 }
 
 // NewSessions returns the session/new requests received.
@@ -148,7 +161,7 @@ func (a *Agent) handle(ctx context.Context, conn *acp.Conn, method string, param
 			name = "Fake Agent"
 		}
 		return acp.InitializeResponse{ProtocolVersion: 1, AgentInfo: &acp.Implementation{Name: name, Version: "1.0"},
-			AgentCapabilities: acp.AgentCapabilities{PromptCapabilities: acp.PromptCapabilities{EmbeddedContext: true}},
+			AgentCapabilities: acp.AgentCapabilities{LoadSession: a.LoadSession, PromptCapabilities: acp.PromptCapabilities{EmbeddedContext: true}},
 			AuthMethods:       []acp.AuthMethod{{ID: "fake-login", Name: "Login", Description: "Run `fake auth login` in the terminal"}}}, nil
 	case acp.MethodSessionNew:
 		if a.AuthRequired {
@@ -160,8 +173,33 @@ func (a *Agent) handle(ctx context.Context, conn *acp.Conn, method string, param
 		a.news = append(a.news, nr)
 		a.sessions++
 		id := fmt.Sprintf("ses_%d", a.sessions)
+		if a.history == nil {
+			a.history = map[string][]string{}
+		}
+		a.history[id] = nil
 		a.mu.Unlock()
 		return acp.NewSessionResponse{SessionID: id, ConfigOptions: a.options()}, nil
+	case acp.MethodSessionLoad:
+		var lr acp.LoadSessionRequest
+		_ = json.Unmarshal(params, &lr)
+		a.mu.Lock()
+		a.loads = append(a.loads, lr)
+		hist, known := a.history[lr.SessionID]
+		hist = append([]string(nil), hist...)
+		a.mu.Unlock()
+		if !a.LoadSession {
+			return nil, &acp.Error{Code: acp.CodeMethodNotFound, Message: "unknown method " + method}
+		}
+		if !known {
+			return nil, &acp.Error{Code: acp.CodeInvalidParams, Message: "Invalid params: session not found: " + lr.SessionID}
+		}
+		// Replay like a real agent: before the answer.
+		t := &Turn{conn: conn, SessionID: lr.SessionID}
+		for _, p := range hist {
+			t.Update(acp.UpdateUserMessage, map[string]any{"content": acp.TextBlock(p)})
+			t.Text("replayed: " + p)
+		}
+		return acp.LoadSessionResponse{ConfigOptions: a.options()}, nil
 	case acp.MethodSetConfigOption:
 		var r acp.SetConfigOptionRequest
 		_ = json.Unmarshal(params, &r)
@@ -198,6 +236,9 @@ func (a *Agent) handle(ctx context.Context, conn *acp.Conn, method string, param
 		pctx, cancel := context.WithCancel(ctx)
 		a.mu.Lock()
 		a.prompts = append(a.prompts, text.String())
+		if _, ok := a.history[r.SessionID]; ok {
+			a.history[r.SessionID] = append(a.history[r.SessionID], text.String())
+		}
 		if a.cancels == nil {
 			a.cancels = map[string]context.CancelFunc{}
 		}

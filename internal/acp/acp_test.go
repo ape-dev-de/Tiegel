@@ -343,3 +343,46 @@ func TestStartProcess(t *testing.T) {
 		t.Fatal("cancelled start")
 	}
 }
+
+func TestLoadSession(t *testing.T) {
+	a := &acptest.Agent{LoadSession: true}
+	h := &recorder{}
+	p := start(t, a, h)
+	init, err := p.Initialize(ctx(t), acp.InitializeRequest{ProtocolVersion: acp.ProtocolVersion})
+	if err != nil || !init.AgentCapabilities.LoadSession {
+		t.Fatalf("init %v %+v", err, init)
+	}
+	s, err := p.NewSession(ctx(t), "/proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Prompt(ctx(t), s.SessionID, []acp.ContentBlock{acp.TextBlock("hi")}); err != nil {
+		t.Fatal(err)
+	}
+	// A second process of the same agent restores the session; the
+	// replay arrives before the answer.
+	h2 := &recorder{}
+	p2 := start(t, a, h2)
+	if _, err := p2.Initialize(ctx(t), acp.InitializeRequest{ProtocolVersion: acp.ProtocolVersion}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := p2.LoadSession(ctx(t), s.SessionID, "/proj", []acp.MCPServerStdio{{Name: "k", Command: "x"}})
+	if err != nil || len(res.ConfigOptions) != 2 {
+		t.Fatalf("load %v %+v", err, res)
+	}
+	if got := strings.Join(h2.kinds(), ","); got != acp.UpdateUserMessage+","+acp.UpdateAgentMessage {
+		t.Fatalf("replay %s", got)
+	}
+	if l := a.LoadSessions(); len(l) != 1 || l[0].SessionID != s.SessionID || l[0].Cwd != "/proj" || len(l[0].MCPServers) != 1 {
+		t.Fatalf("loads %+v", l)
+	}
+	if _, err := p2.LoadSession(ctx(t), "ses_unknown", "/proj", nil); acp.ErrorCode(err) != acp.CodeInvalidParams {
+		t.Fatalf("unknown session: %v", err)
+	}
+	// Without the capability the method is unknown.
+	b := &acptest.Agent{}
+	p3 := start(t, b, &recorder{})
+	if _, err := p3.LoadSession(ctx(t), "ses_1", "/proj", nil); acp.ErrorCode(err) != acp.CodeMethodNotFound {
+		t.Fatalf("unsupported: %v", err)
+	}
+}

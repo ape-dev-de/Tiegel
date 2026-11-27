@@ -139,6 +139,9 @@ type Module struct {
 	ctxMode string
 	evalPol atomic.Pointer[api.AgentPolicy]
 	evalMu  sync.Mutex
+
+	// tr persists the transcript per project (D573, transcript.go).
+	tr transcriptState
 }
 
 // pendingPerm is a permission request waiting for the user.
@@ -290,12 +293,14 @@ func (m *Module) Start(ctx module.Context) error {
 	}, hooks.WithOwner(ID)))
 	ctx.OnStop(ctx.Bus().Subscribe("install.done", func(bus.Event) { m.publishStatus() }))
 	ctx.OnStop(ctx.Bus().Subscribe("settings.changed", func(bus.Event) { m.settingsChanged() }))
+	m.startTranscript(ctx)
 	return nil
 }
 
 // Stop implements module.Module: the agent process ends with the module.
 func (m *Module) Stop() error {
 	m.shutdown("")
+	m.stopTranscript()
 	return nil
 }
 
@@ -406,6 +411,7 @@ func (m *Module) status(context.Context, struct{}) (api.AgentStatus, error) {
 
 func (m *Module) statusNow() api.AgentStatus {
 	m.syncChanges()
+	m.syncTranscript()
 	line, argv := m.command()
 	st := api.AgentStatus{Command: line, Policy: m.policy()}
 	if path, err := m.resolve(argv[0]); err == nil {
@@ -474,6 +480,7 @@ func (m *Module) start(ctx context.Context, _ struct{}) (api.AgentStatus, error)
 
 // ensure makes sure an agent process with a session runs.
 func (m *Module) ensure(ctx context.Context) error {
+	m.syncTranscript()
 	m.mu.Lock()
 	if m.proc != nil && m.sessionID != "" {
 		m.mu.Unlock()
@@ -548,6 +555,7 @@ func (m *Module) spawn(ctx context.Context) (*acp.Process, error) {
 	}
 	m.mu.Lock()
 	m.proc, m.spawnConfig = proc, cfg
+	m.tr.canLoad = init.AgentCapabilities.LoadSession
 	m.authMethods, m.authRequired = init.AuthMethods, false
 	m.agentName, m.agentVersion = "", ""
 	if init.AgentInfo != nil {
@@ -630,7 +638,10 @@ func (m *Module) openSession(ctx context.Context, proc *acp.Process) error {
 	sctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	servers, readOnly := m.mcpServers(sctx)
-	res, err := proc.NewSessionWith(sctx, root, servers)
+	res, loaded := m.loadPrevious(sctx, proc, root, servers)
+	if !loaded {
+		res, err = proc.NewSessionWith(sctx, root, servers)
+	}
 	if err != nil {
 		if acp.ErrorCode(err) == acp.CodeAuthRequired {
 			m.mu.Lock()
@@ -650,6 +661,7 @@ func (m *Module) openSession(ctx context.Context, proc *acp.Process) error {
 	m.sessionID, m.options, m.authRequired = res.SessionID, res.ConfigOptions, false
 	m.readOnly = readOnly
 	m.mu.Unlock()
+	m.sessionOpened(sctx, proc, res.SessionID, loaded)
 	if want := setting(m, SettingModel, ""); want != "" {
 		if opt, ok := m.modelOption(); ok && string(opt.CurrentValue) != want && hasChoice(opt, want) {
 			if opts, err := proc.SetConfigOption(sctx, res.SessionID, opt.ID, want); err == nil && len(opts) > 0 {
@@ -728,6 +740,7 @@ func (m *Module) newSession(ctx context.Context, _ struct{}) (api.AgentStatus, e
 	pending := m.takePerms()
 	m.reset()
 	m.mu.Unlock()
+	m.forgetTranscript()
 	answerAll(pending, acp.OutcomeCancelled)
 	m.publish(api.TopicAgentUpdate, api.AgentUpdateEvent{Entry: api.AgentEntry{Index: -1}})
 	if proc == nil {
