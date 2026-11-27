@@ -121,7 +121,7 @@ var kernelSpecs = []Spec{
 		Label: "Show ignored files in the project tree", Help: "Show entries matched by .gitignore (in the ignored color); quick open and search still skip them.", Group: PageFiles},
 	{Key: KeyFileAssociations, Kind: KindList, Default: []string{}, Scope: ScopeProject,
 		Label: "File type associations", Help: "Pattern=language pairs such as *.tpl=php or Jenkinsfile=plaintext; they win over the built-in detection.", Group: PageFiles},
-	{Key: KeyWatchExclude, Kind: KindList, Default: []string{"node_modules"}, Scope: ScopeProject,
+	{Key: KeyWatchExclude, Kind: KindList, Default: []string{"node_modules", ".tiegel"}, Scope: ScopeProject,
 		Label: "Excluded from file watching", Help: "Directory names or project-relative paths the file watcher skips entirely.", Group: PageFiles},
 
 	// No practical maximum: values above an hour were accepted before the

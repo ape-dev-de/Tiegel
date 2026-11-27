@@ -21,6 +21,7 @@
 //	php-generate  Generate: constructor, accessors, server code actions (generate.*; AP17.3)
 //	agent         AI coding agent over the Agent Client Protocol, e.g. opencode (agent.*; D540)
 //	knowledge     project knowledge base: agents describe data flows, hybrid search, MCP for the agent (knowledge.*; D560)
+//	planmode      plan mode: role sessions plan, validate, review; DEV and QA execute in a worktree with gates (plan.*; D567)
 //
 // The modules never import each other; they share data through the bus and
 // the hook points declared in internal/api/contract.go. None of them imports
@@ -45,6 +46,7 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/modules/phpruntime"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpstanresults"
 	"github.com/ape-dev-de/tiegel/internal/modules/phpunit"
+	"github.com/ape-dev-de/tiegel/internal/modules/planmode"
 	"github.com/ape-dev-de/tiegel/internal/modules/qa"
 	"github.com/ape-dev-de/tiegel/internal/modules/syntaxmod"
 )
@@ -61,6 +63,7 @@ type Options struct {
 	PHPUnit   phpunit.Options
 	Agent     agent.Options
 	Knowledge knowledge.Options
+	PlanMode  planmode.Options
 }
 
 // All returns new instances of all compiled-in modules in dependency order.
@@ -86,7 +89,7 @@ func All(opts Options) []module.Module {
 		mods = append(mods, p)
 	}
 	mods = append(mods, phpstanresults.New())
-	mods = append(mods, livetemplates.New(), phpgenerate.New(), agent.New(opts.Agent), knowledge.New(opts.Knowledge))
+	mods = append(mods, livetemplates.New(), phpgenerate.New(), agent.New(opts.Agent), knowledge.New(opts.Knowledge), planmode.New(opts.PlanMode))
 	return mods
 }
 

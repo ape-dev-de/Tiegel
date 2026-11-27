@@ -39,6 +39,14 @@ type Chat struct {
 	Changes []Change
 	// Empty is shown while there are no entries.
 	Empty string
+	// PlanAvailable shows the "Plan mode" checkbox in the input area;
+	// PlanMode is its state (owned by the host: a click reports
+	// PlanModeEvent). With plan mode on, a sent message starts a plan.
+	PlanAvailable bool
+	PlanMode      bool
+	// Body replaces the transcript and the change list (e.g. the plan
+	// view in plan mode); nil shows the conversation.
+	Body layout.Widget
 
 	list    molecules.ScrollList
 	input   atoms.TextField
@@ -51,6 +59,7 @@ type Chat struct {
 	action  atoms.Button
 	model   molecules.Dropdown
 	models  []Choice // choices the dropdown was built from
+	planBox atoms.Checkbox
 
 	keepAll, revertAll, confirm, cancelConfirm atoms.Button
 	confirming                                 bool
@@ -97,6 +106,7 @@ func (c *Chat) init() {
 	c.rows = map[int]*row{}
 	c.changeRows = map[string]*changeRow{}
 	c.model = molecules.Dropdown{Selected: -1, Placeholder: "Model"}
+	c.planBox = atoms.Checkbox{Label: "Plan mode"}
 }
 
 // Input returns the message input (the host may focus it).
@@ -130,6 +140,9 @@ func (c *Chat) Update(gtx layout.Context) []Event {
 	}
 	if c.send.Clicked(gtx) {
 		c.submit(c.input.Text())
+	}
+	if c.PlanAvailable && c.planBox.Update(gtx) {
+		c.emit(PlanModeEvent{On: c.planBox.Checked()})
 	}
 	if c.stop.Clicked(gtx) {
 		c.emit(CancelEvent{})
@@ -207,7 +220,7 @@ func (c *Chat) submit(text string) {
 		return
 	}
 	c.input.SetText("")
-	c.emit(SendEvent{Text: text})
+	c.emit(SendEvent{Text: text, Plan: c.PlanAvailable && c.PlanMode})
 }
 
 // Layout draws the sidebar filling the constraints.
@@ -228,11 +241,13 @@ func (c *Chat) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 			return pad.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return c.notice(gtx, th) })
 		}))
 	}
-	children = append(children,
-		layout.Rigid(with(th, atoms.Divider{})),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return c.transcript(gtx, th) }),
-	)
-	if len(c.Changes) > 0 {
+	children = append(children, layout.Rigid(with(th, atoms.Divider{})))
+	if c.Body != nil {
+		children = append(children, layout.Flexed(1, c.Body))
+	} else {
+		children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return c.transcript(gtx, th) }))
+	}
+	if len(c.Changes) > 0 && c.Body == nil {
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return c.changes(gtx, th) }))
 	}
 	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -240,6 +255,14 @@ func (c *Chat) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	}))
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	return layout.Dimensions{Size: size}
+}
+
+// LayoutTranscript draws only the transcript (a role session of plan
+// mode): messages, thoughts, tool calls and notices, read-only.
+func (c *Chat) LayoutTranscript(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	c.init()
+	c.pending = append(c.pending, c.Update(gtx)...)
+	return c.transcript(gtx, th)
 }
 
 func (c *Chat) header(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
@@ -733,6 +756,13 @@ func (c *Chat) inputArea(gtx layout.Context, th *tokens.Theme) layout.Dimensions
 			return layout.Inset{Top: th.Space.XS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						if c.PlanAvailable && !c.Busy {
+							c.planBox.State = atoms.Unchecked
+							if c.PlanMode {
+								c.planBox.State = atoms.Checked
+							}
+							return c.planBox.Layout(gtx, th)
+						}
 						hint := "Escape cancels"
 						if !c.Busy {
 							hint = ""
@@ -744,6 +774,12 @@ func (c *Chat) inputArea(gtx layout.Context, th *tokens.Theme) layout.Dimensions
 							return c.stop.Layout(gtx, th)
 						}
 						c.send.Disabled = strings.TrimSpace(c.input.Text()) == ""
+						c.send.Text = "Send"
+						c.input.Hint = "Ask the agent… (Enter sends, Shift+Enter: new line)"
+						if c.PlanAvailable && c.PlanMode {
+							c.send.Text = "Plan"
+							c.input.Hint = "Describe the goal – agents plan first, nothing changes before you accept"
+						}
 						return c.send.Layout(gtx, th)
 					}),
 				)

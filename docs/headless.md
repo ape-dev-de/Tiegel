@@ -123,6 +123,15 @@ Fehlermeldungen gehen immer nach stderr (`tiegel: …`), stdout bleibt für Date
 | `knowledge mcp-config` | Konfiguration für MCP-Clients (opencode, Claude Code) | `knowledge.mcpConfig` |
 | `knowledge cancel` | laufenden Build abbrechen (im selben Prozess, z.B. `serve`) | `knowledge.cancel` |
 | `mcp knowledge [--project DIR]` | MCP-Server über stdio (D562) mit `knowledge_search(query, k)`, `knowledge_read(path)`, `knowledge_list()`; stdout trägt nur MCP-Nachrichten | – |
+| `mcp plan --plan ID --role ROLE [--project DIR]` | MCP-Server über stdio für eine Rollen-Sitzung des Plan-Modus (D567): `plan_read(section)`, `plan_update(section, content)`, `plan_add_finding(claim, evidence)`, `plan_comment(item, text)`; Änderungen sind Vorschläge, die Tiegel nach dem Zug zusammenführt | `plan.document`, `plan.propose` |
+| `plan start ZIEL… [--no-subagents] [--mediator off\|auto\|always] [--yes]` | Plan-Modus (D567–D570): ohne `--yes` nur die Schätzung (Agent, Aufrufe, Tokens); mit `--yes` planen die Rollen schreibgeschützt, Fortschritt wird gestreamt, am Ende steht der Plan zur Annahme | `plan.estimate`, `plan.start`, Event `plan.progress` |
+| `plan status\|show [ID] [--section S]\|list` | Zustand (Rollen, Gates, Streitpunkte, Kennzahlen), Arbeitsdokument (ganz oder ein Abschnitt), alle Pläne des Projekts | `plan.status`, `plan.document`, `plan.list` |
+| `plan accept [ID] [--comment C]` / `plan changes [ID] --comment C [--yes]` | Plan annehmen bzw. Änderungen anfordern (Überarbeitungsrunde) | `plan.accept`, `plan.requestChanges` |
+| `plan execute\|resume [ID] [--yes] [--allow-shell]` | DEV und QA arbeiten im Git-Worktree (D569) mit Kritiker, Bewertung, Debatte und Gates, bis alles grün ist oder die Iterationsgrenze erreicht ist; Shell-Befehle mit Policy „ask“ nur mit `--allow-shell` | `plan.execute`, `plan.resume` |
+| `plan resolve ITEM dev\|qa\|dismiss\|comment [--comment C]` | Streitpunkt entscheiden (Mediator aus oder Eskalation) | `plan.resolve` |
+| `plan transcript ROLE` / `plan diff [PATH]` / `plan revert PATH` | Verlauf einer Rolle, Änderungen (unified diff), eine Datei zurücknehmen | `plan.transcript`, `plan.changes`, `plan.diff`, `plan.revert` |
+| `plan apply\|keep\|discard\|cancel [ID]` | Änderungen in den Arbeitsstand übernehmen (ohne Commit), Branch behalten, verwerfen, laufende Orchestrierung abbrechen | `plan.apply`, `plan.keepBranch`, `plan.discard`, `plan.cancelPlan` |
+| `plan eval ZIEL… [--modes off,auto,always] --yes` | denselben Plan je Mediator-Modus ausführen und die Kennzahlen vergleichen (D570) | `plan.eval` |
 | `terminal [--shell SH] [--arg A]... [--dir DIR] [--service S \| --kind K --target T] [--send TEXT]... [--idle 300ms] [--timeout 10s] [--cols N] [--rows N] [--scrollback] [--env K=V]...` | öffnet eine Terminal-Sitzung im Projekt (Shell aus `terminal.shell`, sonst `$SHELL`; bash/zsh/fish als Login-Shell, PATH der Login-Shell, `TERM=xterm-256color`) oder mit `--service` eine Shell im Compose-Dienst (`docker compose exec`, Plugin `docker`), schickt jede `--send`-Eingabe (Escapes `\n`, `\r`, `\t`, `\e`, `\xHH`, `\uHHHH`; Enter ist `\r`), wartet jeweils, bis die Ausgabe `--idle` lang ruht oder das Programm endet (höchstens `--timeout` insgesamt), gibt den Bildschirm als Text aus (`--scrollback`: mit Verlauf), schließt die Sitzung (Prozessbaum wird beendet). Ist das Programm beendet, steht `[exited with code N]` auf stderr. `--json`: `{terminal, screen, text}` | `terminal.open`, `terminal.input`, `terminal.screen`, `terminal.text`, `terminal.close`, Event `terminal.output` |
 | `terminal --kinds` | listet die Sitzungsarten der Plugins (Art, Ziel `service`/`container`, Bezeichnung; D372) | `terminal.kinds` |
 | `modules [enable ID \| disable ID]` | Module anzeigen/schalten | `modules.*` |
@@ -276,6 +285,22 @@ und für Claude Code (`.mcp.json`):
 ```
 
 Werkzeuge: `knowledge_search(query, k)` (Abschnitte mit Seite, Anker, Score), `knowledge_read(path)` (`index.md`, `units/<id>.md` oder eine Einheit), `knowledge_list()`. Die Suche bettet die Anfrage über den konfigurierten Embedding-Server ein (Standard: lokales Ollama); ohne Server antwortet sie per Stichwortsuche.
+
+## Plan-Modus (D567–D570)
+
+Ablauf: `plan start` (Planer parallel, Validator mit mechanischer Prüfung der Belege `pfad:zeile`, QA-Review, Zusammenfassung; alles schreibgeschützt) → Nutzer prüft das Dokument (`plan show`) → `plan accept` oder `plan changes --comment …` → `plan execute --yes` (Worktree `.tiegel/worktrees/<id>`, Branch `tiegel/plan-<id>`) → `plan apply` / `keep` / `discard`. Agent-Aufrufe starten nur mit `--yes` bzw. auf Knopfdruck in der GUI.
+
+```sh
+tiegel --headless plan start "Calc::add soll die Summe liefern" --project .        # nur Schätzung
+tiegel --headless plan start "Calc::add soll die Summe liefern" --project . --yes
+tiegel --headless plan show --section plan
+tiegel --headless plan accept && tiegel --headless plan execute --yes
+tiegel --headless plan diff && tiegel --headless plan apply
+```
+
+Einstellungen (Projekt, Seite „AI › Plan mode“): `planmode.subagents`, `maxParallel` (2), `mediator` (`auto`), `mediatorRounds` (2), `maxIterations` (5), `maxContextTokens` (40000), `mcp`, `mutation`, `mutationMaxLines` (200), `coverage`, `workspace` (`worktree`\|`in-place`), `dirtyTree` (`snapshot`\|`head`\|`refuse`), Modelle je Rolle (`modelPlanner`, `modelDev`, `modelQA`, `modelReviewer`).
+
+Events: `plan.progress` (`PlanStatus`: `{id, title, state, phase, running, iteration, round, roles[], disputes[], open, gates[], metrics, workspace, document, notes[], error}`), `plan.activity` (`{plan, role, entry}` – Verlaufseinträge der Rollen-Sitzungen wie `agent.update`). Zustände: `drafting`, `awaiting-acceptance`, `accepted`, `executing`, `needs-user`, `done`, `incomplete`, `failed`, `cancelled`, `discarded`, `applied`.
 
 ## JSON-RPC-Protokoll (`serve`)
 

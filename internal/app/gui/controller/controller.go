@@ -246,6 +246,8 @@ type Controller struct {
 	Tests *Tests
 	// Agent is the AI agent sidebar state (agent.go).
 	Agent *Agent
+	// Plan is the plan mode state of the agent sidebar (plan.go).
+	Plan *Plan
 	// Analysis holds the findings of the analysis results plugin
 	// (analysis.go).
 	Analysis *Analysis
@@ -277,13 +279,14 @@ func New(be Backend) *Controller {
 	c.Run = newRuns(c)
 	c.Tests = newTests(c)
 	c.Agent = newAgent(c)
+	c.Plan = newPlan(c)
 	c.Analysis = newAnalysis(c)
 	c.Knowledge = newKnowledge(c)
 	c.Composer = newComposer(c)
 	c.Terminals = newTerminals(c)
 	c.Markdown = newMarkdown(c)
 	unsub, err := be.Subscribe(ctx, []string{"lsp.*", "php.diagnostics", "php.versionChanged", "interpreter.changed",
-		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*", "qa.*", "test.*", "terminal.*", "agent.*", "analysis.*", "knowledge.*", api.TopicPHPRootChanged}, func(e api.Event) {
+		"git.changed", "git.committed", "file.saved", "doc.changed", "doc.edited", "modules.changed", "debug.*", "settings.changed", "install.*", "docker.*", "run.*", "qa.*", "test.*", "terminal.*", "agent.*", "plan.*", "analysis.*", "knowledge.*", api.TopicPHPRootChanged}, func(e api.Event) {
 		c.post(func() { c.handleEvent(e.Topic, e.Payload) })
 	})
 	if err != nil {
@@ -711,6 +714,10 @@ func (c *Controller) handleEvent(topic string, payload json.RawMessage) {
 	}
 	if strings.HasPrefix(topic, "agent.") {
 		c.Agent.handleEvent(topic, payload)
+		return
+	}
+	if strings.HasPrefix(topic, "plan.") {
+		c.Plan.handleEvent(topic, payload)
 		return
 	}
 	if strings.HasPrefix(topic, "analysis.") {
