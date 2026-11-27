@@ -18,7 +18,7 @@ func errNoTreeSitter() error { return syntax.ErrNoTreeSitter }
 var libraryDirs = map[string]bool{"vendor": true}
 
 // alwaysSkipped are never descended into.
-var alwaysSkipped = map[string]bool{".git": true, ".hg": true, ".svn": true, "node_modules": true, ".idea": true}
+var alwaysSkipped = map[string]bool{".git": true, ".hg": true, ".svn": true, "node_modules": true, ".idea": true, ".tiegel": true}
 
 type scanned struct {
 	path    string

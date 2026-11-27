@@ -305,7 +305,7 @@ type FilesListResult struct {
 var libraryDirs = map[string]bool{"vendor": true, "node_modules": true}
 
 // alwaysSkipped are never listed.
-var alwaysSkipped = map[string]bool{".git": true, ".hg": true, ".svn": true}
+var alwaysSkipped = map[string]bool{".git": true, ".hg": true, ".svn": true, ".tiegel": true}
 
 func (a *App) filesList(ctx context.Context, p FilesListParams) (FilesListResult, error) {
 	pr, err := a.requireProject()

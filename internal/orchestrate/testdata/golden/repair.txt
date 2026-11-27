@@ -1,0 +1,2 @@
+Your previous answer could not be used: steps is missing
+Answer again with exactly one JSON object in a ```json fenced block that matches the schema of your task. No other text.

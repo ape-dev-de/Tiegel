@@ -20,7 +20,7 @@ func TestInstall(t *testing.T) {
 	var list []api.ModuleInfo
 	modtest.Call(t, a, "modules.list", nil, &list)
 	want := []string{"php-runtime", "php-features", "lang-php", "lsp-phpactor", "lsp-phpantom", "lsp-intelephense", "git", "debug-xdebug", "syntax", "php-index", "docker", "phpunit", "composer",
-		"qa-pint", "qa-php-cs-fixer", "qa-phpcs", "qa-phpstan", "qa-psalm", "qa-phpmd", "phpstan", "live-templates", "php-generate", "agent", "knowledge"}
+		"qa-pint", "qa-php-cs-fixer", "qa-phpcs", "qa-phpstan", "qa-psalm", "qa-phpmd", "phpstan", "live-templates", "php-generate", "agent", "knowledge", "planmode"}
 	if len(list) != len(want) {
 		t.Fatalf("modules %+v", list)
 	}

@@ -145,8 +145,15 @@ type NoticeBox struct {
 // Event is reported by Chat.Update.
 type Event interface{ isEvent() }
 
-// SendEvent: the user sent a message.
-type SendEvent struct{ Text string }
+// SendEvent: the user sent a message (Plan: with plan mode on – the
+// host starts a plan instead of prompting the agent).
+type SendEvent struct {
+	Text string
+	Plan bool
+}
+
+// PlanModeEvent: the "Plan mode" checkbox was toggled.
+type PlanModeEvent struct{ On bool }
 
 // CancelEvent: cancel the running turn (Stop button, Escape).
 type CancelEvent struct{}
@@ -192,6 +199,7 @@ type CopyEvent struct{ Text string }
 type OpenContextEvent struct{ File, Anchor string }
 
 func (SendEvent) isEvent()         {}
+func (PlanModeEvent) isEvent()     {}
 func (CancelEvent) isEvent()       {}
 func (NewSessionEvent) isEvent()   {}
 func (SettingsEvent) isEvent()     {}
