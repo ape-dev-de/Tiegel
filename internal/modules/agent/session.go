@@ -74,6 +74,7 @@ func (m *Module) notice(level, text string) {
 
 // transcript is agent.transcript.
 func (m *Module) transcript(context.Context, struct{}) ([]api.AgentEntry, error) {
+	m.syncTranscript()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]api.AgentEntry, len(m.entries))
@@ -90,6 +91,12 @@ func (h *handler) SessionUpdate(n acp.SessionNotification) {
 	}
 	m := h.m
 	u := n.Update
+	m.mu.Lock()
+	replay := m.replayingLocked(u.Kind)
+	m.mu.Unlock()
+	if replay {
+		return
+	}
 	switch u.Kind {
 	case acp.UpdateAgentMessage, acp.UpdateAgentThought:
 		c := u.Chunk()
@@ -363,8 +370,10 @@ func (m *Module) prompt(ctx context.Context, p api.AgentPromptParams) (api.Agent
 	m.state = api.AgentPrompting
 	i := m.addEntry(api.AgentEntry{Kind: api.EntryUser, Text: text, Context: pc.Blocks, Instructions: pc.Instructions})
 	m.open, m.plan = -1, -1
+	m.tr.replay = false
 	ev := m.entryEvent(i, "")
 	m.mu.Unlock()
+	m.scheduleSave()
 	m.publish(api.TopicAgentUpdate, ev)
 	m.publishStatus()
 
@@ -396,6 +405,7 @@ func (m *Module) prompt(ctx context.Context, p api.AgentPromptParams) (api.Agent
 		} else if r.StopReason == acp.StopMaxTokens || r.StopReason == acp.StopRefusal {
 			m.notice(api.NoticeInfo, "The agent stopped: "+strings.ReplaceAll(r.StopReason, "_", " ")+".")
 		}
+		m.saveTranscript()
 		m.publishStatus()
 		m.publish(api.TopicAgentTurnEnded, res)
 		close(done)

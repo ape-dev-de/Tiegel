@@ -88,7 +88,10 @@ func TestAgentCommands(t *testing.T) {
 	}
 	// --yes allows what asks; JSON output carries the transcript.
 	code, out, _ = runAgentCLI(t, cfg, fake, "--headless", "--project", dir, "--json", "agent", "prompt", "--yes", "again")
-	if code != 0 || !strings.Contains(out, `"transcript"`) || strings.Contains(out, "Blocked: shell commands") {
+	// The transcript of the previous run is restored (D573); the fake
+	// agent cannot resume its session, so a notice separates the history.
+	_, again, found := strings.Cut(out, "Previous session ended")
+	if code != 0 || !strings.Contains(out, `"transcript"`) || !found || strings.Contains(again, "Blocked: shell commands") {
 		t.Fatalf("%d %s", code, out)
 	}
 	code, out, _ = runAgentCLI(t, cfg, fake, "--headless", "--project", dir, "agent", "revert", "--all")

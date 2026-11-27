@@ -111,6 +111,23 @@ func (c *Client) NewSession(ctx context.Context, cwd string) (NewSessionResponse
 // given MCP servers.
 func (c *Client) NewSessionWith(ctx context.Context, cwd string, servers []MCPServerStdio) (NewSessionResponse, error) {
 	var res NewSessionResponse
+	err := c.conn.Call(ctx, MethodSessionNew, NewSessionRequest{Cwd: cwd, MCPServers: serverList(servers)}, &res)
+	return res, err
+}
+
+// LoadSession restores session id of an agent that advertises
+// AgentCapabilities.LoadSession (session/load). The agent replays the
+// conversation as session/update notifications before it answers; they
+// reach the Handler like the updates of a turn.
+func (c *Client) LoadSession(ctx context.Context, id, cwd string, servers []MCPServerStdio) (LoadSessionResponse, error) {
+	var res LoadSessionResponse
+	err := c.conn.Call(ctx, MethodSessionLoad, LoadSessionRequest{SessionID: id, Cwd: cwd, MCPServers: serverList(servers)}, &res)
+	return res, err
+}
+
+// serverList converts MCP servers for session/new and session/load
+// (agents expect empty arrays, not null).
+func serverList(servers []MCPServerStdio) []any {
 	list := make([]any, 0, len(servers))
 	for _, s := range servers {
 		if s.Args == nil {
@@ -121,8 +138,7 @@ func (c *Client) NewSessionWith(ctx context.Context, cwd string, servers []MCPSe
 		}
 		list = append(list, s)
 	}
-	err := c.conn.Call(ctx, MethodSessionNew, NewSessionRequest{Cwd: cwd, MCPServers: list}, &res)
-	return res, err
+	return list
 }
 
 // Prompt sends a user turn and waits until the agent ended it.
