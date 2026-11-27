@@ -343,6 +343,7 @@ func (e *Editor) paint(gtx layout.Context, th *tokens.Theme) {
 	}
 	e.paintRuler(gtx, th, ox)
 	e.paintHighlights(ops, th, s, vis, ox)
+	e.paintOccurrences(ops, th, s, vis, ox)
 	e.paintSearch(ops, th, s, vis, primary, ox)
 	e.paintSelections(ops, th, vis, sels, ox)
 	e.paintBrackets(ops, th, s, vis, primary, ox)
