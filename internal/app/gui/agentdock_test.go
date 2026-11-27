@@ -120,6 +120,14 @@ func TestAgentSidebar(t *testing.T) {
 
 	a.OpenDiff("src/Shop.php")
 	e.waitFor("diff tab", func() bool { return len(e.ctl.Work.Diffs()) == 1 })
+	// The diff opens at its first change.
+	e.waitFor("first change", func() bool {
+		e.frame()
+		for _, dv := range e.v.work.diffs {
+			return dv.win.Count() > 0 && dv.win.Current() == 0
+		}
+		return false
+	})
 	a.Revert("src/Shop.php")
 	e.waitFor("reverted", func() bool { return len(a.Changes) == 0 })
 	if b, _ := os.ReadFile(filepath.Join(e.root, "src", "Shop.php")); string(b) != samplePHP {

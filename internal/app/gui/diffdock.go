@@ -36,6 +36,9 @@ import (
 type diffView struct {
 	win  *diff.DiffWindow
 	seen uint64
+	// positioned: the view was scrolled to the first change once (when
+	// the comparison first had changes).
+	positioned bool
 	// Buttons of the disk ↔ editor comparison.
 	keep, take atoms.Button
 }
@@ -316,6 +319,13 @@ func (d *workDock) layoutDiffTab(gtx layout.Context, th *tokens.Theme, tab *cont
 	if dv.seen != dt.Version {
 		dv.seen = dt.Version
 		d.applyDiff(dt, dv)
+	}
+	// A fresh comparison opens at its first change.
+	if !dv.positioned && !dt.Loading && dv.win.Count() > 0 {
+		dv.positioned = true
+		if dv.win.Current() < 0 {
+			dv.win.Next()
+		}
 	}
 	w := d.work()
 	if nav := dt.Nav; nav != nil {
