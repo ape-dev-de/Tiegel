@@ -1,0 +1,7 @@
+{{- /*
+  Instruction for the coding agent of the Agent window (D571), sent with
+  the first message of a session whenever it gets the project knowledge
+  (knowledge.agentMode mcp, rag or both). Override it by putting a file
+  agent.tmpl into <config>/knowledge-prompts/ (see docs/headless.md).
+*/ -}}
+About the project knowledge of "{{.Project}}": The project knowledge is a generated summary and may be outdated or wrong. Use it as a guide, not as evidence. Verify every statement you rely on against the code and cite the source as file:line. If knowledge and code disagree, the code wins – mention the contradiction.

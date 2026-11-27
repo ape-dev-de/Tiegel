@@ -6,7 +6,10 @@ func Sample(c *Chat) {
 	c.Models = []Choice{{Value: "anthropic/sonnet", Name: "Claude Sonnet"}, {Value: "openai/gpt", Name: "GPT"}}
 	c.Policy = "Edits: allowed · Shell: ask · Commits: blocked · Push: blocked · Web: ask"
 	c.Entries = []Entry{
-		{Key: 0, Kind: User, Text: "Rename greet() to welcome() and run the tests."},
+		{Key: 0, Kind: User, Text: "Rename greet() to welcome() and run the tests.", Context: []ContextBlock{{Title: "Context from project knowledge", Tokens: 412, Hits: []ContextHit{
+			{Title: "Shop greeting", Heading: "Data flows › Greeting", Sources: []string{"src/Shop.php:12", "src/Mailer.php:40"}, Generated: "2026-11-20", File: "/k/processes/shop.md", Anchor: "greeting"},
+			{Title: "App\\Mailer", Heading: "Contract", Sources: []string{"src/Mailer.php:8"}, Generated: "2026-11-02", Outdated: true, File: "/k/components/mailer.md", Anchor: "contract"},
+		}}}},
 		{Key: 1, Kind: Thought, Text: "The function is used in two files.\nI should update both."},
 		{Key: 2, Kind: Plan, Plan: []PlanItem{{Text: "Rename the function", Status: "completed"}, {Text: "Update callers", Status: "in_progress"}, {Text: "Run tests"}}},
 		{Key: 3, Kind: Tool, Tool: &ToolCall{Title: "edit", Status: "completed", Paths: []string{"src/Shop.php"},

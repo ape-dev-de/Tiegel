@@ -96,6 +96,10 @@ type AgentMCPServer struct {
 	Args    []string `json:"args"`
 	// Env are KEY=VALUE pairs.
 	Env []string `json:"env,omitempty"`
+	// ReadOnly marks a server whose tools only read local data: the agent
+	// module allows its tool calls without asking, independent of the
+	// "Other tools" setting (D571).
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 // HookAgentMCPServers collects the MCP servers passed to the agent's
@@ -306,8 +310,10 @@ type KnowledgeStatus struct {
 	Agent     string             `json:"agent"`
 	Model     string             `json:"model,omitempty"`
 	Embedding KnowledgeEmbedding `json:"embedding"`
-	// GiveAgent tells whether the agent gets the knowledge (MCP).
+	// GiveAgent tells whether the agent gets the knowledge (MCP or RAG);
+	// AgentMode is the setting knowledge.agentMode (off, mcp, rag, both).
 	GiveAgent bool         `json:"giveAgent"`
+	AgentMode string       `json:"agentMode,omitempty"`
 	Run       KnowledgeRun `json:"run"`
 	// Levels count the pages per level; Questions the open and answered
 	// questions.

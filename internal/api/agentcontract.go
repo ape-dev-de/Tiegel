@@ -217,7 +217,12 @@ type AgentEntry struct {
 	Tool       *AgentToolCall   `json:"tool,omitempty"`
 	Plan       []AgentPlanEntry `json:"plan,omitempty"`
 	Permission *AgentPermission `json:"permission,omitempty"`
-	Time       time.Time        `json:"time"`
+	// Context is what other modules added to a user message (D571: the
+	// project knowledge's search hits); Instructions the instructions
+	// sent with it (first message of a session).
+	Context      []AgentContextBlock `json:"context,omitempty"`
+	Instructions []string            `json:"instructions,omitempty"`
+	Time         time.Time           `json:"time"`
 }
 
 // AgentUpdateEvent is the payload of agent.update.
@@ -312,6 +317,8 @@ type AgentTurnResult struct {
 	// ByUser is set when the turn was cancelled by the client (not by
 	// the agent, e.g. after a rejected permission).
 	ByUser bool `json:"byUser,omitempty"`
+	// Context is the context injected into the prompt (D571).
+	Context []AgentContextBlock `json:"context,omitempty"`
 }
 
 // AgentPermissionParams answer a permission request.

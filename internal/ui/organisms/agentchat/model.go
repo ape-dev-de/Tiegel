@@ -48,6 +48,31 @@ type Entry struct {
 	Tool  *ToolCall
 	Plan  []PlanItem
 	Perm  *Request
+	// Context is what Tiegel added to a user message (project knowledge,
+	// shown collapsed below it).
+	Context []ContextBlock
+}
+
+// ContextBlock is context added to a user message.
+type ContextBlock struct {
+	// Title is the header ("Context from project knowledge"); Tokens
+	// estimates its size.
+	Title  string
+	Tokens int
+	Hits   []ContextHit
+}
+
+// ContextHit is one section of a context block.
+type ContextHit struct {
+	// Title is the page title, Heading the section in it.
+	Title, Heading string
+	Sources        []string
+	// Generated is the date the page was written ("2026-11-20").
+	Generated string
+	// Outdated: a source changed since the page was generated.
+	Outdated bool
+	// File and Anchor locate the section (OpenContextEvent).
+	File, Anchor string
 }
 
 // ToolCall is a tool call of the agent.
@@ -162,6 +187,10 @@ type LinkEvent struct{ Dest string }
 // CopyEvent: "Copy" of a code block in an agent message.
 type CopyEvent struct{ Text string }
 
+// OpenContextEvent: a hit of a context block was clicked (open the page
+// at the heading).
+type OpenContextEvent struct{ File, Anchor string }
+
 func (SendEvent) isEvent()         {}
 func (CancelEvent) isEvent()       {}
 func (NewSessionEvent) isEvent()   {}
@@ -176,3 +205,4 @@ func (KeepAllEvent) isEvent()      {}
 func (ModelEvent) isEvent()        {}
 func (LinkEvent) isEvent()         {}
 func (CopyEvent) isEvent()         {}
+func (OpenContextEvent) isEvent()  {}

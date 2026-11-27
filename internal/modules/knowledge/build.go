@@ -324,7 +324,8 @@ func (m *Module) statusNow(ctx context.Context) (api.KnowledgeStatus, error) {
 	line, _ := m.agentCommand()
 	cfg := m.embedConfig("")
 	st.Dir, st.Agent, st.Model = dir, line, m.agentModel()
-	st.GiveAgent = setting(m, SettingGiveAgent, true)
+	st.AgentMode = m.agentMode(ctx)
+	st.GiveAgent = st.AgentMode != api.AgentContextOff
 	st.Embedding = api.KnowledgeEmbedding{Provider: cfg.Provider, Endpoint: cfg.Endpoint, Model: cfg.Model, Local: cfg.Provider == kn.ProviderOllama && localEndpoint(cfg.Endpoint)}
 	if _, err := os.Stat(filepath.Join(dir, "index.md")); err == nil {
 		st.Exists = true
