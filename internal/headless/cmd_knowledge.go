@@ -255,7 +255,7 @@ func printKnowledgeStatus(w io.Writer, st api.KnowledgeStatus) {
 	if e.Recovered != "" {
 		fmt.Fprintf(tw, "\tthe store was broken and was reset: %s\n", e.Recovered)
 	}
-	fmt.Fprintf(tw, "Agent access:\t%s\n", map[bool]string{true: "on (MCP tools knowledge_search, knowledge_read, knowledge_list)", false: "off"}[st.GiveAgent])
+	fmt.Fprintf(tw, "Agent access:\t%s\n", agentModeText(st))
 	if st.Run.Running {
 		done := 0
 		for _, u := range st.Run.Units {
@@ -560,4 +560,22 @@ func levelTitle(level string) string {
 		return "Open questions"
 	}
 	return level
+}
+
+// agentModeText describes knowledge.agentMode for the status.
+func agentModeText(st api.KnowledgeStatus) string {
+	switch st.AgentMode {
+	case api.AgentContextMCP:
+		return "mcp (MCP tools knowledge_search, knowledge_read, knowledge_list)"
+	case api.AgentContextRAG:
+		return "rag (search hits added to every message)"
+	case api.AgentContextBoth:
+		return "both (search hits with every message and the MCP tools)"
+	case api.AgentContextOff:
+		return "off"
+	}
+	if st.GiveAgent {
+		return "on"
+	}
+	return "off"
 }

@@ -20,7 +20,8 @@ func init() {
 	flagSpec["thoughts"] = false
 	register(&command{name: "agent",
 		usage: "agent [status | start | stop | new | prompt TEXT... [--yes] [--attach FILE] [--thoughts] | transcript | changes | diff [PATH] | " +
-			"revert PATH | revert --all [--force] | accept | model [MODEL] | option ID VALUE]",
+			"revert PATH | revert --all [--force] | accept | model [MODEL] | option ID VALUE | " +
+			"eval [--modes off,mcp,rag,both] [--runs N] [--file QUESTIONS] [--timeout SEC] [--yes] [QUESTION...]]",
 		summary: "AI coding agent (opencode over ACP): prompt with streamed output, changed files with diff and revert, model; asks are denied unless --yes",
 		maxArgs: -1, cwdProject: true, run: runAgent})
 }
@@ -48,6 +49,8 @@ func runAgent(c *cli) error {
 			return usagef("usage: tiegel --headless agent prompt TEXT... [--yes]")
 		}
 		return c.agentPrompt(strings.Join(args, " "))
+	case "eval":
+		return c.agentEval(args)
 	case "transcript":
 		var es []api.AgentEntry
 		if err := c.call("agent.transcript", nil, &es); err != nil {

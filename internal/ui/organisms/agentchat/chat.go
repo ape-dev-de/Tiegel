@@ -69,6 +69,8 @@ type row struct {
 	open    bool
 	answers []atoms.Button
 	answerK string // options the buttons were built for
+	// hits are the rows of the context hits of a user message.
+	hits []molecules.ListRow
 }
 
 // changeRow is the widget state of one changed file.
@@ -182,6 +184,19 @@ func (c *Chat) Update(gtx layout.Context) []Event {
 			for i := range r.answers {
 				if i < len(e.Perm.Options) && r.answers[i].Clicked(gtx) {
 					c.emit(AnswerEvent{RequestID: e.Perm.ID, OptionID: e.Perm.Options[i].ID})
+				}
+			}
+		}
+		if e.Kind == User {
+			i := 0
+			for _, b := range e.Context {
+				for _, h := range b.Hits {
+					if i < len(r.hits) {
+						if clicked, _ := r.hits[i].Update(gtx); clicked {
+							c.emit(OpenContextEvent{File: h.File, Anchor: h.Anchor})
+						}
+					}
+					i++
 				}
 			}
 		}
@@ -395,9 +410,18 @@ func (c *Chat) entry(gtx layout.Context, th *tokens.Theme, e Entry, r *row) layo
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	switch e.Kind {
 	case User:
-		return atoms.Surface{Kind: atoms.SurfaceAlt, Rounded: true}.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(th.Space.S).Layout(gtx, with(th, atoms.Text(e.Text)))
-		})
+		msg := func(gtx layout.Context) layout.Dimensions {
+			return atoms.Surface{Kind: atoms.SurfaceAlt, Rounded: true}.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions {
+				return layout.UniformInset(th.Space.S).Layout(gtx, with(th, atoms.Text(e.Text)))
+			})
+		}
+		if len(e.Context) == 0 {
+			return msg(gtx)
+		}
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(msg),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions { return c.context(gtx, th, e.Context, r) }),
+		)
 	case Agent:
 		if r.mdText != e.Text {
 			r.mdText = e.Text
@@ -799,4 +823,84 @@ func flow(gtx layout.Context, gap int, ws []layout.Widget) layout.Dimensions {
 		w = max(w, x-gap)
 	}
 	return layout.Dimensions{Size: image.Pt(w, y+lineH)}
+}
+
+// context draws the collapsible context of a user message: "Context
+// from project knowledge (N hits, ~T tokens)", opened the hits with
+// sources, date and an outdated marker; a hit opens its page.
+func (c *Chat) context(gtx layout.Context, th *tokens.Theme, blocks []ContextBlock, r *row) layout.Dimensions {
+	n, tok := 0, 0
+	title := ""
+	for _, b := range blocks {
+		n += len(b.Hits)
+		tok += b.Tokens
+		if title == "" {
+			title = b.Title
+		}
+	}
+	if title == "" {
+		title = "Context"
+	}
+	if len(blocks) > 1 {
+		title = "Context"
+	}
+	hits := "hits"
+	if n == 1 {
+		hits = "hit"
+	}
+	head := fmt.Sprintf("%s (%d %s, ~%d tokens)", title, n, hits, tok)
+	for len(r.hits) < n {
+		r.hits = append(r.hits, molecules.ListRow{})
+	}
+	children := []layout.FlexChild{layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return disclosure(gtx, th, r, with(th, atoms.Icon{Glyph: atoms.GlyphFileText, Size: th.Size.IconSmall, Color: th.Color.TextMuted}),
+			with(th, atoms.Label{Text: head, Role: atoms.RoleSmall, Color: th.Color.TextMuted, MaxLines: 1}), nothing)
+	})}
+	if r.open {
+		i := 0
+		for _, b := range blocks {
+			for _, h := range b.Hits {
+				h, lr := h, &r.hits[i]
+				i++
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: th.Space.L, Top: th.Space.XXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return lr.Layout(gtx, th, func(gtx layout.Context) layout.Dimensions { return contextHit(gtx, th, h) })
+					})
+				}))
+			}
+		}
+	}
+	return layout.Inset{Top: th.Space.XXS}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	})
+}
+
+// contextHit draws one hit: title › heading, then sources and date with
+// the outdated badge.
+func contextHit(gtx layout.Context, th *tokens.Theme, h ContextHit) layout.Dimensions {
+	title := h.Title
+	if h.Heading != "" {
+		title += " › " + h.Heading
+	}
+	var meta []string
+	if len(h.Sources) > 0 {
+		meta = append(meta, strings.Join(h.Sources, ", "))
+	}
+	if h.Generated != "" {
+		meta = append(meta, h.Generated)
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(with(th, atoms.Label{Text: title, Role: atoms.RoleSmall, MaxLines: 1})),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if !h.Outdated {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Right: th.Space.XS}.Layout(gtx, with(th, atoms.Badge{Text: "possibly outdated", Kind: atoms.BadgeWarning}))
+				}),
+				layout.Flexed(1, with(th, atoms.Label{Text: strings.Join(meta, " · "), Role: atoms.RoleSmall, Color: th.Color.TextMuted, MaxLines: 1})),
+			)
+		}),
+	)
 }

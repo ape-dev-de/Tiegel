@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -56,6 +57,8 @@ func (m *Module) entryEvent(i int, delta string) api.AgentUpdateEvent {
 		e.Permission = &p
 	}
 	e.Plan = append([]api.AgentPlanEntry(nil), e.Plan...)
+	e.Context = slices.Clone(e.Context)
+	e.Instructions = slices.Clone(e.Instructions)
 	return api.AgentUpdateEvent{Entry: e, Delta: delta}
 }
 
@@ -343,7 +346,7 @@ func (m *Module) prompt(ctx context.Context, p api.AgentPromptParams) (api.Agent
 	if err := m.ensure(ctx); err != nil {
 		return api.AgentTurnResult{}, err
 	}
-	blocks, err := m.promptBlocks(text, p.Files)
+	blocks, pc, err := m.promptBlocks(ctx, text, p.Files)
 	if err != nil {
 		return api.AgentTurnResult{}, err
 	}
@@ -358,7 +361,7 @@ func (m *Module) prompt(ctx context.Context, p api.AgentPromptParams) (api.Agent
 	proc, sid := m.proc, m.sessionID
 	m.turnCancel, m.turnDone, m.turnAsk = cancel, done, p.Ask
 	m.state = api.AgentPrompting
-	i := m.addEntry(api.AgentEntry{Kind: api.EntryUser, Text: text})
+	i := m.addEntry(api.AgentEntry{Kind: api.EntryUser, Text: text, Context: pc.Blocks, Instructions: pc.Instructions})
 	m.open, m.plan = -1, -1
 	ev := m.entryEvent(i, "")
 	m.mu.Unlock()
@@ -375,6 +378,7 @@ func (m *Module) prompt(ctx context.Context, p api.AgentPromptParams) (api.Agent
 				res = api.AgentTurnResult{StopReason: acp.StopCancelled}
 			}
 		}
+		res.Context = pc.Blocks
 		m.mu.Lock()
 		userCancel := m.userCancel
 		m.turnCancel, m.turnDone, m.turnAsk, m.userCancel = nil, nil, "", false
@@ -409,9 +413,20 @@ func (m *Module) prompt(ctx context.Context, p api.AgentPromptParams) (api.Agent
 }
 
 // promptBlocks builds the prompt: the rules preamble with the first
-// message of a session, the attached files and the text.
-func (m *Module) promptBlocks(text string, files []string) ([]acp.ContentBlock, error) {
+// message of a session, the instructions and context blocks of other
+// modules (HookAgentPromptContext, D571), the attached files and the
+// text.
+func (m *Module) promptBlocks(ctx context.Context, text string, files []string) ([]acp.ContentBlock, api.AgentPromptContext, error) {
 	var blocks []acp.ContentBlock
+	app := m.application()
+	var data [][]byte
+	for _, f := range files {
+		d, _, err := app.ReadText(f)
+		if err != nil {
+			return nil, api.AgentPromptContext{}, api.Errorf(api.CodeNotFound, "attach %s: %v", f, err)
+		}
+		data = append(data, d)
+	}
 	m.mu.Lock()
 	first := !m.rulesOut
 	m.rulesOut = true
@@ -419,17 +434,45 @@ func (m *Module) promptBlocks(text string, files []string) ([]acp.ContentBlock, 
 	if first {
 		blocks = append(blocks, acp.TextBlock(rulesPreamble(m.policy())))
 	}
-	app := m.application()
-	for _, f := range files {
-		data, _, err := app.ReadText(f)
-		if err != nil {
-			return nil, api.Errorf(api.CodeNotFound, "attach %s: %v", f, err)
-		}
+	pc := m.promptContext(ctx, text, first)
+	for _, in := range pc.Instructions {
+		blocks = append(blocks, acp.TextBlock(in))
+	}
+	for _, b := range pc.Blocks {
+		blocks = append(blocks, acp.TextBlock(b.Text))
+	}
+	for i, f := range files {
 		abs, _ := app.ResolvePath(f)
 		blocks = append(blocks, acp.ContentBlock{Type: "resource", Resource: &acp.EmbeddedResource{
-			URI: "file://" + filepath.ToSlash(abs), Text: string(data), MimeType: "text/plain"}})
+			URI: "file://" + filepath.ToSlash(abs), Text: string(data[i]), MimeType: "text/plain"}})
 	}
-	return append(blocks, acp.TextBlock(text)), nil
+	return append(blocks, acp.TextBlock(text)), pc, nil
+}
+
+// promptContext asks other modules for context of a prompt; failures
+// leave the prompt without it.
+func (m *Module) promptContext(ctx context.Context, text string, first bool) api.AgentPromptContext {
+	app := m.application()
+	in := api.AgentPromptContext{Prompt: text, First: first}
+	if app == nil {
+		return in
+	}
+	pc, err := api.HookAgentPromptContext.Apply(m.hookCtx(ctx), app.Hooks(), in)
+	if err != nil {
+		app.Logger().Warn("agent prompt context", "err", err)
+	}
+	out := api.AgentPromptContext{Prompt: text, First: first}
+	for _, s := range pc.Instructions {
+		if strings.TrimSpace(s) != "" {
+			out.Instructions = append(out.Instructions, s)
+		}
+	}
+	for _, b := range pc.Blocks {
+		if strings.TrimSpace(b.Text) != "" {
+			out.Blocks = append(out.Blocks, b)
+		}
+	}
+	return out
 }
 
 // ---- permissions ----------------------------------------------------------
@@ -448,8 +491,19 @@ func (h *handler) RequestPermission(ctx context.Context, r acp.RequestPermission
 	}
 	ask := m.turnAsk
 	m.mu.Unlock()
+	if m.readOnlyTool(tc) {
+		// Tools of read-only MCP servers (the project knowledge) are local
+		// and only read: allowed without asking (D571).
+		if id := allowOption(r.Options); id != "" {
+			return acp.Selected(id), nil
+		}
+		return acp.Cancelled(), nil
+	}
 	cat, verb := category(tc)
 	pol := decide(m.policy(), cat)
+	if m.evalPol.Load() != nil {
+		pol = evalDecision(cat, tc)
+	}
 	key := alwaysKey(cat, tc)
 	m.mu.Lock()
 	if key != "" && m.always[key] && pol == api.PolicyAsk {
@@ -457,6 +511,9 @@ func (h *handler) RequestPermission(ctx context.Context, r acp.RequestPermission
 	}
 	m.mu.Unlock()
 	reason := "disabled in settings"
+	if m.evalPol.Load() != nil {
+		reason = "read-only evaluation"
+	}
 	if pol == api.PolicyAsk && ask != "" {
 		pol, reason = ask, "needs confirmation, nobody asked"
 	}
@@ -882,7 +939,7 @@ func (h *handler) WriteTextFile(ctx context.Context, r acp.WriteTextFileRequest)
 	if app == nil {
 		return &acp.Error{Code: acp.CodeInternalError, Message: "not ready"}
 	}
-	if decide(m.policy(), api.AgentCatEdit) == api.PolicyDeny {
+	if m.evalPol.Load() != nil || decide(m.policy(), api.AgentCatEdit) == api.PolicyDeny {
 		return &acp.Error{Code: acp.CodeInternalError, Message: "file changes are disabled in the IDE settings"}
 	}
 	abs := m.abs(r.Path)

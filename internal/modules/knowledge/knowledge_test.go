@@ -699,7 +699,7 @@ func TestAgentGetsKnowledge(t *testing.T) {
 		strings.Join(l[0].Args[:5], " ") != "--headless mcp knowledge --project "+f.root || l[0].Args[5] != "--config-dir" {
 		t.Fatalf("%+v", l)
 	}
-	f.set(SettingGiveAgent, false)
+	f.set(SettingAgentMode, api.AgentContextOff)
 	if len(servers()) != 0 {
 		t.Fatal("setting off")
 	}

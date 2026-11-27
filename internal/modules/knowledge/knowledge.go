@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,7 +49,13 @@ const ID = "knowledge"
 
 // Settings keys.
 const (
-	SettingGiveAgent  = ID + ".giveAgent"
+	// SettingAgentMode is how the coding agent gets the knowledge: off,
+	// mcp, rag or both (D571; replaces knowledge.giveAgent).
+	SettingAgentMode = ID + ".agentMode"
+	// SettingRagK and SettingRagBudget bound the RAG block: hits and
+	// tokens.
+	SettingRagK       = ID + ".ragK"
+	SettingRagBudget  = ID + ".ragBudget"
 	SettingModel      = ID + ".agentModel"
 	SettingProvider   = ID + ".embedProvider"
 	SettingEndpoint   = ID + ".embedEndpoint"
@@ -149,8 +156,12 @@ func ptr(i int) *int { return &i }
 func (m *Module) SettingSpecs() []settings.Spec {
 	const build, embed = "Building", "Search (embeddings)"
 	return []settings.Spec{
-		{Key: SettingGiveAgent, Kind: settings.KindBool, Default: true, Scope: settings.ScopeProject, Label: "Give the agent the project knowledge", Group: "Agent",
-			Help: "When the knowledge base exists, the coding agent gets Tiegel's MCP server with the tools knowledge_search, knowledge_read and knowledge_list (read-only). Applies to new agent sessions."},
+		{Key: SettingAgentMode, Kind: settings.KindEnum, Options: api.AgentContextModes, Default: api.AgentContextMCP, Scope: settings.ScopeProject, Label: "Give the agent the project knowledge", Group: "Agent",
+			Help: "When the knowledge base exists. mcp: the agent gets Tiegel's MCP server with the read-only tools knowledge_search, knowledge_read and knowledge_list (allowed without asking; applies to new sessions). rag: Tiegel searches the knowledge for every message and adds the best sections (with sources and an outdated marker) before it – visible in the chat. both: both. off: neither. The agent is told to verify the knowledge against the code. Compare the modes with: tiegel --headless agent eval."},
+		{Key: SettingRagK, Kind: settings.KindInt, Default: DefaultRagK, Min: ptr(1), Max: ptr(20), Scope: settings.ScopeProject, Label: "Sections per message (rag)", Group: "Agent",
+			Help: "At most this many knowledge sections are added to a message in the modes rag and both."},
+		{Key: SettingRagBudget, Kind: settings.KindInt, Default: DefaultRagBudget, Min: ptr(200), Max: ptr(8000), Scope: settings.ScopeProject, Label: "Context budget (tokens, rag)", Group: "Agent",
+			Help: "The added knowledge stays below about this many tokens per message."},
 		{Key: SettingModel, Kind: settings.KindString, Default: "", Scope: settings.ScopeProject, Label: "Model for building", Group: build,
 			Help: "Model the agent uses to describe and validate the pages (e.g. a cheaper one). Empty uses the model of the Agent window. Building uses tokens of your agent's provider; Tiegel shows an estimate before every build."},
 		{Key: SettingExclude, Kind: settings.KindList, Default: kn.DefaultExclude, Scope: settings.ScopeProject, Label: "Leave out folders", Group: build,
@@ -198,9 +209,9 @@ func (m *Module) Start(ctx module.Context) error {
 	if err := p.Err(); err != nil {
 		return err
 	}
-	ctx.OnStop(api.HookAgentMCPServers.On(ctx.Hooks(), 100, func(_ context.Context, l []api.AgentMCPServer) ([]api.AgentMCPServer, error) {
-		if s, ok := m.agentServer(); ok {
-			l = append(l, s)
+	ctx.OnStop(api.HookAgentMCPServers.On(ctx.Hooks(), 100, func(hctx context.Context, l []api.AgentMCPServer) ([]api.AgentMCPServer, error) {
+		if s, ok := m.agentServer(hctx); ok {
+			l = append(slices.Clone(l), s)
 		}
 		return l, nil
 	}, hooks.WithOwner(ID)))
@@ -214,6 +225,7 @@ func (m *Module) Start(ctx module.Context) error {
 		}
 		return l, nil
 	}, hooks.WithOwner(ID)))
+	ctx.OnStop(api.HookAgentPromptContext.On(ctx.Hooks(), 100, m.promptContext, hooks.WithOwner(ID), hooks.WithTimeout(2*ragSearchTimeout)))
 	invalidate := func(bus.Event) { m.invalidate() }
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicFilesChanged, invalidate))
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicFileSaved, invalidate))
@@ -416,25 +428,25 @@ func gitHead(ctx context.Context, root string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// MCPServerName is the name of the knowledge MCP server in the agent's
+// sessions (its tools are allowed without asking, D571).
+const MCPServerName = "tiegel-knowledge"
+
 // agentServer is the MCP server given to the agent's sessions: Tiegel
-// itself in headless mode, when the knowledge exists and the setting is
-// on.
-func (m *Module) agentServer() (api.AgentMCPServer, bool) {
-	if !setting(m, SettingGiveAgent, true) {
+// itself in headless mode, when the knowledge exists and the mode is mcp
+// or both. It is marked read-only.
+func (m *Module) agentServer(ctx context.Context) (api.AgentMCPServer, bool) {
+	if mode := m.agentMode(ctx); mode != api.AgentContextMCP && mode != api.AgentContextBoth {
 		return api.AgentMCPServer{}, false
 	}
-	dir, err := m.dir()
-	if err != nil {
-		return api.AgentMCPServer{}, false
-	}
-	if _, err := os.Stat(filepath.Join(dir, "index.md")); err != nil {
+	if _, ok := m.ready(); !ok {
 		return api.AgentMCPServer{}, false
 	}
 	cmd, args, err := m.mcpCommand()
 	if err != nil {
 		return api.AgentMCPServer{}, false
 	}
-	return api.AgentMCPServer{Name: "tiegel-knowledge", Command: cmd, Args: args}, true
+	return api.AgentMCPServer{Name: MCPServerName, Command: cmd, Args: args, ReadOnly: true}, true
 }
 
 // mcpCommand is the command line of the knowledge MCP server.

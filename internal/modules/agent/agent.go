@@ -14,9 +14,12 @@
 // API (namespace agent.*, see api.AgentStatus and friends): agent.status,
 // agent.start, agent.newSession, agent.prompt, agent.cancel, agent.stop,
 // agent.transcript, agent.changes, agent.diff, agent.revert,
-// agent.acceptChanges, agent.permission, agent.setOption, agent.setModel.
+// agent.acceptChanges, agent.permission, agent.setOption, agent.setModel,
+// agent.eval (compare the knowledge context modes, D571).
 // Events: agent.status, agent.update, agent.permission, agent.changes,
-// agent.turnEnded.
+// agent.turnEnded, agent.eval.
+// Hooks: agent.mcpServers (MCP servers for session/new; read-only ones
+// run without asking) and agent.promptContext (context before a prompt).
 // Settings: agent.command, agent.model, agent.allowEdits,
 // agent.allowShell, agent.allowCommits, agent.allowPush, agent.allowWeb,
 // agent.allowOther, agent.rules.
@@ -127,6 +130,15 @@ type Module struct {
 	turnCancel  context.CancelFunc
 	turnDone    chan struct{}
 	lastStop    api.AgentTurnResult
+
+	// readOnly are the MCP servers of the session whose tools are allowed
+	// without asking (AgentMCPServer.ReadOnly, D571).
+	readOnly []string
+	// ctxMode overrides the context mode during agent.eval ("" = the
+	// setting); evalPol is the read-only policy of a running evaluation.
+	ctxMode string
+	evalPol atomic.Pointer[api.AgentPolicy]
+	evalMu  sync.Mutex
 }
 
 // pendingPerm is a permission request waiting for the user.
@@ -151,7 +163,7 @@ func New(opts Options) *Module {
 func (m *Module) reset() {
 	m.sessionID, m.options, m.commands = "", nil, nil
 	m.entries, m.tools, m.open, m.plan = nil, map[string]int{}, -1, -1
-	m.rulesOut, m.always = false, map[string]bool{}
+	m.rulesOut, m.always, m.readOnly = false, map[string]bool{}, nil
 	if m.perms == nil {
 		m.perms = map[string]*pendingPerm{}
 	}
@@ -231,7 +243,7 @@ func (m *Module) SettingSpecs() []settings.Spec {
 		{Key: SettingWeb, Kind: settings.KindEnum, Options: askAllowDeny, Default: api.PolicyAsk, Scope: settings.ScopeProject, Label: "Access the web", Group: perms,
 			Help: "Fetching web pages and web search by the agent."},
 		{Key: SettingOther, Kind: settings.KindEnum, Options: askAllowDeny, Default: api.PolicyAsk, Scope: settings.ScopeProject, Label: "Other tools", Group: perms,
-			Help: "Everything else the agent asks about, e.g. files outside the project or tools of MCP servers."},
+			Help: "Everything else the agent asks about, e.g. files outside the project or tools of MCP servers. The read-only tools of the project knowledge are always allowed."},
 		{Key: SettingRules, Kind: settings.KindString, Default: "", Scope: settings.ScopeProject, Label: "Rules for the agent", Group: perms,
 			Help: "Your own words, sent with the first message of every session, e.g. “Never commit. Don't touch vendor/.” The agent is asked to follow them; enforced are only the switches above."},
 	}
@@ -269,6 +281,7 @@ func (m *Module) Start(ctx module.Context) error {
 	api.Add(p, "agent.permission", "Answer a permission request of the agent (optionId, or allow/deny)", m.permission)
 	api.Add(p, "agent.setOption", "Set a session option of the agent (model, effort, mode …)", m.setOption)
 	api.Add(p, "agent.setModel", "Choose the model (remembered in agent.model)", m.setModel)
+	api.Add(p, "agent.eval", "Compare context modes (off, mcp, rag, both) on questions: fresh read-only session per run, tool calls, duration, tokens, citations; costs tokens – without confirm only the plan", m.eval)
 	if err := p.Err(); err != nil {
 		return err
 	}
@@ -303,8 +316,17 @@ func setting[T any](m *Module, key string, def T) T {
 	return api.Setting(app, key, def)
 }
 
-// policy returns the permission settings.
+// policy returns the permission policy in force: the read-only policy
+// of a running evaluation, else the settings.
 func (m *Module) policy() api.AgentPolicy {
+	if p := m.evalPol.Load(); p != nil {
+		return *p
+	}
+	return m.settingsPolicy()
+}
+
+// settingsPolicy returns the permission settings.
+func (m *Module) settingsPolicy() api.AgentPolicy {
 	enum := func(key, def string, allowed []string) string {
 		v := setting(m, key, def)
 		if !slices.Contains(allowed, v) {
@@ -501,7 +523,7 @@ func (m *Module) spawn(ctx context.Context) (*acp.Process, error) {
 	env := append(os.Environ(), "PATH="+m.searchPath())
 	cfg := ""
 	if isOpencode(argv) {
-		cfg = opencodeConfig(m.policy())
+		cfg = opencodeConfig(m.settingsPolicy())
 		env = append(env, "OPENCODE_CONFIG_CONTENT="+cfg)
 	}
 	m.mu.Lock()
@@ -551,7 +573,7 @@ func (m *Module) settingsChanged() {
 	if !running || old == "" {
 		return
 	}
-	cfg := opencodeConfig(m.policy())
+	cfg := opencodeConfig(m.settingsPolicy())
 	if cfg == old {
 		return
 	}
@@ -607,7 +629,8 @@ func (m *Module) openSession(ctx context.Context, proc *acp.Process) error {
 	}
 	sctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	res, err := proc.NewSessionWith(sctx, root, m.mcpServers(sctx))
+	servers, readOnly := m.mcpServers(sctx)
+	res, err := proc.NewSessionWith(sctx, root, servers)
 	if err != nil {
 		if acp.ErrorCode(err) == acp.CodeAuthRequired {
 			m.mu.Lock()
@@ -625,6 +648,7 @@ func (m *Module) openSession(ctx context.Context, proc *acp.Process) error {
 	}
 	m.mu.Lock()
 	m.sessionID, m.options, m.authRequired = res.SessionID, res.ConfigOptions, false
+	m.readOnly = readOnly
 	m.mu.Unlock()
 	if want := setting(m, SettingModel, ""); want != "" {
 		if opt, ok := m.modelOption(); ok && string(opt.CurrentValue) != want && hasChoice(opt, want) {
@@ -639,18 +663,23 @@ func (m *Module) openSession(ctx context.Context, proc *acp.Process) error {
 }
 
 // mcpServers collects the MCP servers other modules offer to the
-// session (HookAgentMCPServers, e.g. the project knowledge, D563).
-func (m *Module) mcpServers(ctx context.Context) []acp.MCPServerStdio {
+// session (HookAgentMCPServers, e.g. the project knowledge, D563) and
+// the names of the read-only ones (D571).
+func (m *Module) mcpServers(ctx context.Context) ([]acp.MCPServerStdio, []string) {
 	app := m.application()
 	if app == nil {
-		return nil
+		return nil, nil
 	}
-	list, err := api.HookAgentMCPServers.Apply(ctx, app.Hooks(), nil)
+	list, err := api.HookAgentMCPServers.Apply(m.hookCtx(ctx), app.Hooks(), nil)
 	if err != nil {
 		app.Logger().Warn("agent mcp servers", "err", err)
 	}
 	var out []acp.MCPServerStdio
+	var readOnly []string
 	for _, s := range list {
+		if s.ReadOnly {
+			readOnly = append(readOnly, s.Name)
+		}
 		srv := acp.MCPServerStdio{Name: s.Name, Command: s.Command, Args: s.Args}
 		for _, kv := range s.Env {
 			if k, v, ok := strings.Cut(kv, "="); ok {
@@ -659,7 +688,15 @@ func (m *Module) mcpServers(ctx context.Context) []acp.MCPServerStdio {
 		}
 		out = append(out, srv)
 	}
-	return out
+	return out, readOnly
+}
+
+// hookCtx adds the context mode of a running evaluation to ctx.
+func (m *Module) hookCtx(ctx context.Context) context.Context {
+	m.mu.Lock()
+	mode := m.ctxMode
+	m.mu.Unlock()
+	return api.WithAgentContextMode(ctx, mode)
 }
 
 // modelOption returns the model option of the session.

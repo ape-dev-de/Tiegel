@@ -140,6 +140,7 @@ func chatEntry(e api.AgentEntry) agentchat.Entry {
 	switch e.Kind {
 	case api.EntryUser:
 		out.Kind = agentchat.User
+		out.Context = chatContext(e.Context)
 	case api.EntryAgent:
 		out.Kind = agentchat.Agent
 	case api.EntryThought:
@@ -218,6 +219,10 @@ func (d *agentDock) layout(gtx layout.Context, th *tokens.Theme) layout.Dimensio
 			d.v.ctl.Status.Notice = "Copied code block"
 		case agentchat.LinkEvent:
 			d.follow(e.Dest)
+		case agentchat.OpenContextEvent:
+			if e.File != "" {
+				d.v.mdd.openAt(e.File, e.Anchor)
+			}
 		}
 	}
 	return d.chat.Layout(gtx, th)
@@ -233,4 +238,21 @@ func (d *agentDock) follow(dest string) {
 		return
 	}
 	d.v.ctl.OpenFile(d.v.ctl.Abs(strings.TrimPrefix(dest, "file://")), nil)
+}
+
+// chatContext converts the context of a user message (D571).
+func chatContext(bs []api.AgentContextBlock) []agentchat.ContextBlock {
+	var out []agentchat.ContextBlock
+	for _, b := range bs {
+		cb := agentchat.ContextBlock{Title: b.Title, Tokens: b.Tokens}
+		for _, h := range b.Hits {
+			ch := agentchat.ContextHit{Title: h.Title, Heading: h.Heading, Sources: h.Sources, Outdated: h.Outdated, File: h.File, Anchor: h.Anchor}
+			if !h.GeneratedAt.IsZero() {
+				ch.Generated = h.GeneratedAt.Local().Format("2006-01-02")
+			}
+			cb.Hits = append(cb.Hits, ch)
+		}
+		out = append(out, cb)
+	}
+	return out
 }
