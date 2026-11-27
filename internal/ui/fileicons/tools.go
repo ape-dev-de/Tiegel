@@ -29,7 +29,8 @@ const (
 	ToolSettings      ToolName = "settings"
 	ToolSearch        ToolName = "search"
 	ToolStop          ToolName = "stop"
-	ToolSleep         ToolName = "sleep" // hibernate a project or service
+	ToolSleep         ToolName = "sleep"     // hibernate a project or service
+	ToolKnowledge     ToolName = "knowledge" // project knowledge (a brain)
 )
 
 // toolAliases maps alternative names to glyphs.
@@ -38,6 +39,7 @@ var toolAliases = map[ToolName]ToolName{
 	"vcs":       ToolGit,
 	"hibernate": ToolSleep,
 	"test":      ToolTests,
+	"brain":     ToolKnowledge,
 }
 
 // sw is the stroke width of tool glyphs.
@@ -170,6 +172,32 @@ var toolDefs = map[ToolName]func(d *drawer){
 	ToolStop: func(d *drawer) {
 		d.rrect(3, 3, 13, 13, 1.5)
 	},
+	ToolKnowledge: func(d *drawer) {
+		// Left hemisphere as three lobes, mirrored for the right one.
+		var half []pt
+		half = append(half, d.arcPts(5.6, 4, 2.4, 2.4, -0.45, -math.Pi)...)
+		half = append(half, d.arcPts(3.6, 7.6, 2.4, 2.4, 4.55, 2.2)...)
+		half = append(half, d.arcPts(5.2, 11, 2.6, 2.5, 3.6, 0.35)...)
+		mirror := func(ps []pt) []pt {
+			out := make([]pt, len(ps))
+			for i, p := range ps {
+				out[i] = pt{16 - p.x, p.y}
+			}
+			return out
+		}
+		d.stroke(sw, false, half...)
+		d.stroke(sw, false, mirror(half)...)
+		d.line(sw, 8, 2.75, 8, 13.25)
+		// Folds between the lobes.
+		for _, f := range [][3]pt{
+			{{3.6, 5.6}, {5.6, 5.4}, {5.8, 7.4}},
+			{{2.8, 9.6}, {5, 9.2}, {5.6, 11.2}},
+		} {
+			fold := quadPts(f[0], f[1], f[2], 8)
+			d.stroke(sw*0.85, false, fold...)
+			d.stroke(sw*0.85, false, mirror(fold)...)
+		}
+	},
 	ToolSleep: func(d *drawer) {
 		d.circle(7, 9, 5.75)
 		d.fill(colorOpaque)
@@ -185,6 +213,7 @@ var toolOrder = []ToolName{
 	ToolProblems, ToolGit, ToolServices, ToolTests, ToolDatabase,
 	ToolNotifications, ToolFind, ToolBookmarks, ToolTodo, ToolPlugins,
 	ToolAgent, ToolBranch, ToolSettings, ToolSearch, ToolStop, ToolSleep,
+	ToolKnowledge,
 }
 
 // Tools returns all tool glyph names in a stable order.

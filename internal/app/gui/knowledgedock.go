@@ -38,7 +38,7 @@ type knowledgeDock struct {
 func installKnowledge(v *View) *knowledgeDock {
 	d := &knowledgeDock{v: v}
 	v.Registry.AddToolWindow(ToolWindow{
-		ID: ToolKnowledge, Title: "Knowledge", Glyph: fileicons.ToolGlyph(fileicons.ToolDatabase), Side: Right, Order: knowledgeOrder,
+		ID: ToolKnowledge, Title: "Knowledge", Glyph: fileicons.ToolGlyph(fileicons.ToolKnowledge), Side: Right, Order: knowledgeOrder,
 		ActionID: ActKnowledgeView,
 		Badge: func() (string, atoms.BadgeKind) {
 			k := v.ctl.Knowledge
