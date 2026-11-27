@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"runtime"
 	"slices"
 
@@ -61,15 +62,43 @@ const (
 // editorMenuAction is an Edit menu entry running an editor keymap action.
 // Its ID is the keymap action: the editor binds the keys, the window does
 // not; menus show the keymap's chord.
+//
+// Text editing commands (undo, clipboard, select all) are FocusOwned: their
+// keys go to whatever has the focus, and the menu entries act on a
+// focused text field or the terminal before the editor.
 func editorMenuAction(a keymap.Action, title, section string) Action {
-	return Action{ID: a, Title: title, Menu: "Edit", Section: section,
+	cmd, textEdit := fieldEdits[a]
+	return Action{ID: a, Title: title, Menu: "Edit", Section: section, FocusOwned: textEdit,
 		Run: func(v *View) {
 			if v.termd.editAction(a) {
+				return
+			}
+			if textEdit && v.focusProbe.Active() {
+				v.pendingField = cmd // 0 (undo/redo): nothing for fields
 				return
 			}
 			v.pendingEdit = a
 			v.focusEditor = true
 		}}
+}
+
+// fieldEdits maps the Edit menu's text editing actions to text field
+// commands (undo and redo: handled by the field's keys only).
+var fieldEdits = map[keymap.Action]atoms.EditCommand{
+	keymap.Undo: 0, keymap.Redo: 0,
+	keymap.Cut: atoms.EditCut, keymap.Copy: atoms.EditCopy, keymap.Paste: atoms.EditPaste, keymap.SelectAll: atoms.EditSelectAll,
+}
+
+// applyFieldEdit tracks the focused text field (FocusProbe) and runs an
+// Edit menu command chosen for it.
+func (v *View) applyFieldEdit(gtx *layout.Context) {
+	v.focusProbe.Attach(gtx)
+	if cmd := v.pendingField; cmd != 0 {
+		v.pendingField = 0
+		if f := v.focusProbe.Focused(*gtx); f != nil {
+			atoms.ApplyEdit(*gtx, f, cmd)
+		}
+	}
 }
 
 // defaultActions is the global shortcut table (data; Mac and PC chords)
@@ -312,7 +341,7 @@ func (s *shortcuts) build(r *Registry, scope ActionScope, focus event.Tag) {
 				// would steal it from the editor.
 				continue
 			}
-			if s.keep != nil && !s.keep(c) {
+			if a.FocusOwned || s.keep != nil && !s.keep(c) {
 				continue
 			}
 			if _, taken := s.keys.Lookup(c); taken {

@@ -176,6 +176,7 @@ func (t *TextField) layoutEditor(gtx layout.Context, th *tokens.Theme, f font.Fo
 		gtx.Constraints.Min.Y = hint.Size.Y
 	}
 	d := t.Editor.Layout(gtx, th.Shaper, f, size, textMat, selMat)
+	noteFocus(gtx, &t.Editor)
 	if t.Editor.Len() == 0 {
 		hintCall.Add(gtx.Ops)
 	}

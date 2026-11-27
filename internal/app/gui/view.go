@@ -108,6 +108,10 @@ type View struct {
 	// pendingEdit is an editor keymap action chosen in the Edit menu; the
 	// active editor runs it in its next layout.
 	pendingEdit keymap.Action
+	// focusProbe finds the focused text field; pendingField is an Edit
+	// menu command for it (keys.go).
+	focusProbe   atoms.FocusProbe
+	pendingField atoms.EditCommand
 	// zoomDelta is the temporary editor font size change (Cmd+=/Cmd+-).
 	zoomDelta float32
 	fontKey   tokens.FontPrefs

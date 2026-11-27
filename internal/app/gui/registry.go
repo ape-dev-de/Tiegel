@@ -134,6 +134,11 @@ type Action struct {
 	// Icon names the icon in menus and on a header button (atoms glyph or
 	// fileicons tool glyph name, see RegisterToolbarAction).
 	Icon string
+	// FocusOwned: the action's keys belong to the focused widget (the
+	// code editor, a text field, the terminal, the project tree), which
+	// handles them itself; the window never binds them, so a focused text
+	// field in a popup keeps Cmd+V instead of the editor getting it.
+	FocusOwned bool
 	// KeyHint is a shortcut shown in menus that is handled elsewhere
 	// (e.g. by the editor keymap); it is not bound by the window.
 	KeyHint string

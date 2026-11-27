@@ -21,6 +21,7 @@ var newShaper = tokens.NewShaper
 
 // Frame lays out one frame of the window filling gtx.
 func (v *View) Frame(gtx layout.Context) layout.Dimensions {
+	v.applyFieldEdit(&gtx)
 	v.runPosted()
 	v.ctl.Drain()
 	v.syncKeymap()
