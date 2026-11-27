@@ -678,6 +678,10 @@ func (p *appProject) HibernateBusy(ctx context.Context) []string {
 			out = append(out, "debug session "+s.ID)
 		}
 	}
+	// Background work of modules (a knowledge build).
+	if more, err := HookProjectBusy.Apply(ctx, app.Hooks(), nil); err == nil {
+		out = append(out, more...)
+	}
 	return out
 }
 

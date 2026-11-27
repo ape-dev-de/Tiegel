@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -487,6 +488,10 @@ func TestReadWhileBuilding(t *testing.T) {
 	}
 	if _, ok := api.HookAgentMCPServers.Apply(context.Background(), f.app.Hooks(), nil); ok != nil {
 		t.Fatal(ok)
+	}
+	// The running build keeps the project from hibernating.
+	if busy, err := api.HookProjectBusy.Apply(context.Background(), f.app.Hooks(), nil); err != nil || !slices.Contains(busy, "knowledge build") {
+		t.Fatalf("busy %v %v", busy, err)
 	}
 	var wg sync.WaitGroup
 	for i := range 4 {

@@ -204,6 +204,16 @@ func (m *Module) Start(ctx module.Context) error {
 		}
 		return l, nil
 	}, hooks.WithOwner(ID)))
+	// A running build keeps the project from hibernating.
+	ctx.OnStop(api.HookProjectBusy.On(ctx.Hooks(), 100, func(_ context.Context, l []string) ([]string, error) {
+		m.mu.Lock()
+		running := m.run.Running
+		m.mu.Unlock()
+		if running {
+			l = append(l, "knowledge build")
+		}
+		return l, nil
+	}, hooks.WithOwner(ID)))
 	invalidate := func(bus.Event) { m.invalidate() }
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicFilesChanged, invalidate))
 	ctx.OnStop(ctx.Bus().Subscribe(api.TopicFileSaved, invalidate))

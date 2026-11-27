@@ -522,7 +522,9 @@ func (m *Module) runBuild(ctx context.Context, root, line string, argv []string,
 		m.run.Phase = "embedding"
 		m.mu.Unlock()
 		m.publishStatus()
-		if _, err := m.syncVectors(ctx, ""); err != nil {
+		if _, err := m.syncVectors(ctx, ""); err != nil && api.ErrorCode(err) != api.CodeNoProject {
+			// (No project: the project was closed meanwhile; Stop cancels
+			// the run, nothing to report.)
 			m.mu.Lock()
 			m.run.EmbedError = err.Error()
 			m.mu.Unlock()

@@ -103,6 +103,13 @@ type AgentMCPServer struct {
 // knowledge base exists and the setting allows it).
 var HookAgentMCPServers = hooks.NewFilter[[]AgentMCPServer]("agent.mcpServers")
 
+// HookProjectBusy collects what a module is doing in the background that
+// hibernating the project would cut off ("knowledge build"). Hibernation
+// (and auto-hibernation) waits while the list is not empty, like for a
+// running configuration; closing the project asks first. Modules add their
+// reasons; the hook belongs to the project lifecycle, not to one module.
+var HookProjectBusy = hooks.NewFilter[[]string]("project.busy")
+
 // KnowledgeUnit is a page of the knowledge base (planned or built).
 type KnowledgeUnit struct {
 	ID    string `json:"id"`
