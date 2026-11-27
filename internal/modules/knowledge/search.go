@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ape-dev-de/tiegel/internal/api"
@@ -81,13 +82,10 @@ func (m *Module) search(ctx context.Context, p api.KnowledgeSearchParams) (api.K
 		return res, err
 	}
 	stats, _ := store.Stats(ctx)
-	if stats.Chunks == 0 {
-		// Documents exist but were never chunked (e.g. built with
-		// --no-embed): chunk them for keyword search.
-		if man, err := kn.LoadManifest(dir); err == nil && len(man.Units) > 0 {
-			_, _ = kn.SyncVectors(ctx, dir, man, store, nil, setting(m, SettingChunkSize, 500), nil)
-		}
-	}
+	// Searching never writes: pages not embedded yet (a running build,
+	// --no-embed) take part keyword only, the store is the last
+	// consistent snapshot.
+	live := m.liveChunks(dir)
 	var qv []float32
 	if !p.KeywordOnly && stats.Embedded > 0 {
 		cfg := m.embedConfig("")
@@ -108,10 +106,10 @@ func (m *Module) search(ctx context.Context, p api.KnowledgeSearchParams) (api.K
 				qv = vs[0]
 			}
 		}
-	} else if !p.KeywordOnly && stats.Chunks > 0 {
+	} else if !p.KeywordOnly && (stats.Chunks > 0 || len(live) > 0) {
 		res.Note = "no embeddings yet (run knowledge embed); keyword search only"
 	}
-	results, err := kn.Search(ctx, store, q, kn.SearchOptions{K: k, Query: qv})
+	results, err := kn.Search(ctx, store, q, kn.SearchOptions{K: k, Query: qv, Extra: live})
 	if err != nil {
 		return res, api.Errorf(api.CodeFailed, "search: %v", err)
 	}
@@ -120,7 +118,7 @@ func (m *Module) search(ctx context.Context, p api.KnowledgeSearchParams) (api.K
 	}
 	for _, r := range results {
 		c := r.Chunk
-		res.Hits = append(res.Hits, api.KnowledgeHit{Score: r.Score, Vector: r.Vector, Keyword: r.Keyword, Unit: c.Unit, Path: c.MD,
+		res.Hits = append(res.Hits, api.KnowledgeHit{Score: r.Score, Vector: r.Vector, Keyword: r.Keyword, Unit: c.Unit, Level: c.Level, Path: c.MD,
 			File: filepath.Join(dir, filepath.FromSlash(c.MD)), Heading: c.Heading, Anchor: c.Anchor, Text: c.Text, Snippet: kn.Snippet(c.Text, 300), Sources: c.Sources})
 	}
 	return res, nil
@@ -150,18 +148,24 @@ func (m *Module) show(_ context.Context, p api.KnowledgeUnitParams) (api.Knowled
 	if p.Unit == "" {
 		return readDoc(dir, "index.md")
 	}
+	if p.Unit == kn.LevelQuestions {
+		return readDoc(dir, "questions.md")
+	}
 	man, _ := kn.LoadManifest(dir)
-	st := man.Units[p.Unit]
+	st := man.Items[p.Unit]
 	if st == nil {
-		// Also accept a title or directory.
-		for _, s := range man.Units {
-			if strings.EqualFold(s.Title, p.Unit) || s.Dir == strings.Trim(filepath.ToSlash(p.Unit), "/") {
+		// Also accept a title, a group (class, kind) or "process-"-less
+		// IDs.
+		want := strings.TrimSpace(p.Unit)
+		for _, s := range man.Sorted() {
+			if strings.EqualFold(s.Title, want) || strings.EqualFold(s.Group, want) || s.ID == "process-"+kn.Slug(want) || s.ID == "component-"+kn.Slug(want) {
 				st = s
+				break
 			}
 		}
 	}
 	if st == nil || st.MD == "" {
-		return api.KnowledgeDoc{}, api.Errorf(api.CodeNotFound, "unit %q has no document (knowledge list shows the units)", p.Unit)
+		return api.KnowledgeDoc{}, api.Errorf(api.CodeNotFound, "page %q does not exist (knowledge list shows the pages)", p.Unit)
 	}
 	return readDoc(dir, st.MD)
 }
@@ -179,6 +183,39 @@ func (m *Module) read(ctx context.Context, p api.KnowledgeReadParams) (api.Knowl
 		p.Path = "index.md"
 	}
 	return readDoc(dir, p.Path)
+}
+
+// liveChunks are the chunks of the pages on disk now, cached until the
+// manifest or questions.md change.
+type liveChunks struct {
+	mu     sync.Mutex
+	key    string
+	chunks []kn.Chunk
+}
+
+func stamp(file string) string {
+	st, err := os.Stat(file)
+	if err != nil {
+		return "-"
+	}
+	return fmt.Sprintf("%d.%d", st.Size(), st.ModTime().UnixNano())
+}
+
+func (m *Module) liveChunks(dir string) []kn.Chunk {
+	size := setting(m, SettingChunkSize, 500)
+	key := fmt.Sprintf("%s|%s|%s|%d", dir, stamp(filepath.Join(dir, "manifest.json")), stamp(filepath.Join(dir, "questions.md")), size)
+	l := &m.live
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.key == key {
+		return l.chunks
+	}
+	man, err := kn.LoadManifest(dir)
+	if err != nil {
+		return nil
+	}
+	l.key, l.chunks = key, kn.AllChunks(dir, man, size)
+	return l.chunks
 }
 
 // modelStatus is knowledge.modelStatus.

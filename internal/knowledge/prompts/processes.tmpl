@@ -1,0 +1,22 @@
+{{template "base" .}}
+
+## Task: process (level 2) – {{.Title}}
+Trace the data flow of this process through the code, from its entry points to its effects: what comes in, which classes and methods read, validate, transform and persist it, which data stores are read and written (tables, files, caches, queues), what goes out (responses, events, messages, mails, external API calls).
+
+{{template "facts" .}}
+
+Entry points of this process:
+{{trim (budget 1200 .Entries)}}
+{{- if .Context}}
+
+What the entry-point page says about them:
+{{trim (budget 600 .Context)}}
+{{- end}}
+
+Start with these files and follow the calls:
+{{range .Files}}- {{.}}
+{{end}}{{if .MoreFiles}}- … and {{.MoreFiles}} more
+{{end}}
+Steps in call order, at most 15; each step is one method that does something with the data. Prefer tables and columns over entity names when the code shows them. The diagram is optional: a Mermaid sequenceDiagram whose participants are the classes of the steps; leave it empty when unsure – Tiegel draws one from the steps.{{template "questions" .}}
+
+{{template "answer" .}}

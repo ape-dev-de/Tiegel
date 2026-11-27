@@ -25,6 +25,10 @@ type SearchOptions struct {
 	// KeywordWeight is the share of the keyword score (default 0.3; 1
 	// without a query vector).
 	KeywordWeight float64
+	// Extra are chunks of the current pages: those missing from the
+	// store or with another text take part keyword only (their vector
+	// part counts half of their keyword score).
+	Extra []Chunk
 }
 
 // Search runs a hybrid search over the store: cosine similarity of the
@@ -38,6 +42,27 @@ func Search(ctx context.Context, s Store, query string, o SearchOptions) ([]Resu
 	if err != nil {
 		return nil, err
 	}
+	// Pages written after the last embedding (e.g. during a running
+	// build) take part with their current text, keyword only.
+	stale := map[string]bool{}
+	if len(o.Extra) > 0 {
+		at := make(map[string]int, len(chunks))
+		for i, c := range chunks {
+			at[c.ID] = i
+		}
+		for _, c := range o.Extra {
+			i, ok := at[c.ID]
+			switch {
+			case !ok:
+				at[c.ID] = len(chunks)
+				chunks = append(chunks, c)
+				stale[c.ID] = true
+			case chunks[i].Hash != c.Hash:
+				chunks[i] = c
+				stale[c.ID] = true
+			}
+		}
+	}
 	kw := BM25(chunks, query)
 	vec := map[string]float64{}
 	if o.Query != nil {
@@ -46,7 +71,9 @@ func Search(ctx context.Context, s Store, query string, o SearchOptions) ([]Resu
 			return nil, err
 		}
 		for _, h := range hits {
-			vec[h.Chunk.ID] = h.Score
+			if !stale[h.Chunk.ID] {
+				vec[h.Chunk.ID] = h.Score
+			}
 		}
 	}
 	w := o.KeywordWeight
@@ -73,6 +100,9 @@ func Search(ctx context.Context, s Store, query string, o SearchOptions) ([]Resu
 		// Cosine of unrelated texts is around 0.2-0.4 for most models;
 		// clamp negatives.
 		vn := math.Max(0, v)
+		if stale[c.ID] {
+			vn = kn / 2
+		}
 		r := Result{Chunk: c, Vector: round3(v), Keyword: round3(kn), Score: round3((1-w)*vn + w*kn)}
 		if r.Score > 0 {
 			out = append(out, r)

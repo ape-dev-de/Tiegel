@@ -1,120 +1,243 @@
 package knowledge
 
 import (
-	"encoding/json"
+	"bytes"
+	"embed"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"text/template"
 )
 
+// The prompts are Go text templates (D565), embedded from prompts/*.tmpl:
+//
+//	base.tmpl         shared role and rules ("base"), the facts block
+//	                  ("facts"), open questions ("questions") and the
+//	                  answer format ("answer")
+//	overview.tmpl     level 0
+//	entrypoints.tmpl  level 1 (one page per entry point kind)
+//	processes.tmpl    level 2 (one page per process)
+//	components.tmpl   level 3 (one page per class)
+//	questions.tmpl    the "answer open questions" iteration
+//	validate.tmpl     the review of every page (second agent)
+//	repair.tmpl       asks again after an unusable answer
+//
+// A file with the same name in an override directory (Tiegel uses
+// <config>/knowledge-prompts) replaces the embedded one. Templates get
+// PromptData; the function "budget N TEXT" cuts TEXT to about N tokens,
+// "trim" trims white space and "lower" lower-cases.
+
+//go:embed prompts/*.tmpl
+var promptFS embed.FS
+
 // maxListedFiles bounds the file list in a prompt.
-const maxListedFiles = 200
+const maxListedFiles = 60
 
-const readOnlyRules = `Rules:
-- Only read. Do not create, change or delete files, do not run shell commands, do not use the web. Such tool calls are rejected.
-- Use your read, grep and glob tools on the files below; follow calls into other files of the project when a flow leaves the unit.
-- Paths are relative to the project root.`
+// PromptData is the data of a prompt template.
+type PromptData struct {
+	Project string
+	// Level and LevelTitle of the page; Title, ID and Group of its item.
+	Level, LevelTitle string
+	Title, ID, Group  string
+	// Facts are the compact mechanical facts, Overview the compact
+	// overview page (from the earlier level, "" before it exists).
+	Facts, Overview string
+	// Entries are the entry points of the page (compact lines).
+	Entries string
+	// Context is level specific (processes: what the entry-point pages
+	// say; components: the process steps through the class).
+	Context string
+	// Files are the sources to start with; MoreFiles the rest not listed.
+	Files     []string
+	MoreFiles int
+	// Questions are the open questions the page should see.
+	Questions []PromptQuestion
+	// Schema is the JSON shape of the answer.
+	Schema string
+	// Doc, Notes and MoreNotes are for the review: the page as JSON and
+	// the findings of the mechanical check.
+	Doc       string
+	Notes     []string
+	MoreNotes int
+	// Error is for the repair prompt.
+	Error string
+}
 
-func fileList(u Unit) string {
-	var b strings.Builder
-	for i, f := range u.Files {
-		if i == maxListedFiles {
-			fmt.Fprintf(&b, "- … and %d more files below %s\n", len(u.Files)-maxListedFiles, u.Dir)
-			break
+// PromptQuestion is an open question in a prompt.
+type PromptQuestion struct {
+	ID, Text, Item string
+	// Refs are the cited files and symbols, comma separated.
+	Refs string
+}
+
+// Prompts renders the prompt templates.
+type Prompts struct {
+	t *template.Template
+	// Overrides are the files that replaced embedded templates.
+	Overrides []string
+}
+
+// Budget cuts s to about tokens tokens (four characters each) at a line
+// break and marks the cut.
+func Budget(tokens int, s string) string {
+	limit := tokens * 4
+	if len(s) <= limit {
+		return s
+	}
+	cut := s[:limit]
+	if i := strings.LastIndexByte(cut, '\n'); i > limit/2 {
+		cut = cut[:i]
+	}
+	return cut + "\n… (shortened)"
+}
+
+var promptFuncs = template.FuncMap{"budget": Budget, "lower": strings.ToLower, "trim": strings.TrimSpace}
+
+// LoadPrompts parses the embedded templates and, when overrideDir holds
+// *.tmpl files of the same names, replaces those. A broken override is
+// an error (the embedded set is returned with it).
+func LoadPrompts(overrideDir string) (*Prompts, error) {
+	t, err := template.New("prompts").Funcs(promptFuncs).ParseFS(promptFS, "prompts/*.tmpl")
+	if err != nil {
+		return nil, fmt.Errorf("knowledge prompts: %w", err)
+	}
+	p := &Prompts{t: t}
+	if overrideDir == "" {
+		return p, nil
+	}
+	names, _ := fs.Glob(promptFS, "prompts/*.tmpl")
+	var files []string
+	for _, n := range names {
+		f := filepath.Join(overrideDir, filepath.Base(n))
+		if st, err := os.Stat(f); err == nil && !st.IsDir() {
+			files = append(files, f)
 		}
-		b.WriteString("- " + f + "\n")
+	}
+	if len(files) == 0 {
+		return p, nil
+	}
+	sort.Strings(files)
+	clone, err := t.Clone()
+	if err != nil {
+		return p, err
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return p, fmt.Errorf("knowledge prompt %s: %w", f, err)
+		}
+		if _, err := clone.New(filepath.Base(f)).Parse(string(b)); err != nil {
+			return p, fmt.Errorf("knowledge prompt %s: %w", f, err)
+		}
+	}
+	return &Prompts{t: clone, Overrides: files}, nil
+}
+
+// MustDefaultPrompts returns the embedded prompts (they are tested to
+// parse; a failure yields nil and is caught by Render).
+func defaultPrompts() *Prompts {
+	p, _ := LoadPrompts("")
+	return p
+}
+
+// Render executes a template ("overview.tmpl", …) with d.
+func (p *Prompts) Render(name string, d PromptData) (string, error) {
+	if p == nil || p.t == nil {
+		return "", errors.New("knowledge prompts are not loaded")
+	}
+	var b bytes.Buffer
+	if err := p.t.ExecuteTemplate(&b, name, d); err != nil {
+		return "", fmt.Errorf("knowledge prompt %s: %w", name, err)
+	}
+	return strings.TrimSpace(b.String()) + "\n", nil
+}
+
+// TemplateFor is the template of a level's describe step.
+func TemplateFor(level string) string { return level + ".tmpl" }
+
+// listFiles fills Files and MoreFiles.
+func (d *PromptData) listFiles(files []string) {
+	d.Files = files
+	if len(files) > maxListedFiles {
+		d.Files, d.MoreFiles = files[:maxListedFiles], len(files)-maxListedFiles
+	}
+}
+
+// CompactEntries renders entry points as prompt lines.
+func CompactEntries(eps []EntryPoint) string {
+	var b strings.Builder
+	for _, e := range eps {
+		fmt.Fprintf(&b, "- %s", e.Name)
+		if e.Handler != "" {
+			fmt.Fprintf(&b, " → %s", e.Handler)
+		}
+		loc := e.File
+		if e.Line > 0 {
+			loc = fmt.Sprintf("%s:%d", e.File, e.Line)
+		}
+		if e.Source == "agent" {
+			loc += ", added by the entry-point page"
+		}
+		fmt.Fprintf(&b, " (%s)\n", loc)
 	}
 	return b.String()
 }
 
-// DescribePrompt asks the first agent for the data flows of u.
-func DescribePrompt(project string, u Unit) string {
-	return fmt.Sprintf(`You document the data flows of one part of the PHP project %q for a knowledge base that other developers and coding agents will search.
-
-Unit: %s (directory %s, %d files)
-%s
-%s
-
-Describe the data flows of this unit:
-- entry points: HTTP controllers and routes, CLI commands, jobs, event listeners, public service methods used from outside,
-- inputs and how they are validated and transformed,
-- persistence: database tables, ORM entities, repositories, files, cache,
-- external calls: HTTP APIs, queues, mail, other services,
-- events dispatched and handled.
-
-Keep it compact and factual: at most 12 flows, at most 10 steps per flow. Every step names a file you have read and the symbol (Class::method or function) that does it.
-
-Answer with exactly one fenced json block in this shape (no other JSON):
-%s
-`, project, u.Title, u.Dir, len(u.Files), fileList(u), readOnlyRules, "```json\n"+DescriptionSchema+"\n```")
-}
-
-// ValidatePrompt asks the second agent to check a description against
-// the code. notes are the findings of Tiegel's mechanical check.
-func ValidatePrompt(project string, u Unit, d Description, notes []string) string {
-	b, _ := json.MarshalIndent(d, "", "  ")
-	var n strings.Builder
-	if len(notes) == 0 {
-		n.WriteString("- all referenced files and symbols were found\n")
+// CompactOverview renders the overview page for prompts.
+func CompactOverview(d *OverviewDoc) string {
+	if d == nil {
+		return ""
 	}
-	for i, s := range notes {
-		if i == 30 {
-			fmt.Fprintf(&n, "- … %d more\n", len(notes)-30)
-			break
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(d.Summary) + "\n")
+	if d.Architecture != "" {
+		b.WriteString("Architecture: " + d.Architecture + "\n")
+	}
+	if len(d.Containers) > 0 {
+		var l []string
+		for _, c := range d.Containers {
+			s := c.Name
+			if c.Tech != "" {
+				s += " (" + c.Tech + ")"
+			}
+			l = append(l, s)
 		}
-		n.WriteString("- " + s + "\n")
+		b.WriteString("Containers: " + strings.Join(l, ", ") + "\n")
 	}
-	return fmt.Sprintf(`You review a description of the data flows of one part of the PHP project %q. Another agent wrote it; check every claim against the code.
-
-Unit: %s (directory %s)
-%s
-
-Tiegel checked the references mechanically:
-%s
-Check: do the files and symbols exist and do what the step says? Is the order of the steps right? Are important flows missing (entry points, persistence, external calls, events)? Remove what you cannot confirm in the code, fix what is wrong, add what is missing. Move doubts to openQuestions.
-
-The description:
-%s
-
-Answer with exactly one fenced json block:
-%s
-`, project, u.Title, u.Dir, readOnlyRules, n.String(), "```json\n"+string(b)+"\n```",
-		"```json\n{\n  \"confidence\": 0.0-1.0 (how well the corrected description matches the code),\n  \"issues\": [\"what you corrected, one line each\"],\n  \"description\": { the corrected description in the same shape }\n}\n```")
+	for _, r := range d.Relations {
+		fmt.Fprintf(&b, "- %s → %s: %s\n", r.From, r.To, r.Label)
+	}
+	return b.String()
 }
 
-// WritePrompt asks the third agent for the Markdown document.
-func WritePrompt(project string, u Unit, d Description) string {
-	b, _ := json.MarshalIndent(d, "", "  ")
-	return fmt.Sprintf(`Write the knowledge base page for one part of the PHP project %q from the validated description below. Do not use tools; everything you need is here.
-
-Unit: %s
-
-Format (Markdown, compact, no front matter, no title line – Tiegel adds both):
-## Overview
-2-4 sentences.
-## Data flows
-One "### <flow name>" per flow: a line "**Trigger:** …", then a numbered list of steps, each "[path:line](path#Lline) `+"`Symbol`"+` – what happens", then "**Data:** …" and "**Side effects:** …" when known.
-## Entities
-Bullet list "**Name** ([path](path)): one line".
-## External
-Bullet list "**Name** (kind): one line".
-## Open questions
-Bullet list; leave the section out when there are none.
-
-Use only facts from the description; keep paths project relative exactly as given. Steps marked "verified": false could not be confirmed in the code – mark them "*(unverified)*".
-
-The description:
-%s
-`, project, u.Title, "```json\n"+string(b)+"\n```")
+func refsText(refs []Ref) string {
+	var l []string
+	for _, r := range refs {
+		s := r.File
+		if r.Line > 0 {
+			s = fmt.Sprintf("%s:%d", r.File, r.Line)
+		}
+		if r.Symbol != "" {
+			if s != "" {
+				s += " "
+			}
+			s += r.Symbol
+		}
+		if s != "" {
+			l = append(l, s)
+		}
+	}
+	return strings.Join(l, ", ")
 }
 
-// RepairPrompt asks an agent to fix an answer that did not parse.
-func RepairPrompt(err error) string {
-	return fmt.Sprintf(`Your answer could not be used: %v.
-Answer again with exactly one fenced json block in the requested shape, nothing else.`, err)
-}
-
-// RepairMarkdownPrompt asks the writer to fix its Markdown.
-func RepairMarkdownPrompt(err error) string {
-	return fmt.Sprintf(`Your page could not be used: %v.
-Answer again with the complete page in the requested format (## Overview, ## Data flows, …), nothing else.`, err)
+func promptQuestions(qs []*QuestionRecord) []PromptQuestion {
+	var out []PromptQuestion
+	for _, q := range qs {
+		out = append(out, PromptQuestion{ID: q.ID, Text: q.Text, Item: q.Item, Refs: refsText(q.Refs)})
+	}
+	return out
 }

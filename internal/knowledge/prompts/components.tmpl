@@ -1,0 +1,16 @@
+{{template "base" .}}
+
+## Task: component (level 3) – {{.Group}}
+Describe the data contract of this class as the processes below use it: per method the inputs (types, shapes), the outputs, what it reads and writes (tables, columns, files, caches, queues), side effects (events, mails, external calls) and the exceptions that change the flow. Also what state it owns.
+
+{{template "facts" .}}
+
+The processes that use it and their steps through it:
+{{trim (budget 1500 .Context)}}
+
+Its file:
+{{range .Files}}- {{.}}
+{{end}}
+Only methods the flows use (or public methods that change data), at most 12. No description of what the class type is in general.{{template "questions" .}}
+
+{{template "answer" .}}

@@ -1,10 +1,12 @@
-// Package knowledge is the project knowledge plugin (D560–D563): on an
-// explicit user action it runs a read-only coding agent (opencode over
-// ACP, the command of the agent plugin) in three passes per unit of the
-// project – describe the data flows, validate them against the code,
-// write compact Markdown – and stores the documents outside the
-// repository in the project's Tiegel directory
-// (<config>/projects/<hash>/knowledge). The documents are chunked and
+// Package knowledge is the project knowledge plugin (D560–D563, D565):
+// on an explicit user action it runs a read-only coding agent (opencode
+// over ACP, the command of the agent plugin) top-down through the levels
+// overview → entry points → processes → components → open questions;
+// every page is described by one session and validated by another, and
+// Tiegel renders the Markdown outside the repository in the project's
+// Tiegel directory (<config>/projects/<hash>/knowledge). Reading works
+// while a build runs: pages appear as they are written, search uses the
+// last consistent vector store plus the new pages. The pages are chunked and
 // embedded (Ollama by default, or an OpenAI compatible endpoint) into a
 // brute-force vector store for hybrid search, which the coding agent
 // reaches through Tiegel's MCP server (`tiegel --headless mcp knowledge`).
@@ -13,8 +15,8 @@
 // knowledge.build; models are pulled only from knowledge.pullModel.
 //
 // API (namespace knowledge.*): status, plan, build, cancel, list, show,
-// read, search, embed, modelStatus, pullModel, mcpConfig. Events:
-// knowledge.status, knowledge.progress.
+// read, questions, search, embed, modelStatus, pullModel, mcpConfig.
+// Events: knowledge.status, knowledge.progress.
 package knowledge
 
 import (
@@ -54,7 +56,10 @@ const (
 	SettingAPIKey     = ID + ".embedApiKey"
 	SettingChunkSize  = ID + ".chunkSize"
 	SettingExclude    = ID + ".exclude"
-	SettingMaxFiles   = ID + ".maxFiles"
+	// SettingMaxProcesses and SettingMaxComponents bound the pages of
+	// levels 2 and 3.
+	SettingMaxProcesses  = ID + ".maxProcesses"
+	SettingMaxComponents = ID + ".maxComponents"
 )
 
 // APIKeyEnv is read when the API key setting is empty.
@@ -92,8 +97,10 @@ type Module struct {
 	app  atomic.Pointer[api.App]
 	bus  atomic.Pointer[bus.Bus]
 
-	mu     sync.Mutex
-	run    api.KnowledgeRun
+	mu  sync.Mutex
+	run api.KnowledgeRun
+	// act is the live activity of the running or last build.
+	act    *activityLog
 	cancel context.CancelFunc
 	done   chan struct{}
 
@@ -104,8 +111,13 @@ type Module struct {
 	pullStatus string
 	pullErr    string
 
-	// planCache is the last plan of all units (cleared on file changes).
+	// planCache is the last plan of the whole project (cleared on file
+	// changes).
 	planCache *planned
+
+	// live caches the chunks of the current pages for search (keyed by
+	// the manifest's and questions.md's stamps).
+	live liveChunks
 }
 
 // New creates the module.
@@ -140,11 +152,13 @@ func (m *Module) SettingSpecs() []settings.Spec {
 		{Key: SettingGiveAgent, Kind: settings.KindBool, Default: true, Scope: settings.ScopeProject, Label: "Give the agent the project knowledge", Group: "Agent",
 			Help: "When the knowledge base exists, the coding agent gets Tiegel's MCP server with the tools knowledge_search, knowledge_read and knowledge_list (read-only). Applies to new agent sessions."},
 		{Key: SettingModel, Kind: settings.KindString, Default: "", Scope: settings.ScopeProject, Label: "Model for building", Group: build,
-			Help: "Model the agent uses to describe, validate and write (e.g. a cheaper one). Empty uses the model of the Agent window. Building uses tokens of your agent's provider; Tiegel shows an estimate before every build."},
+			Help: "Model the agent uses to describe and validate the pages (e.g. a cheaper one). Empty uses the model of the Agent window. Building uses tokens of your agent's provider; Tiegel shows an estimate before every build."},
 		{Key: SettingExclude, Kind: settings.KindList, Default: kn.DefaultExclude, Scope: settings.ScopeProject, Label: "Leave out folders", Group: build,
 			Help: "Folder names skipped anywhere in the project (unless you build exactly that folder)."},
-		{Key: SettingMaxFiles, Kind: settings.KindInt, Default: 40, Min: ptr(5), Max: ptr(500), Scope: settings.ScopeProject, Label: "Files per unit", Group: build,
-			Help: "A namespace folder with more PHP files is split into its subfolders."},
+		{Key: SettingMaxProcesses, Kind: settings.KindInt, Default: kn.DefaultMaxProcesses, Min: ptr(1), Max: ptr(500), Scope: settings.ScopeProject, Label: "Processes", Group: build,
+			Help: "At most this many process pages (level 2): entry points are grouped by their handler class, the biggest groups first."},
+		{Key: SettingMaxComponents, Kind: settings.KindInt, Default: kn.DefaultMaxComponents, Min: ptr(0), Max: ptr(500), Scope: settings.ScopeProject, Label: "Components", Group: build,
+			Help: "At most this many component pages (level 3): the classes the process pages cite most."},
 		{Key: SettingProvider, Kind: settings.KindEnum, Options: []string{kn.ProviderOllama, kn.ProviderOpenAI}, Default: kn.ProviderOllama, Scope: settings.ScopeProject, Label: "Embedding provider", Group: embed,
 			Help: "ollama: local, the documents stay on this machine. openai-compatible: any /v1/embeddings endpoint – the knowledge documents and your search queries are sent to that server."},
 		{Key: SettingEndpoint, Kind: settings.KindString, Default: kn.DefaultEndpoint, Scope: settings.ScopeProject, Label: "Endpoint", Group: embed,
@@ -167,13 +181,15 @@ func (m *Module) Start(ctx module.Context) error {
 	m.app.Store(app)
 	m.bus.Store(ctx.Bus())
 	p := api.NewProvider(ctx)
-	api.Add(p, "knowledge.status", "Project knowledge base: directory, units (stale, failed), last run, agent and model, embedding store, running build", m.status)
-	api.Add(p, "knowledge.plan", "Units a build would run with an estimate (agent calls, tokens); scope: folders, all: also current units", m.plan)
-	api.Add(p, "knowledge.build", "Build or update the knowledge base with the coding agent (uses tokens; explicit user action); wait: until done", m.build)
+	api.Add(p, "knowledge.status", "Project knowledge base: directory, pages per level (stale, failed), open/answered questions, last run, agent and model, embedding store, running build", m.status)
+	api.Add(p, "knowledge.plan", "Pages a build would run per level with an estimate (agent calls, tokens); level: overview|entrypoints|processes|components|questions|all, scope: folders, all: also current pages", m.plan)
+	api.Add(p, "knowledge.build", "Build or update the knowledge base with the coding agent, top-down by level (uses tokens; explicit user action); wait: until done", m.build)
 	api.Add(p, "knowledge.cancel", "Cancel the running build", m.cancelBuild)
-	api.Add(p, "knowledge.list", "Units of the knowledge base with state, confidence and document", m.list)
-	api.Add(p, "knowledge.show", "The document of a unit", m.show)
-	api.Add(p, "knowledge.read", "A file of the knowledge base (index.md, units/<id>.md) or a unit's document", m.read)
+	api.Add(p, "knowledge.list", "Pages of the knowledge base by level with state, confidence and file (also while a build runs)", m.list)
+	api.Add(p, "knowledge.show", "The page of an ID or title (empty: index.md)", m.show)
+	api.Add(p, "knowledge.read", "A file of the knowledge base (index.md, overview.md, processes/<id>.md, questions.md …) or a page ID", m.read)
+	api.Add(p, "knowledge.questions", "Open and answered questions of the knowledge base; status: open|answered", m.questions)
+	api.Add(p, "knowledge.transcript", "Live transcript of a page's agent sessions in the running or last build (thoughts, messages, tool calls)", m.transcript)
 	api.Add(p, "knowledge.search", "Hybrid search (embeddings + keywords) over the knowledge base: sections with score, document and heading", m.search)
 	api.Add(p, "knowledge.embed", "Chunk the documents and (re-)embed changed sections (model: override once)", m.embed)
 	api.Add(p, "knowledge.modelStatus", "Is the embedding server reachable and the model there (with the pull command)", m.modelStatus)

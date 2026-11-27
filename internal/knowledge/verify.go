@@ -22,50 +22,38 @@ type Checker struct {
 	cache map[string][]string // file → lines
 }
 
-// Verify checks and fixes d in place: file paths are made project
-// relative, lines are set to the symbol's declaration, Verified is set
-// on every step. It returns the number of unverified claims and notes
-// for the validating agent.
-func (c *Checker) Verify(d *Description) (unverified int, notes []string) {
-	for i := range d.Flows {
-		for j := range d.Flows[i].Steps {
-			s := &d.Flows[i].Steps[j]
-			ok, note := c.step(s)
-			s.Verified = &ok
-			if !ok {
-				unverified++
-			}
-			if note != "" {
-				notes = append(notes, fmt.Sprintf("flow %q step %d: %s", d.Flows[i].Name, j+1, note))
-			}
+// Verify checks and fixes the references of d in place: file paths are
+// made project relative, lines are set to the symbol's declaration,
+// Verified is set on every reference. It returns the number of
+// unverified references and notes for the validating agent.
+func (c *Checker) Verify(d Doc) (unverified int, notes []string) {
+	return c.VerifyRefs(d.refs())
+}
+
+// VerifyRefs checks and fixes references in place (see Verify).
+// References without file and symbol are skipped.
+func (c *Checker) VerifyRefs(refs []*Ref) (unverified int, notes []string) {
+	for _, r := range refs {
+		if strings.TrimSpace(r.File) == "" && strings.TrimSpace(r.Symbol) == "" {
+			continue
 		}
-	}
-	for i := range d.Entities {
-		if f := d.Entities[i].File; f != "" {
-			rel := c.rel(f)
-			if _, ok := c.lines(rel); ok {
-				d.Entities[i].File = rel
-			} else {
-				notes = append(notes, fmt.Sprintf("entity %q: file %s does not exist", d.Entities[i].Name, f))
-				d.Entities[i].File = ""
-				unverified++
-			}
+		label := r.Symbol
+		if label == "" {
+			label = r.File
 		}
-	}
-	for i := range d.External {
-		if f := d.External[i].File; f != "" {
-			rel := c.rel(f)
-			if _, ok := c.lines(rel); ok {
-				d.External[i].File = rel
-			} else {
-				d.External[i].File = ""
-			}
+		ok, note := c.step(r)
+		r.Verified = &ok
+		if !ok {
+			unverified++
+		}
+		if note != "" {
+			notes = append(notes, label+": "+note)
 		}
 	}
 	return unverified, notes
 }
 
-func (c *Checker) step(s *Step) (bool, string) {
+func (c *Checker) step(s *Ref) (bool, string) {
 	s.File = c.rel(s.File)
 	lines, exists := c.lines(s.File)
 	short := ShortSymbol(s.Symbol)

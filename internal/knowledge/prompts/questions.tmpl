@@ -1,0 +1,12 @@
+{{template "base" .}}
+
+## Task: answer open questions
+Earlier pages of the knowledge base left these questions open. Read the code and answer each one you can settle, with the evidence (file, symbol, line). List the IDs you still cannot settle in stillOpen – an honest "still open" is better than a guess.
+
+{{template "facts" .}}
+
+Questions:
+{{range .Questions}}- {{.ID}} (asked by {{.Item}}): {{.Text}}{{if .Refs}}
+  look at: {{.Refs}}{{end}}
+{{end}}
+{{template "answer" .}}

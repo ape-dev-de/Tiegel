@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,85 +26,129 @@ func write(t *testing.T, root string, files map[string]string) {
 }
 
 func TestExtractAndParse(t *testing.T) {
-	good := `Here you go:
-` + "```json\n" + `{"summary":"Orders.","flows":[{"name":"Checkout","trigger":"POST /checkout","steps":[{"file":"src/A.php","symbol":"A::run","what":"saves"}]}],"entities":["Order",{"name":"Line","file":"src/L.php"}],"external":["MySQL"]}` + "\n```\n"
-	d, err := ParseDescription(good)
-	if err != nil || d.Summary != "Orders." || len(d.Flows) != 1 || d.Entities[0].Name != "Order" || d.Entities[1].File != "src/L.php" || d.External[0].Name != "MySQL" {
-		t.Fatal(d, err)
+	good := "Here you go:\n```json\n" + `{"name":"Checkout","summary":"Orders.","triggers":["POST /checkout"],"steps":[{"file":"src/A.php","symbol":"A::run","what":"saves"}],"writes":["orders",{"name":"lines","kind":"database"}],"openQuestions":["why?",{"question":"how?","refs":[{"file":"src/A.php"}]}]}` + "\n```\n"
+	d, err := ParseDoc(LevelProcesses, good)
+	p := d.(*ProcessDoc)
+	if err != nil || p.Summary != "Orders." || len(p.Steps) != 1 || p.Writes[0].Name != "orders" || p.Writes[1].Kind != "database" || p.OpenQuestions[0].Question != "why?" || p.OpenQuestions[1].Refs[0].File != "src/A.php" {
+		t.Fatal(p, err)
+	}
+	if len(d.refs()) != 2 || d.summary() != "Orders." {
+		t.Fatal(d.refs())
 	}
 	// Unfenced object in text.
-	if _, err := ParseDescription(`ok {"summary":"x","flows":[]} done`); err != nil {
+	if _, err := ParseDoc(LevelOverview, `ok {"summary":"x","containers":[{"name":"App"}]} done`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ParseDescription("no json here"); !errors.Is(err, ErrNoJSON) {
+	if _, err := ParseDoc(LevelOverview, "no json here"); !errors.Is(err, ErrNoJSON) {
 		t.Fatal(err)
 	}
-	if _, err := ParseDescription("```json\n{\"summary\": \n```"); err == nil {
+	if _, err := ParseDoc(LevelOverview, "```json\n{\"summary\": \n```"); err == nil {
 		t.Fatal("broken JSON accepted")
 	}
-	if _, err := ParseDescription(`{"summary":"","flows":[{"name":"","trigger":"","steps":[{"file":"","what":""}]}],"entities":[{"name":""}]}`); err == nil ||
-		!strings.Contains(err.Error(), "summary is empty") || !strings.Contains(err.Error(), "steps[0].file") {
+	if _, err := ParseDoc("nope", "{}"); err == nil {
+		t.Fatal("unknown level")
+	}
+	for level, bad := range map[string]string{
+		LevelOverview:    `{"summary":"","containers":[{"name":""}],"relations":[{"from":"a"}],"answeredQuestions":[{"id":""}],"openQuestions":[{"question":""}]}`,
+		LevelEntryPoints: `{"summary":"","entries":[{"name":"","purpose":""}]}`,
+		LevelProcesses:   `{"name":"","summary":"","steps":[]}`,
+		LevelComponents:  `{"name":"","summary":"","methods":[{"file":"a"}]}`,
+		LevelQuestions:   `{}`,
+	} {
+		if _, err := ParseDoc(level, bad); err == nil {
+			t.Fatal("accepted", level)
+		}
+	}
+	if _, err := ParseDoc(LevelProcesses, `{"name":"n","summary":"s","steps":[{"file":"","what":""}],"reads":[{"name":""}]}`); err == nil || !strings.Contains(err.Error(), "steps[0].file") || !strings.Contains(err.Error(), "no name") {
 		t.Fatal(err)
 	}
-	if _, err := ParseDescription(`{"summary":5}`); err == nil {
+	if _, err := ParseDoc(LevelOverview, `{"summary":5}`); err == nil {
 		t.Fatal("wrong type accepted")
 	}
-	v, err := ParseValidation("```json\n{\"confidence\":0.9,\"issues\":[\"x\"],\"description\":{\"summary\":\"s\",\"flows\":[]}}\n```")
-	if err != nil || v.Confidence != 0.9 {
+	// Many errors are capped.
+	var steps []string
+	for i := 0; i < 12; i++ {
+		steps = append(steps, `{"file":"","what":"w"}`)
+	}
+	if _, err := ParseDoc(LevelProcesses, `{"name":"n","summary":"s","steps":[`+strings.Join(steps, ",")+`]}`); err == nil || !strings.Contains(err.Error(), "more") {
+		t.Fatal(err)
+	}
+	v, doc, err := ParseValidation(LevelOverview, "```json\n{\"confidence\":0.9,\"issues\":[\"x\"],\"result\":{\"summary\":\"s\",\"containers\":[{\"name\":\"App\"}]}}\n```")
+	if err != nil || v.Confidence != 0.9 || doc.(*OverviewDoc).Containers[0].Name != "App" {
 		t.Fatal(v, err)
 	}
-	for _, bad := range []string{`{"confidence":2,"description":{"summary":"s"}}`, `{"confidence":0.5}`, `nothing`, `{"confidence":"x"}`} {
-		if _, err := ParseValidation(bad); err == nil {
+	for _, bad := range []string{`{"confidence":2,"result":{"summary":"s"}}`, `{"confidence":0.5}`, `nothing`, `{"confidence":"x"}`, `{"confidence":0.5,"result":{"summary":5}}`} {
+		if _, _, err := ParseValidation(LevelOverview, bad); err == nil {
 			t.Fatal("accepted", bad)
 		}
 	}
-	// Many errors are capped.
-	var flows []string
-	for i := 0; i < 12; i++ {
-		flows = append(flows, `{"name":"","trigger":"t","steps":[{"file":"f","what":"w"}]}`)
+	if _, _, err := ParseValidation("nope", `{"confidence":0.5,"result":{}}`); err == nil {
+		t.Fatal("unknown level")
 	}
-	_, err = ParseDescription(`{"summary":"s","flows":[` + strings.Join(flows, ",") + `]}`)
-	if err == nil || !strings.Contains(err.Error(), "more") {
-		t.Fatal(err)
+	for _, l := range Levels {
+		var v any
+		if err := json.Unmarshal([]byte(Schema(l)), &v); err == nil {
+			continue // schemas are illustrative, not strict JSON
+		}
+		if !strings.Contains(Schema(l), "openQuestions") {
+			t.Fatal("schema without questions", l)
+		}
+	}
+	if Schema("x") != "{}" || NewDoc("x") != nil {
+		t.Fatal("unknown level")
+	}
+	a := &AnswersDoc{StillOpen: []string{"q"}}
+	if a.Check() != nil || a.summary() != "0 answered, 1 still open" {
+		t.Fatal(a.summary())
+	}
+	var e Data
+	if json.Unmarshal([]byte(`5`), &e) == nil {
+		t.Fatal("number accepted")
+	}
+	var q Question
+	if json.Unmarshal([]byte(`5`), &q) == nil {
+		t.Fatal("number accepted")
 	}
 }
 
-func TestPlanUnits(t *testing.T) {
+func TestLevels(t *testing.T) {
+	l, err := ParseLevels("")
+	if err != nil || len(l) != 5 || l[0] != LevelOverview {
+		t.Fatal(l, err)
+	}
+	if l, _ := ParseLevels("processes, overview,routes,answer"); strings.Join(l, ",") != "overview,entrypoints,processes,questions" {
+		t.Fatal(l)
+	}
+	if l, _ := ParseLevels("component,process,process"); strings.Join(l, ",") != "processes,components" {
+		t.Fatal(l)
+	}
+	if _, err := ParseLevels("nope"); err == nil {
+		t.Fatal("unknown level")
+	}
+	for _, l := range append(Levels, "x") {
+		if LevelTitle(l) == "" {
+			t.Fatal(l)
+		}
+	}
+	if LevelRank("x") != len(Levels) || (Item{ID: "a"}).Data() != "data/a.json" {
+		t.Fatal("rank")
+	}
+}
+
+func TestFilterFilesAndPSR4(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, map[string]string{"composer.json": `{"autoload":{"psr-4":{"App\\":"src/","Lib\\":["lib"]}}}`})
 	psr := ReadPSR4(root)
 	if psr[`App\`][0] != "src" || psr[`Lib\`][0] != "lib" {
 		t.Fatal(psr)
 	}
-	files := []string{"src/Kernel.php", "src/Billing/Invoice.php", "src/Billing/Pay.php", "src/Shop/Cart.php", "lib/X.php",
-		"vendor/a/b.php", "tests/FooTest.php", "public/index.php", "README.md", "src/Shop/Big/A.php"}
-	units := PlanUnits(files, PlanOptions{PSR4: psr})
-	got := map[string]Unit{}
-	for _, u := range units {
-		got[u.ID] = u
+	files := []string{"src/Kernel.php", "src/Billing/Invoice.php", "lib/X.php", "vendor/a/b.php", "tests/FooTest.php", "public/index.php", "README.md"}
+	if got := FilterFiles(files, nil, nil); strings.Join(got, ",") != "lib/X.php,public/index.php,src/Billing/Invoice.php,src/Kernel.php" {
+		t.Fatal(got)
 	}
-	if len(units) != 5 || got["src-billing"].Title != `App\Billing` || len(got["src-billing"].Files) != 2 ||
-		got["src"].Title != "App" || got["lib"].Title != "Lib" || got["public"].Title != "public" || got["src-shop"].Title != `App\Shop` {
-		t.Fatalf("%+v", units)
+	if got := FilterFiles(files, []string{"tests", "src/Billing/"}, nil); strings.Join(got, ",") != "src/Billing/Invoice.php,tests/FooTest.php" {
+		t.Fatal(got)
 	}
-	// Scope, explicit excluded folder and splitting.
-	units = PlanUnits(files, PlanOptions{PSR4: psr, Scope: []string{"tests", "src/Shop"}, MaxFiles: 1})
-	ids := []string{}
-	for _, u := range units {
-		ids = append(ids, u.ID)
-	}
-	if strings.Join(ids, ",") != "src-shop,src-shop-big,tests" {
-		t.Fatal(ids)
-	}
-	for _, u := range units {
-		if u.ID == "src-shop-big" && u.Title != `App\Shop\Big` {
-			t.Fatal(u)
-		}
-	}
-	if UnitID("") != "root" || UnitID("--") != "unit" || UnitID("src/Foo Bar") != "src-foo-bar" {
-		t.Fatal("ids")
-	}
-	// No composer.json, root files.
 	if ReadPSR4(t.TempDir()) != nil {
 		t.Fatal("psr4 without composer")
 	}
@@ -116,62 +159,83 @@ func TestPlanUnits(t *testing.T) {
 	if p := ReadPSR4(filepath.Join(root, "odd")); len(p[`A\`]) != 0 || p[`B\`][0] != "." {
 		t.Fatal(p)
 	}
-	units = PlanUnits([]string{"index.php", "a/b.php"}, PlanOptions{PSR4: map[string][]string{`R\`: {"."}}})
-	if len(units) != 2 || units[1].ID != "root" || units[1].Title != "R" || units[0].Title != `R\a` {
-		t.Fatalf("%+v", units)
+	if Slug("App\\Controller\\Order") != "app-controller-order" || Slug("--") != "x" || len(Slug(strings.Repeat("a", 200))) != 80 {
+		t.Fatal(Slug("App\\Controller\\Order"))
 	}
 }
 
-func TestManifestStale(t *testing.T) {
+func TestManifestStaleAndLegacy(t *testing.T) {
 	dir, root := t.TempDir(), t.TempDir()
-	write(t, root, map[string]string{"a.php": "<?php a", "b.php": "<?php b"})
-	u := Unit{ID: "u", Files: []string{"a.php", "b.php"}}
-	h := HashFiles(root, &u)
-	if u.Bytes != 14 || h["a.php"] == "" || HashFile(filepath.Join(root, "nope")) != "" {
-		t.Fatal(u, h)
+	write(t, root, map[string]string{"a.php": "<?php a", "b.php": "<?php b", "c.php": "<?php c"})
+	it := Item{ID: "u", Level: LevelProcesses, MD: "processes/u.md", Files: []string{"a.php", "b.php"}, Inputs: map[string]string{"@entries": "1"}}
+	h := ItemHashes(root, &it)
+	if it.Bytes != 14 || h["a.php"] == "" || h["@entries"] != "1" || HashFile(filepath.Join(root, "nope")) != "" {
+		t.Fatal(it, h)
 	}
 	m, err := LoadManifest(dir)
-	if err != nil || m.Stale(dir, u, h) != StaleNew {
+	if err != nil || m.Legacy || m.Stale(dir, root, it, h) != StaleNew {
 		t.Fatal(err)
 	}
-	m.Units["u"] = &UnitState{ID: "u", Status: StatusFailed}
-	if m.Stale(dir, u, h) != StaleFailed {
+	m.Items["u"] = &ItemState{ID: "u", Status: StatusFailed}
+	if m.Stale(dir, root, it, h) != StaleFailed {
 		t.Fatal("failed")
 	}
-	m.Units["u"] = &UnitState{ID: "u", Status: StatusDone}
-	if m.Stale(dir, u, h) != StaleMissing {
-		t.Fatal("no md")
+	files := map[string]string{"c.php": HashFile(filepath.Join(root, "c.php"))}
+	for k, v := range h {
+		files[k] = v
 	}
-	m.Units["u"] = &UnitState{ID: "u", Status: StatusDone, MD: "units/u.md", Files: h}
-	if m.Stale(dir, u, h) != StaleMissing {
+	m.Items["u"] = &ItemState{ID: "u", Level: LevelProcesses, Status: StatusDone, MD: "processes/u.md", Files: files}
+	if m.Stale(dir, root, it, h) != StaleMissing {
 		t.Fatal("md file missing")
 	}
-	write(t, dir, map[string]string{"units/u.md": "x"})
-	if m.Stale(dir, u, h) != "" {
+	write(t, dir, map[string]string{"processes/u.md": "x"})
+	if m.Stale(dir, root, it, h) != "" {
 		t.Fatal("current")
 	}
+	// A cited file (not one of the item's files) changed.
+	write(t, root, map[string]string{"c.php": "<?php changed"})
+	if m.Stale(dir, root, it, h) != StaleChanged {
+		t.Fatal("cited file changed")
+	}
+	write(t, root, map[string]string{"c.php": "<?php c"})
 	write(t, root, map[string]string{"b.php": "<?php changed"})
-	if m.Stale(dir, u, HashFiles(root, &u)) != StaleChanged {
+	if m.Stale(dir, root, it, ItemHashes(root, &it)) != StaleChanged {
 		t.Fatal("changed")
 	}
-	u2 := Unit{ID: "u", Files: []string{"a.php"}}
-	if m.Stale(dir, u2, HashFiles(root, &u2)) != StaleChanged {
-		t.Fatal("file removed")
+	it2 := Item{ID: "u", Files: []string{"a.php", "b.php"}}
+	h2 := ItemHashes(root, &it2)
+	m.Items["u"].Files["b.php"] = h2["b.php"]
+	if m.Stale(dir, root, it2, h2) != StaleChanged {
+		t.Fatal("input gone")
 	}
 	if err := m.Save(dir); err != nil {
 		t.Fatal(err)
 	}
 	m2, err := LoadManifest(dir)
-	if err != nil || m2.Units["u"].MD != "units/u.md" || len(m2.Sorted()) != 1 {
+	if err != nil || m2.Items["u"].MD != "processes/u.md" || len(m2.Sorted()) != 1 || len(m2.Level(LevelProcesses)) != 1 || m2.Clone().Items["u"] == m2.Items["u"] {
 		t.Fatal(m2, err)
 	}
 	write(t, dir, map[string]string{"manifest.json": "{broken"})
-	if m3, err := LoadManifest(dir); err == nil || len(m3.Units) != 0 {
+	if m3, err := LoadManifest(dir); err == nil || len(m3.Items) != 0 {
 		t.Fatal("broken manifest")
 	}
-	write(t, dir, map[string]string{"manifest.json": "{}"})
-	if m4, err := LoadManifest(dir); err != nil || m4.Units == nil {
+	write(t, dir, map[string]string{"manifest.json": `{"version":2,"items":null}`})
+	if m4, err := LoadManifest(dir); err != nil || m4.Items == nil || m4.Legacy {
 		t.Fatal(err)
+	}
+	write(t, dir, map[string]string{"manifest.json": `{"version":2,"items":{"u":5}}`})
+	if _, err := LoadManifest(dir); err == nil {
+		t.Fatal("bad items")
+	}
+	// The old unit format (D560) is legacy: empty, rebuilt.
+	write(t, dir, map[string]string{"manifest.json": `{"version":1,"units":{"src":{"id":"src","md":"units/src.md","status":"done"}}}`, "units/src.md": "old"})
+	if m5, err := LoadManifest(dir); err != nil || !m5.Legacy || len(m5.Items) != 0 {
+		t.Fatal(m5, err)
+	}
+	legacy := t.TempDir()
+	write(t, legacy, map[string]string{"units/a.md": "x"})
+	if m6, _ := LoadManifest(legacy); !m6.Legacy {
+		t.Fatal("units without manifest")
 	}
 	if err := WriteFileAtomic(filepath.Join(dir, "x", "y.txt"), []byte("z")); err != nil {
 		t.Fatal(err)
@@ -183,8 +247,8 @@ func TestVerify(t *testing.T) {
 	write(t, root, map[string]string{
 		"src/Order.php":   "<?php\nnamespace App;\nclass Order {\n  public function place() {}\n  private $total;\n}\n",
 		"src/Mailer.php":  "<?php\nclass Mailer {\n  function send() {}\n}\n",
-		"src/Uses.php":    "<?php\n// calls send somewhere\n",
 		"src/Nothing.php": "<?php\n",
+		"config/app.yaml": "x: 1\n",
 	})
 	c := &Checker{Root: root, Lookup: func(sym string) []string {
 		if strings.HasSuffix(sym, "send") {
@@ -192,18 +256,17 @@ func TestVerify(t *testing.T) {
 		}
 		return nil
 	}}
-	d := Description{Summary: "s", Flows: []Flow{{Name: "f", Trigger: "t", Steps: []Step{
-		{File: "./src/Order.php", Symbol: `App\Order::place()`, Line: 99, What: "a"},
-		{File: filepath.Join(root, "src/Order.php") + ":3", Symbol: "", What: "b"},
-		{File: "src/Nothing.php", Symbol: "Mailer::send", What: "c"},
-		{File: "src/Gone.php", Symbol: "X::y", What: "d"},
-		{File: "src/Nothing.php", Symbol: "Order::cancel", What: "e"},
-		{File: "../etc/passwd", What: "f"},
-		{File: "src/Order.php", Symbol: "$total", What: "g"},
-	}}}, Entities: []Entity{{Name: "Order", File: "src/Order.php"}, {Name: "Ghost", File: "src/Ghost.php"}},
-		External: []External{{Name: "SMTP", File: "src/Mailer.php"}, {Name: "X", File: "nope.php"}}}
-	un, notes := c.Verify(&d)
-	s := d.Flows[0].Steps
+	d := &ProcessDoc{Name: "n", Summary: "s", Steps: []Step{
+		{Ref: Ref{File: "./src/Order.php", Symbol: `App\Order::place()`, Line: 99}, What: "a"},
+		{Ref: Ref{File: filepath.Join(root, "src/Order.php") + ":3"}, What: "b"},
+		{Ref: Ref{File: "src/Nothing.php", Symbol: "Mailer::send"}, What: "c"},
+		{Ref: Ref{File: "src/Gone.php", Symbol: "X::y"}, What: "d"},
+		{Ref: Ref{File: "src/Nothing.php", Symbol: "Order::cancel"}, What: "e"},
+		{Ref: Ref{File: "../etc/passwd"}, What: "f"},
+		{Ref: Ref{File: "src/Order.php", Symbol: "$total"}, What: "g"},
+	}, Reads: []Data{{Name: "cfg", Ref: &Ref{File: "config/app.yaml"}}, {Name: "none", Ref: &Ref{}}}}
+	un, notes := c.Verify(d)
+	s := d.Steps
 	if !*s[0].Verified || s[0].Line != 4 || s[0].File != "src/Order.php" {
 		t.Fatal(s[0])
 	}
@@ -213,14 +276,19 @@ func TestVerify(t *testing.T) {
 	if !*s[2].Verified || s[2].File != "src/Mailer.php" || s[2].Line != 3 {
 		t.Fatal(s[2])
 	}
-	if *s[3].Verified || *s[4].Verified || *s[5].Verified || !*s[6].Verified || s[6].Line != 5 {
+	if *s[3].Verified || *s[4].Verified || *s[5].Verified || !*s[6].Verified || s[6].Line != 5 || !s[3].Unverified() {
 		t.Fatal(s[3:])
 	}
-	if un != 4 || len(notes) != 5 || d.Entities[1].File != "" || d.External[1].File != "" || d.External[0].File != "src/Mailer.php" {
-		t.Fatal(un, notes, d.Entities, d.External)
+	if un != 3 || len(notes) != 4 || !*d.Reads[0].Ref.Verified || d.Reads[1].Ref.Verified != nil {
+		t.Fatal(un, notes)
 	}
 	for in, want := range map[string]string{`App\Foo::bar()`: "bar", `App\Foo`: "Foo", "$x": "x", "a->b": "b", "": ""} {
 		if got := ShortSymbol(in); got != want {
+			t.Fatal(in, got)
+		}
+	}
+	for in, want := range map[string]string{`\App\Foo::bar()`: `App\Foo`, "X->run": "X", `App\Foo`: `App\Foo`, "helper": "", "$x": ""} {
+		if got := SymbolClass(in); got != want {
 			t.Fatal(in, got)
 		}
 	}
@@ -236,10 +304,9 @@ func TestMarkdown(t *testing.T) {
 	if got := l.Link("src/A.php", 3); !strings.HasPrefix(got, "[src/A.php:3](file://") || !strings.HasSuffix(got, "/src/A.php#L3)") {
 		t.Fatal(got)
 	}
-	meta := Meta{Unit: "u", Title: `App\Billing`, Sources: []string{"src/A.php"}, Commit: "abc", GeneratedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Confidence: 0.8, Model: "m:x"}
-	fm := meta.FrontMatter()
-	fields, body := SplitFrontMatter(fm + "\n# T\n")
-	if fields["unit"] != "u" || fields["title"] != `App\Billing` || fields["sources"] != "src/A.php" || fields["confidence"] != "0.80" || fields["model"] != "m:x" || fields["generated-at"] != "2026-01-02T03:04:05Z" || body != "\n# T\n" {
+	meta := Meta{ID: "u", Level: LevelProcesses, Title: `App\Billing`, Sources: []string{"src/A.php"}, Commit: "abc", GeneratedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Confidence: 0.8, Model: "m:x"}
+	fields, body := SplitFrontMatter(meta.FrontMatter() + "\n# T\n")
+	if fields["id"] != "u" || fields["level"] != "processes" || fields["title"] != `App\Billing` || fields["sources"] != "src/A.php" || fields["confidence"] != "0.80" || fields["model"] != "m:x" || fields["generated-at"] != "2026-01-02T03:04:05Z" || body != "\n# T\n" {
 		t.Fatal(fields, body)
 	}
 	if f, b := SplitFrontMatter("no"); f != nil || b != "no" {
@@ -248,77 +315,208 @@ func TestMarkdown(t *testing.T) {
 	if f, _ := SplitFrontMatter("---\nunclosed"); f != nil {
 		t.Fatal("unclosed")
 	}
-	u := Unit{ID: "u", Title: "Billing"}
+	if yamlString("") != `""` || yamlString("a: b") != `"a: b"` || yamlString("plain") != "plain" {
+		t.Fatal("yaml")
+	}
 	ver, unver := true, false
-	d := Description{Summary: "Bills.", Flows: []Flow{{Name: "Pay", Trigger: "POST /pay", Data: "amount", SideEffects: []string{"DB"},
-		Steps: []Step{{File: "src/A.php", Symbol: "A::pay", Line: 1, What: "pays", Verified: &ver}, {File: "src/B.php", What: "x", Verified: &unver}}}},
-		Entities: []Entity{{Name: "Invoice", File: "src/A.php", Description: "bill"}}, External: []External{{Name: "Stripe", Kind: "http", Description: "pay", File: "src/A.php"}},
-		OpenQuestions: []string{"retries?"}}
-	out := RenderBody(u, d, l)
-	for _, want := range []string{"# Billing", "## Overview", "Bills.", "### Pay", "**Trigger:** POST /pay", "*(unverified)*", "## Entities", "**Invoice**", "## External", "(http)", "## Open questions", "**Side effects:** DB", "**Data:** amount"} {
+	// Process: an invalid agent diagram is dropped, Tiegel's sequence
+	// diagram is drawn instead; unverified steps are marked.
+	pd := &ProcessDoc{Name: "Pay", Summary: "Bills.", Triggers: []string{"POST /pay"}, Inputs: []Data{{Name: "amount", Kind: "request"}},
+		Steps:  []Step{{Ref: Ref{File: "src/A.php", Symbol: `App\A::pay`, Line: 1, Verified: &ver}, What: "pays", Data: "amount"}, {Ref: Ref{File: "src/B.php", Verified: &unver}, What: "x [y]"}},
+		Writes: []Data{{Name: "invoices", Kind: "database", Ref: &Ref{File: "src/A.php"}}}, External: []Data{{Name: "Stripe", Kind: "http"}},
+		Diagram: "sequenceDiagram\n  A->>", QA: QA{OpenQuestions: []Question{{Question: "retries?", Refs: []Ref{{File: "src/A.php"}}}}, Answered: []Answer{{ID: "q-1", Answer: "yes"}}}}
+	out := RenderProcess(Item{Title: "Pay (HTTP)"}, pd, l)
+	for _, want := range []string{"# Process: Pay", "**Triggers:** POST /pay", "## Inputs", "## Data flow", "```mermaid\nsequenceDiagram\n", "`App\\A::pay` – pays (data: amount)", "*(unverified)*", "## Writes", "## External systems", "## Open questions", "retries?", "**q-1**: yes", "(../questions.md)"} {
 		if !strings.Contains(out, want) {
 			t.Fatal(want, out)
 		}
 	}
-	if !strings.Contains(RenderBody(u, Description{Summary: "s"}, l), "No data flows") {
-		t.Fatal("empty")
+	if strings.Contains(out, "A->>\n") {
+		t.Fatal("invalid diagram written")
 	}
-	if OverviewOf(out) != "Bills." || OverviewOf("x") != "" || OverviewOf("## Overview\n\n## Next") != "" {
-		t.Fatal(OverviewOf(out))
+	pd.Diagram = "sequenceDiagram\n    participant A\n    participant B\n    A->>B: hello\n"
+	if out := RenderProcess(Item{}, pd, l); !strings.Contains(out, "A->>B: hello") {
+		t.Fatal("valid agent diagram dropped", out)
 	}
-	// Agent Markdown: fence, chatter, title, relative links.
-	ans := "Sure!\n```markdown\n# Whatever\n\n## Overview\nText.\n\n## Data flows\n1. [src/A.php:1](src/A.php#L1) and [gone](src/Gone.php)\n```\n"
-	b, err := NormalizeBody(u, ans, l)
-	if err != nil || !strings.HasPrefix(b, "# Billing\n\n## Overview") || !strings.Contains(b, "(file://") || !strings.Contains(b, "](src/Gone.php)") || strings.Contains(b, "Whatever") {
-		t.Fatal(b, err)
+	// Diagrams that do not parse are left out entirely.
+	if mermaidBlock("graph TD\n  A -->") != "" || mermaidBlock("C4Context\n  Person(a, \"A\")") != "" || mermaidBlock("") != "" {
+		t.Fatal("invalid diagram kept")
 	}
-	b, err = NormalizeBody(u, "intro\n## Overview\nx\n## Data flows\ny", l)
-	if err != nil || !strings.HasPrefix(b, "# Billing\n\n## Overview") {
-		t.Fatal(b, err)
+	if ValidMermaid(SequenceDiagram(&ProcessDoc{Steps: []Step{{Ref: Ref{File: "x.php"}, What: `quote " | ; # <b>`}}})) != nil {
+		t.Fatal("generated sequence diagram does not parse")
 	}
-	if _, err := NormalizeBody(u, "## Overview\nonly", l); err == nil || !strings.Contains(err.Error(), "Data flows") {
+	// Overview: C4-style flowchart from containers and relations.
+	od := &OverviewDoc{Summary: "Shop.", Architecture: "MVC", Containers: []Container{{Name: "Customer", Kind: "person"}, {Name: "Web \"app\"", Kind: "webapp", Tech: "Symfony"}, {Name: "DB", Kind: "database"},
+		{Name: "Q", Kind: "queue"}, {Name: "Redis", Kind: "cache"}, {Name: "Stripe", Kind: "external"}},
+		Relations: []Relation{{From: "Customer", To: "Web \"app\"", Label: "orders [x]"}, {From: "Web \"app\"", To: "DB"}, {From: "x", To: "DB"}}, Folders: []Folder{{Path: "src/", Role: "code"}}}
+	diag := ContextDiagram("shop", od)
+	if err := ValidMermaid(diag); err != nil {
+		t.Fatal(err, diag)
+	}
+	f := Facts{Project: "shop", PHPRoot: "app", Framework: "symfony", Frameworks: []string{"symfony/framework-bundle ^7"}, PHP: ">=8.2", Style: "mvc", Packages: []string{"doctrine/orm ^3"},
+		PSR4: map[string][]string{`App\`: {"app/src"}}, Folders: []FolderInfo{{Path: "src", PHPFiles: 3}}, Services: []string{"db (mysql:8)"}, DevTools: []string{"phpunit/phpunit ^11"},
+		Tooling: []Tool{{Name: "PHPUnit", File: "phpunit.xml"}}, Scripts: []Script{{Name: "test", Command: "phpunit"}}}
+	ov := RenderOverview("shop", od, f, l)
+	for _, want := range []string{"# Overview: shop", "## Summary", "## Architecture", "```mermaid\nflowchart LR", "subgraph sys", "| Web \"app\" |", "## Tech stack", "symfony/framework-bundle ^7", "**PHP root:** app",
+		"## Folders", "| src | 3 | code |", "## Development tooling", "db (mysql:8)", "`test`: `phpunit`"} {
+		if !strings.Contains(ov, want) {
+			t.Fatal(want, ov)
+		}
+	}
+	if ov := RenderOverview("shop", nil, Facts{}, l); !strings.Contains(ov, "not available yet") || !strings.Contains(ov, "none detected") {
+		t.Fatal(ov)
+	}
+	// Entry points: agent rows and the mechanical inventory.
+	it := Item{Title: "HTTP routes", Entries: []EntryPoint{{Kind: KindHTTP, Name: "GET /a", Handler: "A::b", File: "src/A.php", Line: 2}}}
+	ed := &EntryPointsDoc{Summary: "Orders come in.", Entries: []EntryDesc{{Name: "GET /a", Handler: Ref{File: "src/A.php", Symbol: "A::b"}, Purpose: "lists | orders", Process: "Orders", Found: true}, {Name: "POST /x", Purpose: "p"}}}
+	ep := RenderEntryPoints(it, ed, l)
+	if !strings.Contains(ep, "| GET /a |") || !strings.Contains(ep, `lists \| orders`) || !strings.Contains(ep, "*(found by the agent)*") || !strings.Contains(ep, "**Orders:** GET /a") {
+		t.Fatal(ep)
+	}
+	if ep := RenderEntryPoints(it, nil, l); !strings.Contains(ep, "Found by Tiegel") || !strings.Contains(ep, "`A::b`") {
+		t.Fatal(ep)
+	}
+	// Component.
+	cd := &ComponentDoc{Name: `App\S\OrderService`, Summary: "Saves.", State: "orders", Collaborators: []string{"Db"},
+		Methods: []Method{{Ref: Ref{File: "src/A.php", Symbol: `App\S\OrderService::save`, Line: 3}, Inputs: "array", Outputs: "Order", Reads: []string{"carts"}, Writes: []string{"orders"}, SideEffects: []string{"event"}, Throws: []string{"E"}}}}
+	co := RenderComponent(Item{Group: `App\S\OrderService`, Files: []string{"src/A.php"}, UsedBy: []string{"Pay (HTTP)", "Other"}}, cd, map[string]string{"Pay (HTTP)": "processes/pay.md"}, l)
+	for _, want := range []string{"# Component: OrderService", "### `OrderService::save`", "- **In:** array", "- **Writes:** orders", "## Used by", "[Pay (HTTP)](../processes/pay.md)", "- Other", "## Collaborators", "## State"} {
+		if !strings.Contains(co, want) {
+			t.Fatal(want, co)
+		}
+	}
+	if ShortMethod("X") != "X" {
+		t.Fatal("short")
+	}
+	if firstSentences("One. Two three four five six. Seven eight nine ten.", 30) != "One. Two three four five six." || firstSentences(strings.Repeat("x", 40), 10) != "xxxxxxxxxx…" {
+		t.Fatal(firstSentences("One. Two three four five six. Seven eight nine ten.", 30))
+	}
+	if Snippet("## H\n```mermaid\ngraph TD\n```\nSome **bold** [link](x).", 0) != "Some bold link." || Snippet("abcdef", 4) != "abc…" {
+		t.Fatal(Snippet("## H\n```mermaid\ngraph TD\n```\nSome **bold** [link](x).", 0))
+	}
+}
+
+func TestIndexAndQuestions(t *testing.T) {
+	dir := t.TempDir()
+	m, _ := LoadManifest(dir)
+	m.Items["overview"] = &ItemState{ID: "overview", Level: LevelOverview, Title: "Overview", MD: "overview.md", Summary: "Shop.", Confidence: 0.9, Status: StatusDone}
+	m.Items["entrypoints-http"] = &ItemState{ID: "entrypoints-http", Level: LevelEntryPoints, Title: "HTTP routes", MD: "entrypoints/http.md", Mechanical: true}
+	m.Items["process-a"] = &ItemState{ID: "process-a", Level: LevelProcesses, Title: "A|B", MD: "processes/a.md", Summary: strings.Repeat("long | ", 40), Confidence: 0.5}
+	m.Items["component-x"] = &ItemState{ID: "component-x", Level: LevelComponents, Title: "X", MD: "components/x.md"}
+	m.Items["gone"] = &ItemState{ID: "gone", Level: LevelComponents, Title: "Gone", MD: "components/gone.md"}
+	write(t, dir, map[string]string{"overview.md": "x", "entrypoints/http.md": "x", "processes/a.md": "x", "components/x.md": "x"})
+	qs := &QuestionStore{}
+	now := time.Unix(100, 0)
+	qs.Apply(Item{ID: "overview", Level: LevelOverview}, &QA{OpenQuestions: []Question{{Question: "Which DB?"}, {Question: " "}, {Question: "Where are mails sent?", Refs: []Ref{{File: "src/M.php"}}}}}, nil, now)
+	if open, _ := qs.Counts(); open != 2 {
+		t.Fatal(open)
+	}
+	id := QuestionID("overview", "which   DB?")
+	if qs.Get(id) == nil || qs.Get("nope") != nil {
+		t.Fatal("id not stable")
+	}
+	// A process sees the overview's general question and the one citing
+	// its file; answering records the source.
+	rel := qs.Relevant(Item{ID: "process-a", Level: LevelProcesses, Files: []string{"src/M.php"}}, 8)
+	if len(rel) != 2 || rel[0].Text != "Where are mails sent?" {
+		t.Fatal(rel)
+	}
+	if len(qs.Relevant(Item{ID: "process-a", Level: LevelProcesses}, 1)) != 1 || len(qs.Relevant(Item{ID: "o2", Level: LevelOverview}, 8)) != 0 {
+		t.Fatal("relevance")
+	}
+	qs.Apply(Item{ID: "process-a", Level: LevelProcesses}, &QA{Answered: []Answer{{ID: id, Answer: "MySQL", Refs: []Ref{{File: "config/db.yaml"}}}, {ID: "q-unknown", Answer: "x"}}}, nil, now)
+	if q := qs.Get(id); q.Status != QuestionAnswered || q.AnsweredBy != "process-a" || q.Answer != "MySQL" || q.AnsweredAt != now {
+		t.Fatal(q)
+	}
+	// Rebuilding the overview without the mail question drops it; the
+	// answered one stays.
+	qs.Apply(Item{ID: "overview", Level: LevelOverview}, &QA{OpenQuestions: []Question{{Question: "Which cache?"}}}, nil, now)
+	if open, answered := qs.Counts(); open != 1 || answered != 1 {
+		t.Fatal(open, answered)
+	}
+	// Answer batches: attempts count, exhausted questions are left out.
+	items := PlanQuestions(qs, 5, false)
+	if len(items) != 1 || len(items[0].Questions) != 1 || items[0].Level != LevelQuestions {
+		t.Fatal(items)
+	}
+	cache := QuestionID("overview", "Which cache?")
+	qs.Apply(items[0], &QA{}, []string{cache}, now)
+	qs.Apply(items[0], &QA{}, []string{cache}, now)
+	if len(PlanQuestions(qs, 5, false)) != 0 || len(PlanQuestions(qs, 5, true)) != 1 || len(qs.Answerable()) != 0 {
+		t.Fatal("attempts")
+	}
+	for i := 0; i < 20; i++ {
+		qs.Apply(Item{ID: "c", Level: LevelComponents}, &QA{OpenQuestions: []Question{{Question: "q" + string(rune('a'+i)), Refs: []Ref{{File: "f.php"}}}}}, nil, now)
+	}
+	if b := PlanQuestions(qs, 2, false); len(b) != 1 || len(b[0].Questions) != 1 || b[0].Files[0] != "f.php" {
+		t.Fatal(b) // only the last re-ask survives (each Apply supersedes)
+	}
+	if err := qs.Save(dir); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := NormalizeBody(u, "---\nunit: x\n---\n## Overview\na\n## Data flows\nb", l); err != nil || strings.Contains(b, "unit: x") {
-		t.Fatal(b, err)
+	if err := WriteIndex(dir, "shop", m, qs, dir); err != nil {
+		t.Fatal(err)
 	}
-	idx := RenderIndex("shop", time.Unix(0, 0), []IndexEntry{{ID: "u", Title: "A|B", Summary: strings.Repeat("long | ", 40), MD: "units/u.md", Confidence: 0.5, Files: 2}})
-	if !strings.Contains(idx, "# Knowledge base: shop") || !strings.Contains(idx, "(units/u.md)") || !strings.Contains(idx, `\|`) || !strings.Contains(idx, "…") {
-		t.Fatal(idx)
+	idx, _ := os.ReadFile(filepath.Join(dir, "index.md"))
+	s := string(idx)
+	for _, want := range []string{"# Knowledge base: shop", "## 1. Overview", "[Overview](overview.md) (0.90) – Shop.", "## 2. Entry points", "(facts only)", "## 3. Processes", `[A\|B](processes/a.md)`, "…", "## 4. Components", "[questions.md](questions.md)"} {
+		if !strings.Contains(s, strings.ReplaceAll(want, `A\|B`, "A|B")) && !strings.Contains(s, want) {
+			t.Fatal(want, s)
+		}
 	}
-	if yamlString("") != `""` || yamlString("a: b") != `"a: b"` || yamlString("plain") != "plain" {
-		t.Fatal("yaml")
+	if strings.Contains(s, "Gone") {
+		t.Fatal("page without file listed")
+	}
+	qmd, _ := os.ReadFile(filepath.Join(dir, "questions.md"))
+	if !strings.Contains(string(qmd), "## Open (2)") || !strings.Contains(string(qmd), "## Answered (1)") || !strings.Contains(string(qmd), "**Answer:** MySQL (by [process-a](processes/a.md)") {
+		t.Fatal(string(qmd))
+	}
+	qs2, err := LoadQuestions(dir)
+	if err != nil || len(qs2.Questions) != len(qs.Questions) {
+		t.Fatal(err)
+	}
+	write(t, dir, map[string]string{"questions.json": "{"})
+	if _, err := LoadQuestions(dir); err == nil {
+		t.Fatal("broken questions")
+	}
+	// Without pages index.md and questions.md go.
+	empty := emptyManifest()
+	if err := WriteIndex(dir, "shop", empty, nil, dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "index.md")); !os.IsNotExist(err) {
+		t.Fatal("index.md kept")
 	}
 }
 
 func TestChunkDoc(t *testing.T) {
 	para := strings.Repeat("word ", 120) // ~150 tokens
-	doc := Meta{Unit: "u", Title: "T"}.FrontMatter() + "\n# Title\n\n## Overview\n\nShort.\n\n## Data flows\n\n### Checkout\n\n" + para + "\n\n### Refund\n\n" + para + "\n\n```php\n# not a heading\n```\n\n### Huge\n\n" +
+	doc := Meta{ID: "u", Title: "T"}.FrontMatter() + "\n# Title\n\n## Overview\n\nShort.\n\n## Data flows\n\n### Checkout\n\n" + para + "\n\n### Refund\n\n" + para + "\n\n```php\n# not a heading\n```\n\n### Huge\n\n" +
 		strings.Repeat(para+"\n\n", 8) + "\n## Entities\n\n- a\n\n## Entities\n\n- b\n"
-	cs := ChunkDoc("u", "units/u.md", []string{"a.php"}, doc, ChunkOptions{Target: 300})
+	cs := ChunkDoc("u", LevelProcesses, "processes/u.md", []string{"a.php"}, doc, ChunkOptions{Target: 300})
 	ids := map[string]Chunk{}
 	for _, c := range cs {
 		ids[c.ID] = c
-		if c.Unit != "u" || c.Hash == "" || c.Sources[0] != "a.php" {
+		if c.Unit != "u" || c.Level != LevelProcesses || c.Hash == "" || c.Sources[0] != "a.php" {
 			t.Fatal(c)
 		}
-		if strings.Contains(c.Text, "unit: u") {
+		if strings.Contains(c.Text, "id: u") {
 			t.Fatal("front matter in chunk")
 		}
 	}
-	if _, ok := ids["units/u.md#overview"]; !ok {
+	if _, ok := ids["processes/u.md#overview"]; !ok {
 		t.Fatalf("%v", keys(ids))
 	}
-	if c, ok := ids["units/u.md#data-flows"]; !ok || !strings.Contains(c.Text, "### Checkout") || !strings.Contains(c.Text, "### Refund") || c.Heading != "Title › Data flows" {
+	if c, ok := ids["processes/u.md#data-flows"]; !ok || !strings.Contains(c.Text, "### Checkout") || !strings.Contains(c.Text, "### Refund") || c.Heading != "Title › Data flows" {
 		t.Fatalf("merge: %v %q", keys(ids), c.Heading)
 	}
-	if _, ok := ids["units/u.md#huge-2"]; !ok {
+	if _, ok := ids["processes/u.md#huge-2"]; !ok {
 		t.Fatalf("split: %v", keys(ids))
 	}
-	if !strings.HasPrefix(ids["units/u.md#huge-2"].Text, "Title › Data flows › Huge") {
+	if !strings.HasPrefix(ids["processes/u.md#huge-2"].Text, "Title › Data flows › Huge") {
 		t.Fatal("continued chunk without context")
 	}
-	if _, ok := ids["units/u.md#entities-1"]; !ok {
+	if _, ok := ids["processes/u.md#entities-1"]; !ok {
 		t.Fatalf("duplicate anchors: %v", keys(ids))
 	}
 	for _, c := range cs {
@@ -326,8 +524,7 @@ func TestChunkDoc(t *testing.T) {
 			t.Fatal("too long", c.ID, EstimateTokens(c.Text))
 		}
 	}
-	// Defaults, a single overlong line.
-	if cs := ChunkDoc("u", "m", nil, "## A\n"+strings.Repeat("x", 5000), ChunkOptions{}); len(cs) == 0 {
+	if cs := ChunkDoc("u", "", "m", nil, "## A\n"+strings.Repeat("x", 5000), ChunkOptions{}); len(cs) == 0 {
 		t.Fatal("no chunks")
 	}
 	if l, h := heading("#nospace"); l != 0 || h != "" {
@@ -344,6 +541,18 @@ func keys(m map[string]Chunk) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// vectorFile returns the vector file chunks.json points to.
+func vectorFile(t *testing.T, dir string) string {
+	t.Helper()
+	var meta storeMeta
+	b, _ := os.ReadFile(filepath.Join(dir, "chunks.json"))
+	_ = json.Unmarshal(b, &meta)
+	if meta.Vectors == "" {
+		return filepath.Join(dir, legacyVectors)
+	}
+	return filepath.Join(dir, meta.Vectors)
 }
 
 func TestFileStore(t *testing.T) {
@@ -374,7 +583,7 @@ func TestFileStore(t *testing.T) {
 	if _, err := s.Search(ctx, []float32{1}, 1); err == nil {
 		t.Fatal("query dimension")
 	}
-	// Persistence.
+	// Persistence; old vector files are cleaned up (current + previous).
 	s2, _ := OpenFileStore(dir)
 	st, _ := s2.Stats(ctx)
 	if st.Chunks != 3 || st.Embedded != 2 || st.Dim != 3 || st.Model != "m1" || st.Bytes == 0 || st.Recovered != "" {
@@ -384,19 +593,28 @@ func TestFileStore(t *testing.T) {
 	if len(cs) != 3 || !emb["a"] || emb["c"] {
 		t.Fatal(cs, emb)
 	}
-	// Upsert replaces, delete removes.
 	if err := s2.Upsert(ctx, []Record{{Chunk: Chunk{ID: "a", Text: "alpha2"}, Vector: []float32{0, 0, 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s2.Delete(ctx, []string{"b"}); err != nil {
 		t.Fatal(err)
 	}
+	if ms, _ := filepath.Glob(filepath.Join(dir, "vectors*.bin")); len(ms) != 2 {
+		t.Fatal("vector files", ms)
+	}
 	s3, _ := OpenFileStore(dir)
 	hits, _ = s3.Search(ctx, []float32{0, 0, 1}, 5)
 	if len(hits) != 1 || hits[0].Chunk.Text != "alpha2" {
 		t.Fatal(hits)
 	}
+	// Another process (s) sees the writes of s2 without reopening.
+	if cs, _, _ := s.Chunks(ctx); len(cs) != 2 {
+		t.Fatal("no reload", len(cs))
+	}
 	// A new model drops vectors but keeps chunks.
+	if err := s3.SetModel(ctx, "m2"); err != nil {
+		t.Fatal(err)
+	}
 	if err := s3.SetModel(ctx, "m2"); err != nil {
 		t.Fatal(err)
 	}
@@ -407,8 +625,8 @@ func TestFileStore(t *testing.T) {
 	if err := s3.Upsert(ctx, []Record{{Chunk: Chunk{ID: "a"}, Vector: []float32{1, 1}}}); err != nil {
 		t.Fatal(err)
 	}
-	// Corruption: flipped byte in vectors.bin → recovered empty store.
-	vb := filepath.Join(dir, "vectors.bin")
+	// Corruption: flipped byte in the vector file → recovered empty store.
+	vb := vectorFile(t, dir)
 	b, _ := os.ReadFile(vb)
 	b[14] ^= 0xff
 	_ = os.WriteFile(vb, b, 0o644)
@@ -417,7 +635,8 @@ func TestFileStore(t *testing.T) {
 	if st.Recovered == "" || st.Chunks != 0 {
 		t.Fatal(st)
 	}
-	// Broken chunks.json, mismatching rows, missing vectors, bad header.
+	// Broken chunks.json, mismatching rows, missing vectors, bad header,
+	// an old store (vectors.bin) still loads.
 	for name, mutate := range map[string]func(){
 		"json": func() { _ = os.WriteFile(filepath.Join(dir, "chunks.json"), []byte("{"), 0o644) },
 		"rows": func() {
@@ -426,7 +645,8 @@ func TestFileStore(t *testing.T) {
 		"count": func() {
 			_ = os.WriteFile(filepath.Join(dir, "chunks.json"), []byte(`{"dim":2,"chunks":[{"id":"a"},{"id":"b"}],"rows":[true,true]}`), 0o644)
 		},
-		"header": func() { _ = os.WriteFile(vb, []byte("nope"), 0o644) },
+		"header": func() { _ = os.WriteFile(vectorFile(t, dir), []byte("nope"), 0o644) },
+		"gone":   func() { _ = os.Remove(vectorFile(t, dir)) },
 	} {
 		ok, _ := OpenFileStore(dir)
 		_ = ok.Upsert(ctx, []Record{{Chunk: Chunk{ID: "a"}, Vector: []float32{1, 1}}})
@@ -435,6 +655,12 @@ func TestFileStore(t *testing.T) {
 		if st, _ := s5.Stats(ctx); st.Recovered == "" {
 			t.Fatal(name, "not detected")
 		}
+	}
+	old := t.TempDir()
+	write(t, old, map[string]string{"chunks.json": `{"model":"m","dim":2,"chunks":[{"id":"a","text":"x"}],"rows":[true]}`})
+	_ = os.WriteFile(filepath.Join(old, "vectors.bin"), encodeVectors(2, [][]float32{{1, 0}}), 0o644)
+	if s6, _ := OpenFileStore(old); func() bool { st, _ := s6.Stats(ctx); return st.Embedded != 1 || st.Recovered != "" }() {
+		t.Fatal("old store not loaded")
 	}
 	if err := s.Upsert(cancelled(), nil); err == nil {
 		t.Fatal("cancelled ctx")
@@ -448,6 +674,56 @@ func TestFileStore(t *testing.T) {
 	_ = s.Close()
 }
 
+// TestFileStoreReadersDuringWrites searches while another goroutine
+// and another "process" (a second FileStore on the same directory)
+// write: readers never fail and always see a consistent snapshot.
+func TestFileStoreReadersDuringWrites(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	w, _ := OpenFileStore(dir)
+	r, _ := OpenFileStore(dir)
+	_ = w.Upsert(ctx, []Record{{Chunk: Chunk{ID: "0", Text: "order"}, Vector: []float32{1, 0}}})
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for _, s := range []*FileStore{w, r} {
+		wg.Add(1)
+		go func(s *FileStore) {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				cs, emb, err := s.Chunks(ctx)
+				if err != nil || len(cs) == 0 || len(emb) != len(cs) {
+					t.Error("inconsistent", err, len(cs))
+					return
+				}
+				if _, err := Search(ctx, s, "order", SearchOptions{Query: []float32{1, 0}}); err != nil {
+					t.Error(err)
+					return
+				}
+				if st, _ := s.Stats(ctx); st.Recovered != "" {
+					t.Error("reader saw a broken store:", st.Recovered)
+					return
+				}
+			}
+		}(s)
+	}
+	for i := 1; i < 60; i++ {
+		if err := w.Upsert(ctx, []Record{{Chunk: Chunk{ID: string(rune('a' + i%26)), Text: "order mail"}, Vector: []float32{float32(i), 1}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+	cs, _, _ := r.Chunks(ctx)
+	if len(cs) != 27 {
+		t.Fatal(len(cs))
+	}
+}
+
 func cancelled() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -458,16 +734,14 @@ func TestHybridSearch(t *testing.T) {
 	ctx := context.Background()
 	s, _ := OpenFileStore(t.TempDir())
 	_ = s.Upsert(ctx, []Record{
-		{Chunk: Chunk{ID: "orders", Heading: "Shop › Data flows › Checkout", Text: "The OrderService persists orders in the orders table."}, Vector: []float32{1, 0}},
-		{Chunk: Chunk{ID: "mail", Heading: "Mail", Text: "Mails are sent through SMTP."}, Vector: []float32{0, 1}},
-		{Chunk: Chunk{ID: "misc", Heading: "Misc", Text: "Nothing related here at all."}, Vector: []float32{-1, 0}},
+		{Chunk: Chunk{ID: "orders", Heading: "Shop › Data flows › Checkout", Text: "The OrderService persists orders in the orders table.", Hash: "1"}, Vector: []float32{1, 0}},
+		{Chunk: Chunk{ID: "mail", Heading: "Mail", Text: "Mails are sent through SMTP.", Hash: "2"}, Vector: []float32{0, 1}},
+		{Chunk: Chunk{ID: "misc", Heading: "Misc", Text: "Nothing related here at all.", Hash: "3"}, Vector: []float32{-1, 0}},
 	})
-	// Keyword only: camel case split finds "order".
 	res, err := Search(ctx, s, "order persistence", SearchOptions{})
 	if err != nil || len(res) == 0 || res[0].Chunk.ID != "orders" {
 		t.Fatal(res, err)
 	}
-	// Vector wins over a weak keyword match.
 	res, _ = Search(ctx, s, "smtp", SearchOptions{Query: []float32{1, 0.1}, K: 2})
 	if len(res) != 2 || res[0].Chunk.ID != "orders" || res[1].Chunk.ID != "mail" || res[0].Vector < 0.9 || res[1].Keyword != 1 {
 		t.Fatalf("%+v", res)
@@ -475,208 +749,22 @@ func TestHybridSearch(t *testing.T) {
 	if res, _ := Search(ctx, s, "", SearchOptions{}); len(res) != 0 {
 		t.Fatal(res)
 	}
+	// Pages written after the embedding: new ones and changed ones take
+	// part keyword only (the old vector of a changed one is ignored).
+	extra := []Chunk{{ID: "new", Heading: "Invoices", Text: "Invoices are written to the invoices table.", Hash: "9"}, {ID: "orders", Heading: "Shop", Text: "Carts only now.", Hash: "x"}, {ID: "mail", Text: "Mails are sent through SMTP.", Hash: "2"}}
+	res, _ = Search(ctx, s, "invoices", SearchOptions{Query: []float32{1, 0}, Extra: extra})
+	if len(res) == 0 || res[0].Chunk.ID != "new" || res[0].Vector != 0 {
+		t.Fatalf("%+v", res)
+	}
+	for _, r := range res {
+		if r.Chunk.ID == "orders" {
+			t.Fatal("stale vector used", r)
+		}
+	}
 	if toks := Tokenize("OrderService::placeOrder user_id HTTPClient"); strings.Join(toks, ",") != "orderservice,order,service,placeorder,place,order,user,id,httpclient,http,client" {
 		t.Fatal(toks)
 	}
 	if len(BM25(nil, "x")) != 0 {
 		t.Fatal("bm25 empty")
-	}
-}
-
-// fakeAgent scripts answers per step by looking at the prompt.
-type fakeAgent struct {
-	mu       sync.Mutex
-	answers  map[string][]string // step → answers in order
-	prompts  []string
-	sessions int
-	fail     error
-}
-
-func (f *fakeAgent) NewSession(context.Context) (Session, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.fail != nil {
-		return nil, f.fail
-	}
-	f.sessions++
-	return &fakeSession{f: f}, nil
-}
-
-type fakeSession struct {
-	f    *fakeAgent
-	step string
-}
-
-func (s *fakeSession) Prompt(ctx context.Context, text string) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	s.f.mu.Lock()
-	defer s.f.mu.Unlock()
-	s.f.prompts = append(s.f.prompts, text)
-	switch {
-	case strings.Contains(text, "You document the data flows"):
-		s.step = StepDescribe
-	case strings.Contains(text, "You review a description"):
-		s.step = StepValidate
-	case strings.Contains(text, "Write the knowledge base page"):
-		s.step = StepWrite
-	}
-	l := s.f.answers[s.step]
-	if len(l) == 0 {
-		return "", fmt.Errorf("no answer for %s", s.step)
-	}
-	a := l[0]
-	if len(l) > 1 {
-		s.f.answers[s.step] = l[1:]
-	}
-	return a, nil
-}
-
-func (s *fakeSession) Close() {}
-
-func descJSON(file string) string {
-	d := Description{Summary: "Handles orders.", Flows: []Flow{{Name: "Place order", Trigger: "POST /orders", Steps: []Step{{File: file, Symbol: "Order::place", What: "stores the order"}}, SideEffects: []string{"INSERT orders"}}},
-		Entities: []Entity{{Name: "Order", File: file}}}
-	b, _ := json.Marshal(d)
-	return "```json\n" + string(b) + "\n```"
-}
-
-func TestPipeline(t *testing.T) {
-	root, dir := t.TempDir(), t.TempDir()
-	write(t, root, map[string]string{"src/Order.php": "<?php\nclass Order {\n  public function place() {}\n}\n", "src/Other.php": "<?php\n"})
-	valid := func(file string, conf float64) string {
-		var d Description
-		b, _ := ExtractJSON(descJSON(file))
-		_ = json.Unmarshal(b, &d)
-		v, _ := json.Marshal(Validation{Confidence: conf, Issues: []string{"ok"}, Description: &d})
-		return "```json\n" + string(v) + "\n```"
-	}
-	page := "## Overview\nHandles orders.\n\n## Data flows\n### Place order\n1. [src/Order.php:3](src/Order.php#L3) `Order::place` – stores\n"
-	fa := &fakeAgent{answers: map[string][]string{
-		StepDescribe: {"I think... no JSON", "```json\n{\"summary\": broken\n```", descJSON("src/Order.php")},
-		StepValidate: {valid("src/Order.php", 0.9)},
-		StepWrite:    {page},
-	}}
-	var events []Event
-	var mu sync.Mutex
-	p := &Pipeline{Root: root, Dir: dir, Project: "shop", Agent: fa, Commit: "abc", Model: "fake/large", Repairs: 2,
-		Progress: func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() },
-		Now:      func() time.Time { return time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC) }}
-	m, _ := LoadManifest(dir)
-	units := []Unit{{ID: "src", Title: "App", Dir: "src", Files: []string{"src/Order.php", "src/Other.php"}}}
-	sum := p.Run(context.Background(), units, m)
-	if sum.Done != 1 || sum.Failed != 0 {
-		t.Fatal(sum)
-	}
-	st := m.Units["src"]
-	if st.Status != StatusDone || st.Confidence != 0.9 || st.Commit != "abc" || len(st.Files) != 2 || st.Unverified != 0 {
-		t.Fatalf("%+v", st)
-	}
-	b, err := os.ReadFile(filepath.Join(dir, "units", "src.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc := string(b)
-	if !strings.HasPrefix(doc, "---\nunit: src\n") || !strings.Contains(doc, "commit: abc") || !strings.Contains(doc, "confidence: 0.90") || !strings.Contains(doc, "# App\n\n## Overview") || !strings.Contains(doc, "(file://") {
-		t.Fatal(doc)
-	}
-	idx, _ := os.ReadFile(filepath.Join(dir, "index.md"))
-	if !strings.Contains(string(idx), "[App](units/src.md)") || !strings.Contains(string(idx), "Handles orders.") {
-		t.Fatal(string(idx))
-	}
-	// Repairs were reported; the validator saw the mechanical notes.
-	repairs := 0
-	for _, e := range events {
-		if e.Attempt > 0 {
-			repairs++
-		}
-	}
-	if repairs != 2 || fa.sessions != 3 {
-		t.Fatal(repairs, fa.sessions)
-	}
-	if !strings.Contains(fa.prompts[3], "all referenced files and symbols were found") {
-		t.Fatal(fa.prompts[3])
-	}
-	if m2, _ := LoadManifest(dir); m2.Units["src"] == nil {
-		t.Fatal("manifest not saved")
-	}
-
-	// Second run: the writer fails twice → Tiegel renders itself; the
-	// validator claims a wrong file → confidence drops.
-	fa.answers = map[string][]string{
-		StepDescribe: {descJSON("src/Order.php")},
-		StepValidate: {valid("src/Gone.php", 1)},
-		StepWrite:    {"no sections", "still none", "nope"},
-	}
-	sum = p.Run(context.Background(), units, m)
-	st = m.Units["src"]
-	if sum.Done != 1 || st.Unverified != 2 || st.Confidence >= 0.5 {
-		t.Fatalf("%+v %+v", sum, st)
-	}
-	b, _ = os.ReadFile(filepath.Join(dir, "units", "src.md"))
-	if !strings.Contains(string(b), "*(unverified)*") {
-		t.Fatal(string(b))
-	}
-
-	// Third run: describe never parses → failed, the old document stays.
-	fa.answers = map[string][]string{StepDescribe: {"nope"}}
-	sum = p.Run(context.Background(), units, m)
-	if sum.Failed != 1 || m.Units["src"].Status != StatusFailed || m.Units["src"].MD == "" || !strings.Contains(sum.Errors[0], "describe") {
-		t.Fatalf("%+v %+v", sum, m.Units["src"])
-	}
-	if m.Stale(dir, units[0], HashFiles(root, &units[0])) != StaleFailed {
-		t.Fatal("failed unit not stale")
-	}
-	// A new unit failing has no document.
-	fa.fail = errors.New("agent down")
-	sum = p.Run(context.Background(), []Unit{{ID: "new", Title: "N", Dir: "n"}}, m)
-	if sum.Failed != 1 || m.Units["new"].MD != "" {
-		t.Fatal(sum)
-	}
-	// Cancelled before the start.
-	sum = p.Run(cancelled(), units, m)
-	if !sum.Cancelled || sum.Done+sum.Failed != 0 {
-		t.Fatal(sum)
-	}
-	if c := confidence(0.9, Description{}, 0); c != 0.9 {
-		t.Fatal(c)
-	}
-}
-
-func TestWriteIndexEmpty(t *testing.T) {
-	dir := t.TempDir()
-	write(t, dir, map[string]string{"index.md": "old"})
-	m, _ := LoadManifest(dir)
-	m.Units["x"] = &UnitState{ID: "x", MD: "units/missing.md"}
-	if err := WriteIndex(dir, "p", m); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "index.md")); !os.IsNotExist(err) {
-		t.Fatal("index.md kept")
-	}
-}
-
-func TestPrompts(t *testing.T) {
-	var files []string
-	for i := 0; i < maxListedFiles+5; i++ {
-		files = append(files, fmt.Sprintf("src/F%d.php", i))
-	}
-	u := Unit{ID: "u", Title: "T", Dir: "src", Files: files}
-	if p := DescribePrompt("p", u); !strings.Contains(p, "and 5 more files") || !strings.Contains(p, "Only read") || !strings.Contains(p, `"sideEffects"`) {
-		t.Fatal(p)
-	}
-	var notes []string
-	for i := 0; i < 35; i++ {
-		notes = append(notes, "n")
-	}
-	if p := ValidatePrompt("p", u, Description{Summary: "s"}, notes); !strings.Contains(p, "… 5 more") || !strings.Contains(p, `"confidence"`) {
-		t.Fatal(p)
-	}
-	if p := WritePrompt("p", u, Description{Summary: "s"}); !strings.Contains(p, "## Data flows") {
-		t.Fatal(p)
-	}
-	if !strings.Contains(RepairPrompt(errors.New("x")), "json") || !strings.Contains(RepairMarkdownPrompt(errors.New("x")), "## Overview") {
-		t.Fatal("repair")
 	}
 }

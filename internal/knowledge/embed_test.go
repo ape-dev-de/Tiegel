@@ -255,9 +255,9 @@ func TestSyncVectors(t *testing.T) {
 	dir := t.TempDir()
 	m, _ := LoadManifest(dir)
 	put := func(id, body string) {
-		md := "units/" + id + ".md"
-		write(t, dir, map[string]string{md: Meta{Unit: id, Title: id}.FrontMatter() + body})
-		m.Units[id] = &UnitState{ID: id, Title: id, MD: md, Status: StatusDone, Files: map[string]string{"src/" + id + ".php": "h"}}
+		md := "processes/" + id + ".md"
+		write(t, dir, map[string]string{md: Meta{ID: id, Title: id}.FrontMatter() + body})
+		m.Items[id] = &ItemState{ID: id, Level: LevelProcesses, Title: id, MD: md, Status: StatusDone, Files: map[string]string{"src/" + id + ".php": "h", "@entries": "x"}}
 	}
 	put("orders", "# Orders\n\n## Overview\n\nOrders are stored.\n\n## Data flows\n\n### Place\n\nThe order is saved.\n")
 	put("mail", "# Mail\n\n## Overview\n\nMail is sent.\n")
@@ -284,7 +284,7 @@ func TestSyncVectors(t *testing.T) {
 	}
 	// One document changed, one removed.
 	put("orders", "# Orders\n\n## Overview\n\nOrders are stored and a payment is made.\n")
-	delete(m.Units, "mail")
+	delete(m.Items, "mail")
 	res, _ = SyncVectors(ctx, dir, m, store, e1, 300, nil)
 	if res.Embedded != 1 || res.Deleted == 0 {
 		t.Fatal(res)
@@ -317,9 +317,22 @@ func TestSyncVectors(t *testing.T) {
 		t.Fatal("chunks of the failed batch were dropped")
 	}
 	// A missing document is skipped.
-	m.Units["ghost"] = &UnitState{ID: "ghost", MD: "units/ghost.md"}
-	if cs := AllChunks(dir, m, 300); len(cs) == 0 {
-		t.Fatal("chunks")
+	m.Items["ghost"] = &ItemState{ID: "ghost", MD: "processes/ghost.md"}
+	write(t, dir, map[string]string{"questions.md": "# Open questions\n\n## Open (1)\n\n- **q-1** Which table?\n"})
+	cs = AllChunks(dir, m, 300)
+	qs := 0
+	for _, c := range cs {
+		if c.Level == LevelQuestions && c.MD == "questions.md" {
+			qs++
+		}
+		for _, s := range c.Sources {
+			if strings.HasPrefix(s, "@") {
+				t.Fatal("input as source", s)
+			}
+		}
 	}
-	_ = os.Remove(filepath.Join(dir, "units", "users.md"))
+	if len(cs) == 0 || qs == 0 {
+		t.Fatal("chunks", qs)
+	}
+	_ = os.Remove(filepath.Join(dir, "processes", "users.md"))
 }

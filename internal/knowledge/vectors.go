@@ -20,9 +20,12 @@ type SyncResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-// AllChunks chunks every document of the manifest.
+// AllChunks chunks every page of the manifest and questions.md.
 func AllChunks(dir string, m *Manifest, target int) []Chunk {
 	var out []Chunk
+	if b, err := os.ReadFile(filepath.Join(dir, "questions.md")); err == nil {
+		out = append(out, ChunkDoc(LevelQuestions, LevelQuestions, "questions.md", nil, string(b), ChunkOptions{Target: target})...)
+	}
 	for _, st := range m.Sorted() {
 		if st.MD == "" {
 			continue
@@ -33,10 +36,12 @@ func AllChunks(dir string, m *Manifest, target int) []Chunk {
 		}
 		var sources []string
 		for f := range st.Files {
-			sources = append(sources, f)
+			if !strings.HasPrefix(f, "@") {
+				sources = append(sources, f)
+			}
 		}
 		sort.Strings(sources)
-		out = append(out, ChunkDoc(st.ID, st.MD, sources, string(b), ChunkOptions{Target: target})...)
+		out = append(out, ChunkDoc(st.ID, st.Level, st.MD, sources, string(b), ChunkOptions{Target: target})...)
 	}
 	return out
 }

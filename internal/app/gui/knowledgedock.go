@@ -3,9 +3,11 @@ package gui
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"gioui.org/layout"
 
+	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/editor/keymap"
 	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/fileicons"
@@ -13,10 +15,11 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
 
-// Knowledge window (D560): the knowledge plugin's state, build with
-// estimate and confirmation, progress with cancel, search and the unit
-// documents, which open read-only in the Markdown preview (they live
-// outside the project).
+// Knowledge window (D560, D565): the knowledge plugin's state, build per
+// level with estimate and confirmation, progress with cancel, search and
+// the pages grouped by level, which open read-only in the Markdown
+// preview (they live outside the project). Search and pages stay usable
+// while a build runs.
 
 // Knowledge tool window and action IDs.
 const (
@@ -95,12 +98,12 @@ func (d *knowledgeDock) sync() {
 		w.Summary = "Loading…"
 	}
 	st := k.Status
-	w.Exists, w.Stale = st.Exists, st.Stale
+	w.Exists, w.Stale = st.Exists || countDocs(k.Units) > 0, st.Stale
 	switch {
-	case !st.Exists && st.Units == 0:
+	case !w.Exists && st.Units == 0:
 		w.Summary = "No knowledge base yet"
 	default:
-		w.Summary = fmt.Sprintf("%d units", st.Units)
+		w.Summary = plural(st.Units, "page")
 		if st.Stale > 0 {
 			w.Summary += fmt.Sprintf(" · %d to update", st.Stale)
 		}
@@ -127,25 +130,54 @@ func (d *knowledgeDock) sync() {
 	if e.Chunks > 0 {
 		w.Details = append(w.Details, fmt.Sprintf("Store: %d sections, %d embedded, %s", e.Chunks, e.Embedded, humanBytes(e.Bytes)))
 	}
+	if len(st.Levels) > 0 {
+		var parts []string
+		for _, l := range st.Levels {
+			if l.Pages > 0 || l.Planned > 0 {
+				parts = append(parts, fmt.Sprintf("%s %d/%d", l.Title, l.Pages, l.Planned))
+			}
+		}
+		if len(parts) > 0 {
+			w.Details = append(w.Details, strings.Join(parts, " · "))
+		}
+	}
+	w.Questions = ""
+	if q := st.Questions; q.Open+q.Answered > 0 {
+		w.Questions = fmt.Sprintf("%d open · %d answered", q.Open, q.Answered)
+	}
 	w.Notice = d.notice()
 	w.Confirm = ""
 	if k.Plan != nil {
-		if len(k.Plan.Units) == 0 {
-			w.Confirm = fmt.Sprintf("All %d units are current – nothing to build.", k.Plan.Total)
+		e := k.Plan.Estimate
+		if e.Units == 0 {
+			w.Confirm = fmt.Sprintf("All %d pages are current – nothing to build.", k.Plan.Total)
 		} else {
-			e := k.Plan.Estimate
-			w.Confirm = fmt.Sprintf("%d units, %d files. %s", e.Units, e.Files, e.Note)
+			var parts []string
+			for _, l := range e.Levels {
+				if l.Pages > 0 {
+					s := fmt.Sprintf("%s %d", l.Title, l.Pages)
+					if l.Later {
+						s += " (at most)"
+					}
+					parts = append(parts, s)
+				}
+			}
+			w.Confirm = fmt.Sprintf("%s. %s", strings.Join(parts, ", "), e.Note)
 		}
 	}
 	r := st.Run
-	w.Running, w.Phase, w.Total, w.Done = r.Running, r.Phase, len(r.Units), 0
+	w.Running, w.Phase, w.Total, w.Done, w.Started = r.Running, r.Phase, len(r.Units), 0, r.Started
 	w.Steps = w.Steps[:0]
 	for _, p := range r.Units {
 		if p.State == "done" || p.State == "failed" {
 			w.Done++
 		}
-		w.Steps = append(w.Steps, knowledgeview.Step{Title: p.Title, Step: p.Step, State: p.State, Error: p.Error})
+		w.Steps = append(w.Steps, knowledgeview.Step{ID: p.Unit, Title: p.Title, Level: levelTitle(p.Level), Step: p.Step, State: p.State, Error: p.Error,
+			StepIndex: p.StepIndex, Steps: p.Steps, Started: p.Started, Tools: p.Tools, Reads: p.Reads, Chars: p.Chars})
 	}
+	// The pages of the last run stay inspectable (transcripts in memory).
+	w.LastRun = !r.Running && !r.Ended.IsZero() && w.Done > 0
+	w.Peek, w.Transcript = k.Peek, k.Transcript
 	w.Hits = w.Hits[:0]
 	for _, h := range k.Hits {
 		w.Hits = append(w.Hits, knowledgeview.Hit{Heading: h.Heading, Path: h.Path, Text: h.Snippet, Score: h.Score})
@@ -156,9 +188,43 @@ func (d *knowledgeDock) sync() {
 	}
 	w.Units = w.Units[:0]
 	for _, u := range k.Units {
-		w.Units = append(w.Units, knowledgeview.Unit{ID: u.ID, Title: u.Title, Dir: u.Dir, Files: u.Files, Confidence: u.Confidence,
+		conf, dir := u.Confidence, u.Dir
+		if u.Mechanical {
+			conf = -1
+		}
+		if u.Level == api.KnowledgeLevelQuestions {
+			dir = u.Summary
+		}
+		w.Units = append(w.Units, knowledgeview.Unit{ID: u.ID, Title: u.Title, Dir: dir, Level: u.Level, LevelTitle: levelTitle(u.Level), Files: u.Files, Confidence: conf,
 			HasDoc: u.MD != "", State: u.Stale, Error: u.Error})
 	}
+}
+
+// levelTitle is the title of a knowledge level.
+func levelTitle(level string) string {
+	switch level {
+	case api.KnowledgeLevelOverview:
+		return "Overview"
+	case api.KnowledgeLevelEntryPoints:
+		return "Entry points"
+	case api.KnowledgeLevelProcesses:
+		return "Processes"
+	case api.KnowledgeLevelComponents:
+		return "Components"
+	case api.KnowledgeLevelQuestions:
+		return "Open questions"
+	}
+	return level
+}
+
+func countDocs(us []api.KnowledgeUnit) int {
+	n := 0
+	for _, u := range us {
+		if u.MD != "" && u.Level != api.KnowledgeLevelQuestions {
+			n++
+		}
+	}
+	return n
 }
 
 // notice picks the most important hint.
@@ -193,7 +259,7 @@ func (d *knowledgeDock) layout(gtx layout.Context, th *tokens.Theme) layout.Dime
 	for _, e := range d.view.Update(gtx) {
 		switch e := e.(type) {
 		case knowledgeview.BuildEvent:
-			k.AskBuild(e.All)
+			k.AskBuild(e.All, e.Level)
 		case knowledgeview.ConfirmEvent:
 			if k.Plan != nil && len(k.Plan.Units) == 0 {
 				k.DismissPlan()
@@ -204,6 +270,8 @@ func (d *knowledgeDock) layout(gtx layout.Context, th *tokens.Theme) layout.Dime
 			k.DismissPlan()
 		case knowledgeview.CancelEvent:
 			k.Cancel()
+		case knowledgeview.PeekEvent:
+			k.PeekAt(e.ID)
 		case knowledgeview.SearchEvent:
 			k.Search(e.Query)
 		case knowledgeview.OpenUnitEvent:
@@ -231,9 +299,13 @@ func (d *knowledgeDock) layout(gtx layout.Context, th *tokens.Theme) layout.Dime
 // openUnit opens a unit's document ("" = index.md) in the preview.
 func (d *knowledgeDock) openUnit(id string) {
 	k := d.v.ctl.Knowledge
-	if id == "" {
+	if id == "" || id == "questions" {
+		name := "index.md"
+		if id == "questions" {
+			name = "questions.md"
+		}
 		if k.Status.Dir != "" {
-			d.v.mdd.openAt(filepath.Join(k.Status.Dir, "index.md"), "")
+			d.v.mdd.openAt(filepath.Join(k.Status.Dir, name), "")
 		}
 		return
 	}

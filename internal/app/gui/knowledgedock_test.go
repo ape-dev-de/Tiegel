@@ -6,41 +6,32 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/ape-dev-de/tiegel/internal/acp"
 	"github.com/ape-dev-de/tiegel/internal/acp/acptest"
 	"github.com/ape-dev-de/tiegel/internal/api"
 	"github.com/ape-dev-de/tiegel/internal/app/gui/controller"
 	kn "github.com/ape-dev-de/tiegel/internal/knowledge"
+	"github.com/ape-dev-de/tiegel/internal/knowledge/knowledgetest"
 	"github.com/ape-dev-de/tiegel/internal/modules"
 	knmod "github.com/ape-dev-de/tiegel/internal/modules/knowledge"
 )
 
-// knowledgeAgent answers the three pipeline prompts.
-func knowledgeAgent(_ context.Context, t *acptest.Turn) string {
-	p := t.Prompt
-	file, sym, name := "src/Billing/Invoice.php", "Invoice::create", "Create invoice"
-	if strings.Contains(p, `App\Shop`) || strings.Contains(p, "src/Shop.php") && !strings.Contains(p, "Billing") {
-		file, sym, name = "src/Shop.php", "greet", "Greeting"
+// knowledgeScript answers like an agent: thoughts and tool calls, then
+// the fake's JSON.
+func knowledgeScript(f *knowledgetest.Fake) acptest.Script {
+	return func(ctx context.Context, t *acptest.Turn) string {
+		if _, step, title := knowledgetest.Level(t.Prompt); step == kn.StepDescribe {
+			t.Thought("The route posts to InvoiceController::create; following the call into InvoiceService.")
+			t.Tool(false, acp.ToolCall{ToolCallID: "r1", Title: "read src/Controller/InvoiceController.php", Kind: acp.KindRead, Status: "pending"})
+			t.Tool(true, acp.ToolCall{ToolCallID: "r1", Status: "completed"})
+			t.Tool(false, acp.ToolCall{ToolCallID: "g1", Title: "grep InvoiceService (" + title + ")", Kind: acp.KindSearch, Status: "completed"})
+		}
+		t.Text(f.Answer(ctx, t.Prompt))
+		return ""
 	}
-	switch {
-	case strings.Contains(p, "You document the data flows"):
-		d := kn.Description{Summary: "Creates invoices from orders and stores them.", Flows: []kn.Flow{{Name: name, Trigger: "POST /invoices",
-			Steps: []kn.Step{{File: file, Symbol: sym, What: "validates the order data and stores the invoice"}}, SideEffects: []string{"INSERT invoices"}}},
-			Entities: []kn.Entity{{Name: "Invoice", File: file, Description: "a bill"}}, External: []kn.External{{Name: "MySQL", Kind: "database"}}}
-		b, _ := json.Marshal(d)
-		t.Text("```json\n" + string(b) + "\n```")
-	case strings.Contains(p, "You review a description"):
-		i := strings.Index(p, "```json\n")
-		j := strings.Index(p[i+8:], "\n```")
-		var d kn.Description
-		_ = json.Unmarshal([]byte(p[i+8:i+8+j]), &d)
-		v, _ := json.Marshal(kn.Validation{Confidence: 0.82, Description: &d})
-		t.Text("```json\n" + string(v) + "\n```")
-	default:
-		t.Text("## Overview\nCreates invoices from orders and stores them in the database.\n\n## Data flows\n### " + name + "\n**Trigger:** POST /invoices\n1. [" + file + ":4](" + file + "#L4) `" + sym + "` – validates and stores\n\n## Entities\n- **Invoice** ([" + file + "](" + file + ")): a bill\n\n## External\n- **MySQL** (database): invoices table\n")
-	}
-	return ""
 }
 
 func TestKnowledgeWindow(t *testing.T) {
@@ -58,7 +49,7 @@ func TestKnowledgeWindow(t *testing.T) {
 				if strings.Contains(strings.ToLower(in), "invoice") {
 					v[0] = 1
 				}
-				if strings.Contains(strings.ToLower(in), "greet") {
+				if strings.Contains(strings.ToLower(in), "order") {
 					v[1] = 1
 				}
 				out = append(out, v)
@@ -69,13 +60,29 @@ func TestKnowledgeWindow(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	fake := &acptest.Agent{Script: knowledgeAgent}
+	// The build waits in the processes level until released.
+	release := make(chan struct{})
+	var once sync.Once
+	reached := make(chan struct{})
+	kf := &knowledgetest.Fake{Service: kn.Ref{File: "src/Billing/InvoiceService.php", Symbol: `App\Billing\InvoiceService::save`},
+		Hook: func(ctx context.Context, level, _ string) error {
+			if level == kn.LevelProcesses {
+				once.Do(func() { close(reached) })
+				select {
+				case <-release:
+				case <-ctx.Done():
+				}
+			}
+			return nil
+		}}
+	fake := &acptest.Agent{Script: knowledgeScript(kf)}
 	envModules = modules.Options{Knowledge: knmod.Options{Start: fake.Start, LookPath: func(n string) (string, error) { return "/bin/" + n, nil },
 		Executable: func() (string, error) { return "/usr/local/bin/tiegel", nil }}}
 	t.Cleanup(func() { envModules = modules.Options{} })
 	e := newEnvWith(t, true, map[string]string{
-		"composer.json":           `{"autoload":{"psr-4":{"App\\":"src/"}}}`,
-		"src/Billing/Invoice.php": "<?php\nnamespace App\\Billing;\nclass Invoice {\n  public function create(array $order) { return $order; }\n}\n",
+		"composer.json":                        `{"require":{"symfony/framework-bundle":"^7"},"autoload":{"psr-4":{"App\\":"src/"}}}`,
+		"src/Controller/InvoiceController.php": "<?php\nnamespace App\\Controller;\nclass InvoiceController {\n  #[Route('/invoices', methods: ['POST'])]\n  public function create(array $order) { return $order; }\n}\n",
+		"src/Billing/InvoiceService.php":       "<?php\nnamespace App\\Billing;\nclass InvoiceService {\n  public function save(array $order) { return $order; }\n}\n",
 	}, nil)
 	for key, val := range map[string]string{knmod.SettingEndpoint: srv.URL, knmod.SettingEmbedModel: "embeddinggemma-2:270m"} {
 		raw, _ := json.Marshal(val)
@@ -86,26 +93,56 @@ func TestKnowledgeWindow(t *testing.T) {
 	e.v.ShowTool(ToolKnowledge)
 	e.settle()
 	k := e.ctl.Knowledge
-	e.waitFor("knowledge status", func() bool { return k.Loaded && k.Status.Dir != "" && len(k.Units) == 3 })
+	e.waitFor("knowledge status", func() bool { return k.Loaded && k.Status.Dir != "" && k.Status.Stale > 0 })
 	if k.Status.Run.Running || len(fake.Prompts()) != 0 {
 		t.Fatal("a build started without a user action")
 	}
-	if !strings.HasPrefix(e.v.knwd.view.Summary, "No knowledge base yet") || e.v.knwd.view.Stale != 3 {
+	if !strings.HasPrefix(e.v.knwd.view.Summary, "No knowledge base yet") || e.v.knwd.view.Stale != k.Status.Stale {
 		t.Fatalf("%q %d", e.v.knwd.view.Summary, e.v.knwd.view.Stale)
 	}
+	stale0 := k.Status.Stale
 	e.shot("knowledge-empty")
 
-	// Update shows the estimate first; nothing runs before Build.
-	k.AskBuild(false)
+	// Update shows the estimate per level first; nothing runs before Build.
+	k.AskBuild(false, "")
 	e.waitFor("estimate", func() bool { return k.Plan != nil })
 	e.frame()
-	if !strings.Contains(e.v.knwd.view.Confirm, "billed by your agent's provider") || len(fake.Prompts()) != 0 {
+	if !strings.Contains(e.v.knwd.view.Confirm, "billed by your agent's provider") || !strings.Contains(e.v.knwd.view.Confirm, "Processes") || len(fake.Prompts()) != 0 {
 		t.Fatalf("%q", e.v.knwd.view.Confirm)
 	}
 	e.shot("knowledge-confirm")
 	k.Build()
+	// While the processes level runs: the finished pages are listed and
+	// searchable, the running page shows its step and counters, a click
+	// opens its live transcript.
+	<-reached
+	e.waitFor("progressive pages", func() bool {
+		return k.Status.Run.Running && k.Status.Exists && countDocs(k.Units) >= 2
+	})
+	var running string
+	e.waitFor("running page", func() bool {
+		for _, u := range k.Status.Run.Units {
+			if u.State == kn.RunRunning && u.Level == kn.LevelProcesses && u.Tools > 0 {
+				running = u.Unit
+				return true
+			}
+		}
+		return false
+	})
+	k.PeekAt(running)
+	e.waitFor("transcript", func() bool { return strings.Contains(strings.Join(k.Transcript, "\n"), "grep InvoiceService") })
+	e.frame()
+	if v := e.v.knwd.view; v.Peek != running || len(v.Transcript) == 0 || !v.Running || v.Steps[0].ID == "" {
+		t.Fatalf("%+v", v.Steps)
+	}
+	k.Search("invoices")
+	e.waitFor("hits while building", func() bool { return len(k.Hits) > 0 })
+	e.frame()
+	e.shot("knowledge-running")
+	k.Search("")
+	close(release)
 	e.waitFor("build", func() bool {
-		return !k.Status.Run.Running && k.Status.Units == 3 && len(k.Units) == 3 && k.Units[0].MD != ""
+		return !k.Status.Run.Running && k.Status.Units >= stale0 && countDocs(k.Units) == k.Status.Units
 	})
 	e.waitFor("embedded", func() bool {
 		k.Load()
@@ -113,9 +150,11 @@ func TestKnowledgeWindow(t *testing.T) {
 		return k.Status.Embedding.Embedded > 0 && k.Status.Embedding.Embedded == k.Status.Embedding.Chunks
 	})
 	e.frame()
-	if len(fake.Prompts()) != 9 {
-		t.Fatal(len(fake.Prompts()))
+	if len(fake.Prompts()) != 2*k.Status.Run.Done || k.Status.Run.Failed != 0 || !e.v.knwd.view.LastRun {
+		t.Fatal(len(fake.Prompts()), e.v.knwd.view.LastRun)
 	}
+	k.PeekAt("")
+	e.frame()
 	e.shot("knowledge-built")
 
 	k.Search("where are invoices stored")

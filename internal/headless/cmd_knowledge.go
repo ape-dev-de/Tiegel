@@ -14,20 +14,25 @@ import (
 	"github.com/ape-dev-de/tiegel/internal/version"
 )
 
-// Project knowledge (D560–D563): "knowledge" drives the knowledge module
-// (knowledge.*); "mcp knowledge" serves the knowledge to MCP clients
-// (coding agents) over stdio. "build" without --yes only shows the plan
-// with the estimate: building runs the coding agent and costs tokens.
+// Project knowledge (D560–D563, D565): "knowledge" drives the knowledge
+// module (knowledge.*); "mcp knowledge" serves the knowledge to MCP
+// clients (coding agents) over stdio. "build" without --yes only shows
+// the plan with the estimate per level: building runs the coding agent
+// and costs tokens. Reading works while a build runs.
 
 func init() {
 	flagSpec["k"] = true
 	flagSpec["model"] = true
+	flagSpec["level"] = true
 	flagSpec["no-embed"] = false
 	flagSpec["keyword"] = false
+	flagSpec["open"] = false
+	flagSpec["answered"] = false
+	flagSpec["verbose"] = false
 	register(&command{name: "knowledge",
-		usage: "knowledge [status | plan [--scope DIR]... [--all] | build [UNIT]... [--scope DIR]... [--all] [--no-embed] [--yes] | cancel | list | show [UNIT] | read PATH | " +
-			"search QUERY... [-k N] [--keyword] | embed [--model M] | pull [--yes] | mcp-config]",
-		summary: "project knowledge base: agents describe data flows into Markdown outside the repo, hybrid search; build needs --yes (uses the agent's tokens)",
+		usage: "knowledge [status | plan [--level L] [--scope DIR]... [--all] | build [PAGE]... [--level L] [--scope DIR]... [--all] [--no-embed] [--yes] [--verbose] | cancel | list | show [PAGE] | read PATH | " +
+			"questions [--open|--answered] | transcript PAGE | search QUERY... [-k N] [--keyword] | embed [--model M] | pull [--yes] | mcp-config]  (L: overview, entrypoints, processes, components, questions, all)",
+		summary: "project knowledge base, top-down: overview → entry points → processes → components → open questions; agents describe data flows into Markdown outside the repo, hybrid search; build needs --yes (uses the agent's tokens)",
 		maxArgs: -1, cwdProject: true, run: runKnowledge},
 		&command{name: "mcp", usage: "mcp knowledge [--project DIR]",
 			summary: "MCP server over stdio with the tools knowledge_search, knowledge_read, knowledge_list (for opencode, Claude and other MCP clients)",
@@ -40,7 +45,7 @@ func runKnowledge(c *cli) error {
 	if len(args) > 0 {
 		sub, args = args[0], args[1:]
 	}
-	scope := api.KnowledgeScopeParams{Scope: c.p.flags["scope"], All: c.p.has("all")}
+	scope := api.KnowledgeScopeParams{Scope: c.p.flags["scope"], All: c.p.has("all"), Level: c.p.value("level")}
 	switch sub {
 	case "status":
 		var st api.KnowledgeStatus
@@ -56,6 +61,25 @@ func runKnowledge(c *cli) error {
 		return c.emit(pl, func(w io.Writer) { printKnowledgePlan(w, pl) })
 	case "build":
 		return c.knowledgeBuild(scope, args)
+	case "transcript":
+		if len(args) != 1 {
+			return usagef("knowledge transcript PAGE")
+		}
+		var tr api.KnowledgeTranscript
+		if err := c.call("knowledge.transcript", api.KnowledgeTranscriptParams{Item: args[0]}, &tr); err != nil {
+			return err
+		}
+		return c.emit(tr, func(w io.Writer) {
+			if tr.Truncated > 0 {
+				fmt.Fprintf(w, "… %d earlier lines\n", tr.Truncated)
+			}
+			for _, l := range tr.Lines {
+				fmt.Fprintln(w, l)
+			}
+			if tr.File != "" {
+				fmt.Fprintln(w, "\nlog: "+tr.File)
+			}
+		})
 	case "cancel":
 		var r api.KnowledgeRun
 		if err := c.call("knowledge.cancel", nil, &r); err != nil {
@@ -69,20 +93,36 @@ func runKnowledge(c *cli) error {
 		}
 		return c.emit(us, func(w io.Writer) {
 			tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(tw, "UNIT\tTITLE\tFILES\tCONFIDENCE\tSTATE")
+			fmt.Fprintln(tw, "LEVEL\tPAGE\tTITLE\tFILES\tCONFIDENCE\tSTATE")
 			for _, u := range us {
 				state := "current"
 				if u.Stale != "" {
 					state = u.Stale
 				}
 				conf := "-"
-				if u.MD != "" {
+				switch {
+				case u.Mechanical:
+					conf = "facts"
+				case u.MD != "" && u.Level != "questions":
 					conf = fmt.Sprintf("%.2f", u.Confidence)
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", u.ID, u.Title, u.Files, conf, state)
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n", u.Level, u.ID, u.Title, u.Files, conf, state)
 			}
 			_ = tw.Flush()
 		})
+	case "questions":
+		status := ""
+		switch {
+		case c.p.has("open"):
+			status = "open"
+		case c.p.has("answered"):
+			status = "answered"
+		}
+		var res api.KnowledgeQuestionsResult
+		if err := c.call("knowledge.questions", api.KnowledgeQuestionsParams{Status: status}, &res); err != nil {
+			return err
+		}
+		return c.emit(res, func(w io.Writer) { printKnowledgeQuestions(w, res) })
 	case "show", "read":
 		var doc api.KnowledgeDoc
 		var err error
@@ -170,10 +210,33 @@ func runKnowledge(c *cli) error {
 	return usagef("unknown knowledge command %q (see tiegel --headless help knowledge)", sub)
 }
 
+func printKnowledgeQuestions(w io.Writer, res api.KnowledgeQuestionsResult) {
+	fmt.Fprintf(w, "%d open (%d to try), %d answered\n", res.Counts.Open, res.Counts.Answerable, res.Counts.Answered)
+	for _, q := range res.Questions {
+		fmt.Fprintf(w, "\n%s [%s, asked by %s] %s\n", q.ID, q.Status, q.Item, q.Text)
+		if len(q.Refs) > 0 {
+			fmt.Fprintf(w, "   see: %s\n", strings.Join(q.Refs, ", "))
+		}
+		if q.Answer != "" {
+			fmt.Fprintf(w, "   answer (%s): %s\n", q.AnsweredBy, q.Answer)
+			if len(q.AnswerRefs) > 0 {
+				fmt.Fprintf(w, "   evidence: %s\n", strings.Join(q.AnswerRefs, ", "))
+			}
+		}
+	}
+}
+
 func printKnowledgeStatus(w io.Writer, st api.KnowledgeStatus) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintf(tw, "Directory:\t%s\n", st.Dir)
-	fmt.Fprintf(tw, "Units:\t%d built, %d to build, %d failed\n", st.Units, st.Stale, st.Failed)
+	fmt.Fprintf(tw, "Pages:\t%d built, %d to build, %d failed\n", st.Units, st.Stale, st.Failed)
+	for _, l := range st.Levels {
+		fmt.Fprintf(tw, "  %s:\t%d of %d built, %d to build, %d failed\n", l.Title, l.Pages, l.Planned, l.Stale, l.Failed)
+	}
+	fmt.Fprintf(tw, "Questions:\t%d open, %d answered\n", st.Questions.Open, st.Questions.Answered)
+	if st.Legacy {
+		fmt.Fprintf(tw, "\tpages of the old format (units/) are replaced by the next build\n")
+	}
 	if !st.LastRun.IsZero() {
 		fmt.Fprintf(tw, "Last run:\t%s\n", st.LastRun.Local().Format("2006-01-02 15:04"))
 	}
@@ -194,28 +257,48 @@ func printKnowledgeStatus(w io.Writer, st api.KnowledgeStatus) {
 	}
 	fmt.Fprintf(tw, "Agent access:\t%s\n", map[bool]string{true: "on (MCP tools knowledge_search, knowledge_read, knowledge_list)", false: "off"}[st.GiveAgent])
 	if st.Run.Running {
-		fmt.Fprintf(tw, "Build:\trunning (%s)\n", st.Run.Phase)
+		done := 0
+		for _, u := range st.Run.Units {
+			if u.State == "done" || u.State == "failed" {
+				done++
+			}
+		}
+		fmt.Fprintf(tw, "Build:\trunning (%s, %d of %d pages)\n", st.Run.Phase, done, len(st.Run.Units))
 	}
 	_ = tw.Flush()
 }
 
 func printKnowledgePlan(w io.Writer, pl api.KnowledgePlan) {
-	if len(pl.Units) == 0 {
-		fmt.Fprintf(w, "nothing to build: all %d units are current (--all rebuilds them)\n", pl.Total)
+	e := pl.Estimate
+	if e.Units == 0 {
+		fmt.Fprintf(w, "nothing to build: all %d pages are current (--all rebuilds them)\n", pl.Total)
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "UNIT\tTITLE\tFILES\tWHY")
-	for _, u := range pl.Units {
-		why := u.Stale
-		if why == "" {
-			why = "rebuild"
+	if len(pl.Units) > 0 {
+		fmt.Fprintln(tw, "LEVEL\tPAGE\tTITLE\tFILES\tWHY")
+		for _, u := range pl.Units {
+			why := u.Stale
+			if why == "" {
+				why = "rebuild"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", u.Level, u.ID, u.Title, u.Files, why)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", u.ID, u.Title, u.Files, why)
+		fmt.Fprintln(tw)
+	}
+	fmt.Fprintln(tw, "LEVEL\tPAGES\tCALLS\t~TOKENS\t")
+	for _, l := range e.Levels {
+		note := ""
+		if l.Later {
+			note = "planned when the run gets there (upper bound)"
+		}
+		if l.Skipped > 0 {
+			note = fmt.Sprintf("%d more processes over the limit (knowledge.maxProcesses)", l.Skipped)
+		}
+		fmt.Fprintf(tw, "%s\t%d of %d\t%d\t%dk\t%s\n", l.Title, l.Pages, l.Total, l.Calls, (l.InputTokens+999)/1000, note)
 	}
 	_ = tw.Flush()
-	e := pl.Estimate
-	fmt.Fprintf(w, "\n%d of %d units, %d files. %s\n", e.Units, pl.Total, e.Files, e.Note)
+	fmt.Fprintf(w, "\n%d pages. %s\n", e.Units, e.Note)
 }
 
 func printKnowledgeHits(w io.Writer, res api.KnowledgeSearchResult) {
@@ -248,23 +331,42 @@ func (c *cli) knowledgeBuild(scope api.KnowledgeScopeParams, units []string) err
 	if !c.p.has("yes") {
 		return c.emit(pl, func(w io.Writer) {
 			printKnowledgePlan(w, pl)
-			if len(pl.Units) > 0 {
+			if pl.Estimate.Units > 0 {
 				fmt.Fprintln(w, "\nnothing was run: add --yes to build (uses your agent's tokens)")
 			}
 		})
 	}
 	var mu sync.Mutex
+	verbose := c.p.has("verbose")
+	last := map[string]string{}
 	sess := c.app.NewSession(func(ev api.Event) {
-		if c.json || ev.Topic != api.TopicKnowledgeProgress {
-			return
-		}
-		var p api.KnowledgeProgress
-		if json.Unmarshal(ev.Payload, &p) != nil || p.State == "queued" {
+		if c.json {
 			return
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		line := fmt.Sprintf("[%d/%d] %s: %s %s", p.Index+1, p.Total, p.Unit, p.Step, p.State)
+		if ev.Topic == api.TopicKnowledgeActivity {
+			var a api.KnowledgeActivity
+			if !verbose || json.Unmarshal(ev.Payload, &a) != nil || a.Kind == api.KnowledgeActivityStep {
+				return
+			}
+			fmt.Fprintln(c.env.Stderr, activityLine(a))
+			return
+		}
+		var p api.KnowledgeProgress
+		if ev.Topic != api.TopicKnowledgeProgress || json.Unmarshal(ev.Payload, &p) != nil || p.State == "queued" {
+			return
+		}
+		// Counter updates repeat the step: print each step once.
+		key := fmt.Sprintf("%s %s %d", p.Step, p.State, p.Attempt)
+		if last[p.Unit] == key {
+			return
+		}
+		last[p.Unit] = key
+		line := fmt.Sprintf("[%d/%d] %s %s: %s %s", p.Index+1, p.Total, p.Level, p.Unit, p.Step, p.State)
+		if p.StepIndex > 0 && p.State == "running" {
+			line += fmt.Sprintf(" (step %d of %d)", p.StepIndex, p.Steps)
+		}
 		switch {
 		case p.Attempt > 0 && p.State == "running":
 			line += fmt.Sprintf(" (repair %d: %s)", p.Attempt, p.Error)
@@ -277,6 +379,9 @@ func (c *cli) knowledgeBuild(scope api.KnowledgeScopeParams, units []string) err
 	})
 	defer sess.Close()
 	sess.Subscribe(api.TopicKnowledgeProgress)
+	if verbose {
+		sess.Subscribe(api.TopicKnowledgeActivity)
+	}
 	var run api.KnowledgeRun
 	err := c.call("knowledge.build", api.KnowledgeBuildParams{KnowledgeScopeParams: scope, Units: units, Wait: true, NoEmbed: c.p.has("no-embed")}, &run)
 	sess.Flush(c.ctx)
@@ -284,7 +389,10 @@ func (c *cli) knowledgeBuild(scope api.KnowledgeScopeParams, units []string) err
 		return err
 	}
 	if err := c.emit(run, func(w io.Writer) {
-		fmt.Fprintf(w, "%d units built, %d failed", run.Done, run.Failed)
+		fmt.Fprintf(w, "%d pages built, %d failed", run.Done, run.Failed)
+		if run.Answered > 0 {
+			fmt.Fprintf(w, ", %d questions answered", run.Answered)
+		}
 		if run.Cancelled {
 			fmt.Fprint(w, ", cancelled")
 		}
@@ -307,6 +415,21 @@ func (c *cli) knowledgeBuild(scope api.KnowledgeScopeParams, units []string) err
 	return nil
 }
 
+// activityLine formats live activity for --verbose: "  item thought: …".
+func activityLine(a api.KnowledgeActivity) string {
+	text := strings.TrimRight(a.Text, "\n")
+	switch a.Kind {
+	case api.KnowledgeActivityTool:
+		text = "tool " + text
+		if a.Status != "" {
+			text += " [" + a.Status + "]"
+		}
+	case api.KnowledgeActivityThought:
+		text = "thought: " + text
+	}
+	return "  " + a.Item + " " + strings.ReplaceAll(text, "\n", "\n    ")
+}
+
 // runMCP serves the knowledge tools over stdin/stdout. Nothing but MCP
 // messages may go to stdout.
 func runMCP(c *cli) error {
@@ -314,8 +437,8 @@ func runMCP(c *cli) error {
 		return usagef("unknown MCP server %q (available: knowledge)", c.p.args[0])
 	}
 	srv := &mcp.Server{Name: "tiegel-knowledge", Version: version.Version,
-		Instructions: "Project knowledge base generated by Tiegel from the source code: data flows (entry points, transformations, persistence, external calls, events) per module, with links to files and lines. " +
-			"Search it before reading many files to find where something happens; read a unit's page for the full flow. The pages can be outdated: check the code before changing it.",
+		Instructions: "Project knowledge base generated by Tiegel from the source code, top-down: overview.md (structure, stack, containers), entrypoints/*.md (routes, commands, consumers), processes/*.md (data flow per process: inputs, steps, reads, writes, outputs), components/*.md (data contracts of central classes), questions.md (open questions). Pages link to files and lines. " +
+			"Search it before reading many files to find where something happens; read the process page for the full flow. The pages can be outdated: check the code before changing it.",
 		Tools: knowledgeTools(c)}
 	return srv.Serve(c.ctx, c.env.Stdin, c.env.Stdout)
 }
@@ -366,8 +489,8 @@ func knowledgeTools(c *cli) []mcp.Tool {
 				}
 				return b.String(), nil
 			}},
-		{Name: "knowledge_read", Description: "Read a page of the project knowledge base: 'index.md' (table of contents), 'units/<id>.md' or a unit id.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"index.md, units/<id>.md or a unit id"}},"required":["path"]}`),
+		{Name: "knowledge_read", Description: "Read a page of the project knowledge base: 'index.md' (table of contents), 'overview.md', 'entrypoints/<kind>.md', 'processes/<id>.md', 'components/<id>.md', 'questions.md' or a page id.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"index.md, overview.md, processes/<id>.md … or a page id"}},"required":["path"]}`),
 			Call: func(ctx context.Context, args json.RawMessage) (string, error) {
 				var a struct {
 					Path string `json:"path"`
@@ -381,7 +504,7 @@ func knowledgeTools(c *cli) []mcp.Tool {
 				}
 				return doc.Content, nil
 			}},
-		{Name: "knowledge_list", Description: "List the pages (units) of the project knowledge base with their folder, number of files and confidence.",
+		{Name: "knowledge_list", Description: "List the pages of the project knowledge base by level (overview, entry points, processes, components, questions) with confidence and state.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
 			Call: func(ctx context.Context, _ json.RawMessage) (string, error) {
 				var us []api.KnowledgeUnit
@@ -390,12 +513,25 @@ func knowledgeTools(c *cli) []mcp.Tool {
 				}
 				var b strings.Builder
 				n := 0
+				level := ""
 				for _, u := range us {
 					if u.MD == "" {
 						continue
 					}
+					if u.Level != level {
+						level = u.Level
+						fmt.Fprintf(&b, "\n## %s\n", levelTitle(level))
+					}
 					n++
-					fmt.Fprintf(&b, "- units/%s.md  %s  (%s, %d files, confidence %.2f", u.ID, u.Title, u.Dir, u.Files, u.Confidence)
+					fmt.Fprintf(&b, "- %s  %s", u.Path, u.Title)
+					switch {
+					case u.Level == "questions":
+						fmt.Fprintf(&b, "  (%s", u.Summary)
+					case u.Mechanical:
+						b.WriteString("  (facts only")
+					default:
+						fmt.Fprintf(&b, "  (confidence %.2f", u.Confidence)
+					}
 					if u.Stale != "" {
 						b.WriteString(", outdated: " + u.Stale)
 					}
@@ -404,7 +540,24 @@ func knowledgeTools(c *cli) []mcp.Tool {
 				if n == 0 {
 					return "The knowledge base is empty (build it in Tiegel: Knowledge window or `tiegel --headless knowledge build`).", nil
 				}
-				return b.String(), nil
+				return strings.TrimSpace(b.String()) + "\n", nil
 			}},
 	}
+}
+
+// levelTitle is the heading of a level in knowledge_list.
+func levelTitle(level string) string {
+	switch level {
+	case "overview":
+		return "Overview"
+	case "entrypoints":
+		return "Entry points"
+	case "processes":
+		return "Processes"
+	case "components":
+		return "Components"
+	case "questions":
+		return "Open questions"
+	}
+	return level
 }
