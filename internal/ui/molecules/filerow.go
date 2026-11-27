@@ -61,7 +61,9 @@ func (s FileStatus) Color(th *tokens.Theme) color.NRGBA {
 // arrow (directories), icon, name colored by VCS status and an optional
 // muted detail text.
 type FileRow struct {
-	Name string
+	// count counts clicks for double clicks (atoms.DoubleClickInterval).
+	count atoms.ClickCounter
+	Name  string
 	// Detail is shown muted after the name (e.g. a relative directory).
 	Detail   string
 	Depth    int
@@ -85,26 +87,29 @@ func (r *FileRow) DoubleClicked() bool { return r.double }
 // toggled reports that a directory's arrow was clicked or the row was
 // double-clicked, in which case Expanded has already been flipped.
 func (r *FileRow) Update(gtx layout.Context) (clicked, toggled bool) {
+	r.count.Update(gtx)
 	r.double = false
 	for {
 		if _, ok := r.toggle.Update(gtx); !ok {
 			break
 		}
+		r.count.Next() // the arrow's press is no row click
 		if r.Dir {
 			r.Expanded = !r.Expanded
 			toggled = true
 		}
 	}
 	for {
-		c, ok := r.row.Update(gtx)
+		_, ok := r.row.Update(gtx)
 		if !ok {
 			break
 		}
 		clicked = true
-		if c.NumClicks >= 2 {
+		n := r.count.Next()
+		if n >= 2 {
 			r.double = true
 		}
-		if c.NumClicks >= 2 && r.Dir {
+		if n >= 2 && r.Dir {
 			r.Expanded = !r.Expanded
 			toggled = true
 		}
@@ -114,6 +119,10 @@ func (r *FileRow) Update(gtx layout.Context) (clicked, toggled bool) {
 
 // Layout draws the row across the full available width.
 func (r *FileRow) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	return r.count.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return r.layoutRow(gtx, th) })
+}
+
+func (r *FileRow) layoutRow(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	r.Update(gtx)
 	return r.row.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		h := gtx.Dp(th.Size.RowH)

@@ -19,7 +19,9 @@ import (
 // muted detail at the right end (e.g. a type) and optional trailing
 // actions.
 type TreeRow struct {
-	Name string
+	// count counts clicks for double clicks (atoms.DoubleClickInterval).
+	count atoms.ClickCounter
+	Name  string
 	// Value is drawn in the code font after the name.
 	Value string
 	// Detail is drawn small and muted at the right end.
@@ -45,22 +47,24 @@ type TreeRow struct {
 // the arrow was clicked or an expandable row was double-clicked (Expanded
 // has already been flipped), double a double click on any row.
 func (r *TreeRow) Update(gtx layout.Context) (clicked, toggled, double bool) {
+	r.count.Update(gtx)
 	for {
 		if _, ok := r.toggle.Update(gtx); !ok {
 			break
 		}
+		r.count.Next() // the arrow's press is no row click
 		if r.Expandable {
 			r.Expanded = !r.Expanded
 			toggled = true
 		}
 	}
 	for {
-		c, ok := r.row.Update(gtx)
+		_, ok := r.row.Update(gtx)
 		if !ok {
 			break
 		}
 		clicked = true
-		if c.NumClicks >= 2 {
+		if r.count.Next() >= 2 {
 			double = true
 			if r.Expandable {
 				r.Expanded = !r.Expanded
@@ -76,6 +80,10 @@ func (r *TreeRow) Hovered() bool { return r.row.Hovered() }
 
 // Layout draws the row across the available width.
 func (r *TreeRow) Layout(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
+	return r.count.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return r.layoutRow(gtx, th) })
+}
+
+func (r *TreeRow) layoutRow(gtx layout.Context, th *tokens.Theme) layout.Dimensions {
 	r.Update(gtx)
 	h := gtx.Dp(th.Size.RowH)
 	w := draw.Width(gtx, gtx.Dp(320))

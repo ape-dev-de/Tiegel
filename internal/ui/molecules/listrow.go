@@ -10,6 +10,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/ape-dev-de/tiegel/internal/ui/atoms"
 	"github.com/ape-dev-de/tiegel/internal/ui/internal/draw"
 	"github.com/ape-dev-de/tiegel/internal/ui/tokens"
 )
@@ -28,6 +29,8 @@ import (
 // row. Process the inner controls first and ignore the row click when one
 // of them reacted.
 type ListRow struct {
+	// count counts clicks for double clicks (atoms.DoubleClickInterval).
+	count    atoms.ClickCounter
 	Selected bool
 	// Indent is extra space before the content (tree levels).
 	Indent unit.Dp
@@ -45,6 +48,7 @@ func (r *ListRow) Update(gtx layout.Context) (clicked, double bool) {
 // UpdateMods is Update that also returns the modifiers held at the last
 // click (e.g. Shift+click for an alternative action).
 func (r *ListRow) UpdateMods(gtx layout.Context) (clicked, double bool, mods key.Modifiers) {
+	r.count.Update(gtx)
 	for {
 		c, ok := r.click.Update(gtx)
 		if !ok {
@@ -52,7 +56,7 @@ func (r *ListRow) UpdateMods(gtx layout.Context) (clicked, double bool, mods key
 		}
 		clicked = true
 		mods = c.Modifiers
-		if c.NumClicks >= 2 {
+		if r.count.Next() >= 2 {
 			double = true
 		}
 	}
@@ -67,6 +71,10 @@ func (r *ListRow) Hovered() bool { return r.click.Hovered() }
 // maximum is unbounded and the row grows to the content's width. Call Update before Layout to observe clicks;
 // Layout does not consume them.
 func (r *ListRow) Layout(gtx layout.Context, th *tokens.Theme, content layout.Widget) layout.Dimensions {
+	return r.count.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return r.layoutRow(gtx, th, content) })
+}
+
+func (r *ListRow) layoutRow(gtx layout.Context, th *tokens.Theme, content layout.Widget) layout.Dimensions {
 	return r.click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		wide := Wide(gtx)
 		w := draw.Width(gtx, gtx.Dp(240))

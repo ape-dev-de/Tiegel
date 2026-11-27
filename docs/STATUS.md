@@ -93,3 +93,4 @@ Legende: ⬜ offen · 🟡 in Arbeit · ✅ fertig · ⚠️ blockiert/Teilstand
 - 2026-11-27: Plan-Modus im Agent-Fenster: Planer/Validator/QA/Zusammenfassung über ein Arbeitsdokument, Annahme durch den Nutzer, Umsetzung DEV↔QA mit Kritiker, Mediator und Tiegel-Prüfungen (Kriterien, leere Tests, Rot-Probe, Mini-Mutation, Abdeckung, Unfertiges) in einem Git-Worktree; headless `plan` (D567–D570). Agent-Chat übersteht das Schlafenlegen (Verlauf gespeichert, `session/load`), laufender Turn blockiert es (D573).
 - 2026-11-27: macOS-Kürzel als Symbole (⌥F7), Cmd+Klick fällt auf den Language Server zurück und zeigt auf der Deklaration die Verwendungen, Copy Reference / Copy Path:Line im Editor-Kontextmenü (D574).
 - 2026-11-27: Markierter Text hebt seine weiteren Vorkommen hervor (ganze Bezeichner wortgenau, D575).
+- 2026-11-27: Doppelklicks werden mit 500 ms erkannt statt Gios 200 ms (D580).
