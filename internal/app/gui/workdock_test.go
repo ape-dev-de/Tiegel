@@ -159,7 +159,7 @@ func TestCompareWithHeadAndAnnotate(t *testing.T) {
 	e.frame()
 	shop := filepath.Join(e.root, "src", "Shop.php")
 	data, _ := os.ReadFile(shop)
-	changed := strings.Replace(string(data), "<?php\n", "<?php\n// added line\n", 1)
+	changed := strings.Replace(string(data), "<?php\n", "<?php\n// added line\n", 1) + "// end\n"
 	if err := os.WriteFile(shop, []byte(changed), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -178,14 +178,15 @@ func TestCompareWithHeadAndAnnotate(t *testing.T) {
 		t.Fatal("no diff view")
 	}
 	bs := dv.win.Blocks()
-	if len(bs) != 1 || bs[0].Kind != diff.Added || bs[0].RightStart != 1 || bs[0].RightEnd != 2 {
+	if len(bs) != 2 || bs[0].Kind != diff.Added || bs[0].RightStart != 1 || bs[0].RightEnd != 2 {
 		t.Fatalf("blocks %+v", bs)
 	}
 	if !dv.win.Editable() {
 		t.Fatal("work tree side should be editable")
 	}
 	e.shot("diff-tab")
-	if dv.win.Current() != -1 {
+	// A fresh diff opens at its first change.
+	if dv.win.Current() != 0 {
 		t.Fatalf("current %d", dv.win.Current())
 	}
 	// The debugger binds F7 (Step Into) globally; without a paused
@@ -194,7 +195,7 @@ func TestCompareWithHeadAndAnnotate(t *testing.T) {
 		t.Fatal("debugger actions not installed: F7 routing untested")
 	}
 	e.key(key.NameF7, 0)
-	if dv.win.Current() != 0 {
+	if dv.win.Current() != 1 {
 		t.Fatalf("F7 did not reach the diff (current %d)", dv.win.Current())
 	}
 	if !diffKeyWins(true, false) || diffKeyWins(true, true) || diffKeyWins(false, false) {
